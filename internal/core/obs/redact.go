@@ -10,45 +10,54 @@ import (
 )
 
 // Patterns match common Telegram-related secrets that must never reach disk
-// or stderr verbatim. Order matters: api_hash must be tried before the
-// generic session matcher because a 32-hex string also matches the long
-// base64-ish pattern.
+// or stderr verbatim.
 //
 // phoneRe deliberately requires a leading "+" so that bare numeric IDs
 // (chat_id, account_id, unix timestamps — all int64 values that frequently
 // reach 10+ digits) survive unredacted. Telegram phone numbers are always
 // rendered with the "+" country prefix, so this is a safe narrowing.
 //
-// sessionRe requires the run to contain at least one non-hex character so
-// long hex blobs (auth keys, message hashes) fall through to api_hash or
-// remain visible. A pure base64 token will always include "+" / "/" / "=" or
-// upper/lower case mix, so this barely changes coverage of real secrets.
+// sessionRe is the broadest matcher (40+ standard-base64 chars). The
+// character class is intentionally limited to A-Za-z0-9+/ — gotd serialises
+// MTProto sessions as standard base64, so "+" and "/" are the meaningful
+// session signals. Excluding "=", "_" and "-" prevents the regex from
+// gobbling attribute prefixes ("api_hash=...", "key=...") into a single
+// session match, which would erase the prefix from logs and split secrets
+// awkwardly.
+//
+// At call time we only replace runs that contain at least one of "+/" — a
+// pure-alphanumeric or pure-hex run of 40+ chars is overwhelmingly an
+// identifier or auth-key fragment, the latter swept up by the api_hash
+// matcher.
 var (
 	phoneRe   = regexp.MustCompile(`\+\d{10,15}\b`)
 	apiHashRe = regexp.MustCompile(`\b[0-9a-fA-F]{32,}\b`)
-	sessionRe = regexp.MustCompile(`[A-Za-z0-9+/=_-]{40,}`)
+	sessionRe = regexp.MustCompile(`[A-Za-z0-9+/]{40,}`)
 )
 
 // Redact masks values that look like Telegram secrets: phone numbers,
 // MTProto session blobs and api_hash hex strings. The function is best-effort
 // — it is meant to keep accidents out of logs, not to defeat a determined
-// reader. Order: api_hash → session (longer) → phone (shorter).
+// reader.
 //
-// The session matcher is broad (40+ base64-ish chars), so we apply it only
-// to runs that contain at least one of "+/=_-". A pure-alphanumeric run of
-// that length is almost always an identifier (URL slug, hex hash already
-// caught by api_hash, repo path) rather than a session blob.
+// Order matters: session must run BEFORE api_hash. A real session blob is a
+// long base64-ish string that may contain a 32+ hex sub-run. If api_hash
+// matched first, it would replace the hex sub-run with "<api_hash>" and
+// split the remaining session text into two short fragments that no longer
+// match the 40-char session pattern — leaking the surrounding bytes. Running
+// session first captures the whole blob; api_hash then sweeps up bare hex
+// runs (auth keys, message hashes) that survived the session post-filter.
 func Redact(s string) string {
 	if s == "" {
 		return s
 	}
-	s = apiHashRe.ReplaceAllString(s, "<api_hash>")
 	s = sessionRe.ReplaceAllStringFunc(s, func(m string) string {
-		if strings.ContainsAny(m, "+/=_-") {
+		if strings.ContainsAny(m, "+/") {
 			return "<session>"
 		}
 		return m
 	})
+	s = apiHashRe.ReplaceAllString(s, "<api_hash>")
 	s = phoneRe.ReplaceAllString(s, "+***")
 	return s
 }

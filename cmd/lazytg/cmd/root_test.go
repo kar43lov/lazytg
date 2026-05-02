@@ -15,8 +15,25 @@ func resetFlags() {
 	flagLogLevel = "info"
 }
 
-func TestRoot_PersistentFlagsRegistered(t *testing.T) {
+// setupCmdTest yields a hermetic environment for cobra command tests:
+// fresh flag state and HOME/XDG paths re-rooted to a t.TempDir() so the
+// PersistentPreRunE buildLogger call does not mkdir the developer's real
+// ~/Library/Application Support/lazytg or ~/.local/state/lazytg.
+//
+// We override HOME (used by os.UserHomeDir on linux/darwin) and clear
+// XDG_*_HOME so linux falls through to HOME-based defaults too.
+func setupCmdTest(t *testing.T) {
+	t.Helper()
 	resetFlags()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("XDG_CACHE_HOME", "")
+}
+
+func TestRoot_PersistentFlagsRegistered(t *testing.T) {
+	setupCmdTest(t)
 	root := newRootCmd()
 
 	for _, name := range []string{"account", "debug", "log-level"} {
@@ -27,7 +44,7 @@ func TestRoot_PersistentFlagsRegistered(t *testing.T) {
 }
 
 func TestRoot_ParsesAccountFlag(t *testing.T) {
-	resetFlags()
+	setupCmdTest(t)
 	root := newRootCmd()
 	root.SetArgs([]string{"--account", "+79991112233", "debug-bundle"})
 	root.SetOut(&bytes.Buffer{})
@@ -42,7 +59,7 @@ func TestRoot_ParsesAccountFlag(t *testing.T) {
 }
 
 func TestRoot_RejectsInvalidLogLevel(t *testing.T) {
-	resetFlags()
+	setupCmdTest(t)
 	root := newRootCmd()
 	root.SetArgs([]string{"--log-level", "loud", "debug-bundle"})
 	root.SetOut(&bytes.Buffer{})
@@ -58,7 +75,7 @@ func TestRoot_RejectsInvalidLogLevel(t *testing.T) {
 }
 
 func TestDebugBundle_StubPrintsMarker(t *testing.T) {
-	resetFlags()
+	setupCmdTest(t)
 	root := newRootCmd()
 	out := &bytes.Buffer{}
 	root.SetArgs([]string{"debug-bundle"})
@@ -74,7 +91,7 @@ func TestDebugBundle_StubPrintsMarker(t *testing.T) {
 }
 
 func TestVersion_PrintsBuildInfo(t *testing.T) {
-	resetFlags()
+	setupCmdTest(t)
 	root := newRootCmd()
 	out := &bytes.Buffer{}
 	root.SetArgs([]string{"version"})
@@ -93,7 +110,7 @@ func TestVersion_PrintsBuildInfo(t *testing.T) {
 }
 
 func TestRoot_HelpListsAllSubcommands(t *testing.T) {
-	resetFlags()
+	setupCmdTest(t)
 	root := newRootCmd()
 	out := &bytes.Buffer{}
 	root.SetArgs([]string{"--help"})
@@ -112,7 +129,7 @@ func TestRoot_HelpListsAllSubcommands(t *testing.T) {
 }
 
 func TestLogout_RequiresAccount(t *testing.T) {
-	resetFlags()
+	setupCmdTest(t)
 	root := newRootCmd()
 	out := &bytes.Buffer{}
 	root.SetArgs([]string{"logout"})

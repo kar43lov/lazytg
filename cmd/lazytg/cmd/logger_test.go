@@ -34,7 +34,7 @@ func TestLoggerFromContext_RoundTrip(t *testing.T) {
 }
 
 func TestRoot_AttachesLoggerToContext(t *testing.T) {
-	resetFlags()
+	setupCmdTest(t)
 	root := newRootCmd()
 
 	var captured *slog.Logger

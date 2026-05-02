@@ -112,6 +112,55 @@ func TestAgeFileStore_WrongPassphraseFails(t *testing.T) {
 	}
 }
 
+func TestAgeFileStore_WrongPassphraseAllowsRetry(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, secretsFileName)
+
+	// Seed an encrypted file with the correct passphrase.
+	good, err := NewAgeFileStore(path, func() (string, error) { return "good-passphrase", nil })
+	if err != nil {
+		t.Fatalf("NewAgeFileStore: %v", err)
+	}
+	if err := good.Set("k", "v"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	// Prompter returns the bad passphrase first, then the good one. After the
+	// first decrypt fails we expect the store to clear its cached passphrase
+	// and re-invoke the prompter on the next call.
+	calls := 0
+	flaky := func() (string, error) {
+		calls++
+		if calls == 1 {
+			return "bad-passphrase", nil
+		}
+		return "good-passphrase", nil
+	}
+	store, err := NewAgeFileStore(path, flaky)
+	if err != nil {
+		t.Fatalf("NewAgeFileStore: %v", err)
+	}
+
+	if _, err := store.Get("k"); err == nil {
+		t.Fatal("first Get with bad passphrase should fail")
+	}
+	if calls != 1 {
+		t.Fatalf("after first failure, prompter was called %d times, want 1", calls)
+	}
+
+	got, err := store.Get("k")
+	if err != nil {
+		t.Fatalf("retry Get: %v", err)
+	}
+	if got != "v" {
+		t.Fatalf("retry Get: want %q, got %q", "v", got)
+	}
+	if calls != 2 {
+		t.Fatalf("retry should re-prompt, calls=%d want 2", calls)
+	}
+}
+
 func TestAgeFileStore_RejectsLoosePermissions(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

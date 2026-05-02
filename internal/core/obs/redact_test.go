@@ -50,6 +50,15 @@ func TestRedact_Patterns(t *testing.T) {
 		{"15-digit numeric ID stays", "user_id 123456789012345 found", "user_id 123456789012345 found"},
 		{"pure-alpha 50-char identifier stays", "ref AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwX done", "ref AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwX done"},
 		{"unix timestamp stays", "ts=1735689600 evt=ok", "ts=1735689600 evt=ok"},
+		// regression guard: a session-shaped run that contains a 32-hex
+		// substring must be replaced wholesale. If api_hash ran first the
+		// hex substring would be replaced and the remaining base64 fragments
+		// (too short to match alone) would leak.
+		{
+			"session blob containing 32-hex run is fully redacted",
+			"sess=AaBb/0123456789abcdef0123456789abcdef/+++ZzYyXxWwVvUuTtSsRr",
+			"sess=<session>",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

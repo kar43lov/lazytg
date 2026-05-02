@@ -49,10 +49,10 @@ If your account is restricted, lazytg cannot help you get it back. That outcome 
 
 ## Logging redaction
 
-The `RedactingHandler` in `internal/core/obs/redact.go` wraps any underlying `slog.Handler` and filters string attribute values. Patterns currently scrubbed (order: api_hash → session → phone):
+The `RedactingHandler` in `internal/core/obs/redact.go` wraps any underlying `slog.Handler` and filters string attribute values. Patterns currently scrubbed (order: session → api_hash → phone — session must run first so a session blob containing a 32-hex sub-run isn't split by the api_hash matcher):
 
 - Hex strings of length 32 or more → `<api_hash>`.
-- Base64-ish strings of 40+ chars that contain at least one of `+/=_-` → `<session>`. Pure-alphanumeric runs survive intact (they would otherwise eat URL slugs and identifiers).
+- Standard-base64 strings of 40+ chars (A-Za-z0-9, plus at least one `+` or `/`) → `<session>`. Pure-alphanumeric runs survive (URL slugs, identifiers); the character class is deliberately tight so attribute prefixes such as `api_hash=...` aren't swallowed into a single match.
 - Phone numbers (literal `+` followed by 10–15 digits) → `+***`. Bare numeric runs are intentionally left alone: chat/account IDs are int64 and routinely 10+ digits.
 
 Tests live in `internal/core/obs/redact_test.go`. New patterns we discover should be added there, not in ad-hoc places throughout the code.
@@ -63,7 +63,7 @@ The `lazytg debug-bundle` command (full implementation lands in Stage 3) collect
 
 - **Never include**: session blobs, `api_hash`, raw message text, contact lists, peer access hashes.
 - **May include**: redacted log tail, lazytg version + commit + build date, OS/arch, env vars *whitelisted* (`TERM`, `LANG`, `XDG_*`), schema migration version, build tags.
-- A grep test in CI verifies that no fixture session/api_hash/text leaks into a generated bundle.
+- Stage 3 will add a grep test in CI that verifies no fixture session/api_hash/text leaks into a generated bundle. Until then the redactor (`internal/core/obs/redact_test.go`) carries the regression coverage for the underlying patterns.
 
 ## Disclosure policy
 

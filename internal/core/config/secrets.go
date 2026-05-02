@@ -203,6 +203,10 @@ func (a *AgeFileStore) Delete(key string) error {
 // ensureLoaded prompts for the passphrase (once) and decrypts the file. If
 // the file does not exist we keep an empty cache and persist on the next
 // write.
+//
+// On any error past the passphrase prompt we clear a.passphrase so the next
+// call re-invokes the prompter — otherwise a single mistyped passphrase would
+// lock the store for the rest of the process.
 func (a *AgeFileStore) ensureLoaded() error {
 	if a.loaded {
 		return nil
@@ -217,12 +221,21 @@ func (a *AgeFileStore) ensureLoaded() error {
 		}
 		a.passphrase = pw
 	}
-	a.cache = make(map[string]string)
+
+	ok := false
+	defer func() {
+		if !ok {
+			a.passphrase = ""
+			a.cache = nil
+		}
+	}()
 
 	raw, err := os.ReadFile(a.path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
+		a.cache = make(map[string]string)
 		a.loaded = true
+		ok = true
 		return nil
 	case err != nil:
 		return fmt.Errorf("age file store: read %q: %w", a.path, err)
@@ -239,14 +252,14 @@ func (a *AgeFileStore) ensureLoaded() error {
 	if err != nil {
 		return fmt.Errorf("age file store: read plaintext: %w", err)
 	}
-	if len(plain) == 0 {
-		a.loaded = true
-		return nil
-	}
-	if err := json.Unmarshal(plain, &a.cache); err != nil {
-		return fmt.Errorf("age file store: unmarshal: %w", err)
+	a.cache = make(map[string]string)
+	if len(plain) > 0 {
+		if err := json.Unmarshal(plain, &a.cache); err != nil {
+			return fmt.Errorf("age file store: unmarshal: %w", err)
+		}
 	}
 	a.loaded = true
+	ok = true
 	return nil
 }
 
