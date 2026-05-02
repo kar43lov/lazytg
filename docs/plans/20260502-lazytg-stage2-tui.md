@@ -162,21 +162,22 @@
 
 ### Task 7: Chats pane
 
-- [ ] Создать `internal/ui/panes/chats/item.go` с `type ChatItem struct{ ID int64; Title string; LastMessagePreview string; LastMessageDate time.Time; UnreadCount int; Pinned bool; Type domain.ChatType }`. Метод `Title()` (для bubbles/list.DefaultItem) возвращает форматированное `[📌] Title (15)` где [📌] для pinned, (15) — unread > 0. Метод `Description()` возвращает `LastMessagePreview` обрезанное до 60 символов. Метод `FilterValue()` возвращает Title (для built-in фильтра)
-- [ ] Создать `internal/ui/panes/chats/model.go` с `Model{list list.Model; chats []ChatItem; repo storage.Repo; log *slog.Logger}`. Конструктор `New(repo, log) Model`. Метод `Init()` возвращает `tea.Cmd` который читает chats из repo и эмитит `chatsLoadedMsg{[]ChatItem}`. Сортировка: pinned сначала, остальные по `LastMessageDate DESC`
-- [ ] Создать `internal/ui/panes/chats/update.go` с `func (m Model) Update(msg tea.Msg) (Model, tea.Cmd)`:
+- [x] Создать `internal/ui/panes/chats/item.go` с `type ChatItem struct{ ID int64; Title string; LastMessagePreview string; LastMessageDate time.Time; UnreadCount int; Pinned bool; Type domain.ChatType }`. Метод `Title()` (для bubbles/list.DefaultItem) возвращает форматированное `[📌] Title (15)` где [📌] для pinned, (15) — unread > 0. Метод `Description()` возвращает `LastMessagePreview` обрезанное до 60 символов. Метод `FilterValue()` возвращает Title (для built-in фильтра). **Implementation note:** struct fields unexported (Go запрещает поле и метод с одним именем — `Title string` и `Title() string` несовместимы); `NewChatItem(domain.Chat, preview)` — конструктор. Truncate работает по runes (не bytes), не ломает UTF-8 mid-codepoint
+- [x] Создать `internal/ui/panes/chats/model.go` с `Model{list list.Model; chats []ChatItem; repo storage.Repo; log *slog.Logger}`. Конструктор `New(repo, log) Model`. Метод `Init()` возвращает `tea.Cmd` который читает chats из repo и эмитит `chatsLoadedMsg{[]ChatItem}`. Сортировка: pinned сначала, остальные по `LastMessageDate DESC`. **Implementation note:** два конструктора — `New()` (placeholder, без repo, для тестов app/) и `NewWithRepo(repo, log)` (полный). `Width/Height/Focused` остаются exported чтобы `app/view.go` не пришлось трогать. Сортировка тут же дополнительно (defensively) выполняется на client-side, чтобы fakerepo'ы в тестах с произвольным порядком давали тот же deterministic результат
+- [x] Создать `internal/ui/panes/chats/update.go` с `func (m Model) Update(msg tea.Msg) (Model, tea.Cmd)`:
   - `chatsLoadedMsg` → обновить `m.list.SetItems(...)`
   - `events.DialogUpdated` → перезагрузить из repo (debounce 200ms через `tea.Tick`)
   - `tea.KeyMsg` Up/Down/k/j → делегировать в `m.list.Update(msg)`
   - Enter → эмитировать `ChatSelectedMsg{ChatID: m.list.SelectedItem().(ChatItem).ID}`
-- [ ] Создать `internal/ui/panes/chats/view.go` — `m.list.View()` с обёрткой в lipgloss-стиль (border, padding)
-- [ ] Создать `internal/ui/panes/chats/model_test.go`:
+  - **Implementation note:** debounce реализован через `reloadGeneration uint64` — каждый DialogUpdated инкрементит счётчик и арм'ит `tea.Tick(200ms)` с замороженным generation; `reloadDebouncedMsg` с устаревшим generation отбрасывается. Enter intercept'ится только когда фильтр НЕ активен (`list.SettingFilter()`) — иначе list-built-in handler применяет фильтр
+- [x] Создать `internal/ui/panes/chats/view.go` — `m.list.View()` с обёрткой в lipgloss-стиль (border, padding). **Note:** lipgloss-стиль уже навешивается родителем (`app/view.go::renderBody` через `paneStyle(focused)`); pane сам только рендерит focus-aware header (`Chats` / `Chats (focused)`) + `m.list.View()`, чтобы `TestFocusedPaneAppliesFocusFlag` остался зелёным без изменений
+- [x] Создать `internal/ui/panes/chats/model_test.go`:
   1. Пустой list → пустой view
   2. Список из 5 chats → view содержит все 5 titles
   3. KeyMsg Down → SelectedItem смещается на 1
   4. KeyMsg Enter → возвращается tea.Cmd, который при выполнении эмитит `ChatSelectedMsg`
   5. Сортировка: pinned выше unpinned, в одной группе — по LastMessageDate
-- [ ] Запустить `go test -race ./internal/ui/panes/chats/...` — зелёное
+- [x] Запустить `go test -race ./internal/ui/panes/chats/...` — зелёное
 
 ### Task 8: Thread pane + pagination
 
