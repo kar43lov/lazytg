@@ -1,0 +1,90 @@
+name: Bug report
+description: Report a defect in lazytg
+title: "bug: <short description>"
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please fill in **all** required sections — incomplete reports are slow to triage.
+
+        **Do not paste session strings, `api_hash`, or message content.** Run `lazytg debug-bundle` (Stage 3+) and attach the redacted output instead.
+  - type: input
+    id: version
+    attributes:
+      label: lazytg version
+      description: Output of `lazytg version`
+      placeholder: "lazytg v0.1.0-alpha.1, commit abc1234, built 2026-05-02"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (arm64)
+        - macOS (amd64)
+        - Linux (amd64)
+        - Linux (arm64)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: os_version
+    attributes:
+      label: OS version
+      placeholder: "macOS 15.4, Ubuntu 24.04, ..."
+    validations:
+      required: true
+  - type: dropdown
+    id: build_tag
+    attributes:
+      label: Build mode
+      options:
+        - Default (pure Go, modernc/sqlite)
+        - sqlcipher (CGo, encrypted DB)
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Be precise. Number the steps.
+      placeholder: |
+        1. `export LAZYTG_API_ID=...; export LAZYTG_API_HASH=...`
+        2. `lazytg login --account +7XXX`
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Paste the relevant tail of the lazytg log file (rotated under `$XDG_STATE_HOME/lazytg/`),
+        or the output of `lazytg --debug ...`. **Make sure secrets are redacted** —
+        the built-in redactor handles phone numbers / api_hash / session strings, but double-check.
+      render: shell
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I am running the latest released version (or a specific commit, named above)
+          required: true
+        - label: I have searched existing issues for duplicates
+          required: true
+        - label: I have not pasted secrets (session, api_hash, message text)
+          required: true

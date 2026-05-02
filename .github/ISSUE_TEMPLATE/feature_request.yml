@@ -1,0 +1,50 @@
+name: Feature request
+description: Propose a new feature or enhancement for lazytg
+title: "feat: <short description>"
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check [`docs/plans/lazytg-v0.1.0.md`](https://github.com/pgmac/lazytg/blob/main/docs/plans/lazytg-v0.1.0.md)
+        and the **non-goals** section of [`CLAUDE.md`](https://github.com/pgmac/lazytg/blob/main/CLAUDE.md)
+        before opening a feature request — many ideas have already been considered and explicitly rejected.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow are you trying to do, and what is in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How do you think lazytg should solve this? Sketches, key bindings, mock outputs welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you ruled out, and why.
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Roadmap stage you think this fits
+      options:
+        - v0.1.0 (current)
+        - v0.2 (post-MVP)
+        - v0.3+
+        - Not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have read the v0.1.0 roadmap and the explicit non-goals
+          required: true
+        - label: I have searched existing issues and discussions for duplicates
+          required: true
