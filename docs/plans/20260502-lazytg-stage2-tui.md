@@ -181,23 +181,23 @@
 
 ### Task 8: Thread pane + pagination
 
-- [ ] Создать `internal/ui/panes/thread/format.go` с функцией `FormatMessage(msg domain.Message, width int, replyTo *domain.Message) string` — рендерит:
+- [x] Создать `internal/ui/panes/thread/format.go` с функцией `FormatMessage(msg domain.Message, width int, replyTo *domain.Message) string` — рендерит:
   - Строка 1: `[15:42] Author Name` (timestamp HH:MM, серый цвет; имя bold)
   - Если replyTo != nil: `↳ replying to: <preview 50 chars>` (italic, серый)
   - Тело: `msg.Text` с word-wrap по `width-2` (используя `lipgloss.NewStyle().Width(width-2).Render(text)` или ручной wrapper)
-  - Inline-форматирование по entities из gotd (bold/italic/code/link) — в v0.1 сделать только для plaintext с простыми markdown-маркерами `**bold**`, `*italic*`, `` `code` `` (полный entity-рендеринг — Stage 3)
-- [ ] Создать `internal/ui/panes/thread/model.go` с `Model{viewport viewport.Model; messages []domain.Message; chatID int64; repo storage.Repo; provider sync.HistoryProvider; log *slog.Logger; loading bool; hasMore bool; oldestID int}`. Конструктор `New(repo, provider, log) Model`. Метод `Init() tea.Cmd` — без действия. Метод `OpenChat(chatID int64) tea.Cmd` — читает последние 200 сообщений из repo + триггерит backfill если history тонкая
-- [ ] Создать `internal/ui/panes/thread/update.go`:
+  - Inline-форматирование по entities из gotd (bold/italic/code/link) — в v0.1 сделать только для plaintext с простыми markdown-маркерами `**bold**`, `*italic*`, `` `code` `` (полный entity-рендеринг — Stage 3). **Implementation note:** order matters — backticks first (inner text не перерисовывается), затем `**` (greedy), затем `*` через `applyStarItalic` который сам пропускает `**` пары; иначе непарный `**bold` мис-парсился бы как два italic
+- [x] Создать `internal/ui/panes/thread/model.go` с `Model{viewport viewport.Model; messages []domain.Message; chatID int64; repo storage.Repo; provider sync.HistoryProvider; log *slog.Logger; loading bool; hasMore bool; oldestID int}`. Конструктор `New(repo, provider, log) Model`. Метод `Init() tea.Cmd` — без действия. Метод `OpenChat(chatID int64) tea.Cmd` — читает последние 200 сообщений из repo + триггерит backfill если history тонкая. **Implementation note:** Repository/HistoryProvider interfaces объявлены локально (зеркалят `core/sync.HistoryProvider`/`*sqlite.Repo`-subset) чтобы UI не тащил storage и avoid coupling — паттерн из chats pane. Backfill-trigger пока в комментарии (поднимется в Task 11 wiring), pagination идёт через offset = `len(messages)` (`oldestID` остаётся как cursor для будущего MTProto-cursor backfill). Два конструктора `New()`/`NewWithRepo()` — нужно для тестов app/ которые конструируют thread без storage
+- [x] Создать `internal/ui/panes/thread/update.go`:
   - `ChatSelectedMsg` → `m.OpenChat(...)` → `messagesLoadedMsg{[]domain.Message; hasMore bool}`
   - `messagesLoadedMsg` → `m.messages = msg.Messages`, обновить viewport content через `m.viewport.SetContent(m.renderAll())`, scroll to bottom
   - `events.MessageReceived{ChatID == m.chatID}` → append в `m.messages`, обновить content, scroll to bottom (если был на bottom — sticky scroll)
   - `events.OutgoingMessageStateChanged{ChatID == m.chatID}` → найти optimistic запись в m.messages (по LocalID), обновить state, перерендерить
-  - `tea.KeyMsg` Up/Down/PgUp/PgDn → `m.viewport.Update(msg)`. При scroll к top + `m.hasMore` → `tea.Cmd` загрузить ещё 200 сообщений (offsetID = oldestID), эмитить `messagesPaginationLoadedMsg`
-- [ ] Создать `internal/ui/panes/thread/view.go` — `m.viewport.View()` с lipgloss-обёрткой. При `m.loading` — overlay строка "Loading..."
-- [ ] Создать `internal/ui/panes/thread/optimistic.go` с функцией `RenderOptimistic(msg OutgoingMessage) string` — спец-рендер для pending/failed: префикс `[⏳]` для pending, `[✗]` для failed (красный). Sent — без префикса (как обычное сообщение)
-- [ ] Создать `internal/ui/panes/thread/format_test.go` с golden snapshots для разных кейсов: text-only, с replyTo, с markdown bold/italic/code, длинный текст с word-wrap. Эталоны в `testdata/thread/*.txt`
-- [ ] Создать `internal/ui/panes/thread/pagination_test.go`: репо с 500 сообщениями, открыть чат → загрузилось 200, scroll вверх → догрузилось ещё 200, oldestID обновился
-- [ ] Запустить `go test -race ./internal/ui/panes/thread/...` — зелёное
+  - `tea.KeyMsg` Up/Down/PgUp/PgDn → `m.viewport.Update(msg)`. При scroll к top + `m.hasMore` → `tea.Cmd` загрузить ещё 200 сообщений (offsetID = oldestID), эмитить `messagesPaginationLoadedMsg`. **Implementation note:** реализован дополнительный `LoadMore()` без `AtTop()`-guard для unit-тестов с искусственной высотой viewport — re-entrancy всё равно защищён `loading` flag. Stale `messagesLoadedMsg` (chatID не совпадает с текущим) drop'ятся — иначе быстрое переключение чатов давало бы misroute
+- [x] Создать `internal/ui/panes/thread/view.go` — `m.viewport.View()` с lipgloss-обёрткой. При `m.loading` — overlay строка "Loading..."
+- [x] Создать `internal/ui/panes/thread/optimistic.go` с функцией `RenderOptimistic(msg OutgoingMessage) string` — спец-рендер для pending/failed: префикс `[⏳]` для pending, `[✗]` для failed (красный). Sent — без префикса (как обычное сообщение)
+- [x] Создать `internal/ui/panes/thread/format_test.go` с golden snapshots для разных кейсов: text-only, с replyTo, с markdown bold/italic/code, длинный текст с word-wrap. Эталоны в `testdata/thread/*.txt`. **Note:** golden-файлы хранятся со снятыми ANSI escape-codes (через `stripANSI` regex) — иначе сравнение зависело бы от lipgloss color-profile detection (TTY vs non-TTY) и было flaky на CI. Generate/refresh: `go test ... -args -update`
+- [x] Создать `internal/ui/panes/thread/pagination_test.go`: репо с 500 сообщениями, открыть чат → загрузилось 200, scroll вверх → догрузилось ещё 200, oldestID обновился
+- [x] Запустить `go test -race ./internal/ui/panes/thread/...` — зелёное
 
 ### Task 9: Input field (emacs/readline) + composer + reply state
 

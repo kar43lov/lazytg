@@ -1,0 +1,4 @@
+[15:42] user-42
+this message is intentionally long    
+enough that it has to wrap onto       
+multiple lines when the pane is narrow
