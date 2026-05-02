@@ -40,6 +40,10 @@ func loadMigrations() ([]migration, error) {
 		if idx <= 0 {
 			return nil, fmt.Errorf("migration %q: expected NNNN_name.sql", e.Name())
 		}
+		name := base[idx+1:]
+		if name == "" {
+			return nil, fmt.Errorf("migration %q: expected NNNN_name.sql, name part is empty", e.Name())
+		}
 		v, err := strconv.Atoi(base[:idx])
 		if err != nil {
 			return nil, fmt.Errorf("migration %q: parse version: %w", e.Name(), err)
@@ -48,7 +52,7 @@ func loadMigrations() ([]migration, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read migration %q: %w", e.Name(), err)
 		}
-		out = append(out, migration{version: v, name: base[idx+1:], sql: string(body)})
+		out = append(out, migration{version: v, name: name, sql: string(body)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].version < out[j].version })
 	return out, nil

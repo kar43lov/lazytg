@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -45,6 +46,10 @@ func Open(ctx context.Context, path string) (*Repo, error) {
 // buildDSN encodes path-level pragmas so every pooled connection inherits
 // them. modernc.org/sqlite parses the _pragma query parameter and runs each
 // statement on connect.
+//
+// Bare paths are wrapped into a file: URI through net/url so reserved
+// characters (e.g. '?' or '#' anywhere in the path) cannot bleed into the
+// query string and break pragma parsing.
 func buildDSN(path string) string {
 	if path == ":memory:" || strings.HasPrefix(path, "file:") {
 		// callers passing a file: URI take responsibility for their own
@@ -57,7 +62,8 @@ func buildDSN(path string) string {
 		}
 		return path + sep + pragmaQuery
 	}
-	return "file:" + path + "?" + pragmaQuery
+	u := url.URL{Scheme: "file", Opaque: (&url.URL{Path: path}).EscapedPath(), RawQuery: pragmaQuery}
+	return u.String()
 }
 
 // pragmaQuery is the URL-encoded set of PRAGMAs that must run on every
@@ -221,6 +227,9 @@ func (r *Repo) GetChats(ctx context.Context) ([]domain.Chat, error) {
 func (r *Repo) SaveMessage(ctx context.Context, m domain.Message) error {
 	if m.ChatID == 0 {
 		return errors.New("message: chat_id is required")
+	}
+	if m.ID == 0 {
+		return errors.New("message: id is required")
 	}
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO messages (id, chat_id, from_id, date, text, reply_to, raw_blob)

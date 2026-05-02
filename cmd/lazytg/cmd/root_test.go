@@ -14,6 +14,7 @@ import (
 // the variables are package-level — we own the variables, so we reset them.
 func resetFlags() {
 	flagAccount = ""
+	flagConfig = ""
 	flagDebug = false
 	flagLogLevel = "info"
 }
@@ -39,7 +40,7 @@ func TestRoot_PersistentFlagsRegistered(t *testing.T) {
 	setupCmdTest(t)
 	root := newRootCmd()
 
-	for _, name := range []string{"account", "debug", "log-level"} {
+	for _, name := range []string{"account", "config", "debug", "log-level"} {
 		if root.PersistentFlags().Lookup(name) == nil {
 			t.Errorf("persistent flag %q is not registered", name)
 		}

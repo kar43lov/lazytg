@@ -157,6 +157,14 @@ func TestRepo_SaveMessage_RequiresChatID(t *testing.T) {
 	}
 }
 
+func TestRepo_SaveMessage_RequiresID(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+	err := repo.SaveMessage(ctx, domain.Message{ChatID: 1, Date: time.Now()})
+	if err == nil {
+		t.Fatal("expected error for zero id, got nil")
+	}
+}
+
 func TestRepo_AccountsCRUD(t *testing.T) {
 	repo, ctx := openTestRepo(t)
 

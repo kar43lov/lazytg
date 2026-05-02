@@ -7,6 +7,7 @@ package cmd
 // cobra during PersistentPreRunE and consumed by the subcommand RunE bodies.
 var (
 	flagAccount  string
+	flagConfig   string
 	flagDebug    bool
 	flagLogLevel string
 )

@@ -22,6 +22,7 @@ func newRootCmd() *cobra.Command {
 
 	pf := root.PersistentFlags()
 	pf.StringVar(&flagAccount, "account", "", "phone number of the account to operate on (e.g. +79998887766)")
+	pf.StringVar(&flagConfig, "config", "", "path to config file (reserved; no-op until stage 2)")
 	pf.BoolVar(&flagDebug, "debug", false, "enable verbose logging to stderr")
 	pf.StringVar(&flagLogLevel, "log-level", "info", "logging level: debug|info|warn|error")
 
