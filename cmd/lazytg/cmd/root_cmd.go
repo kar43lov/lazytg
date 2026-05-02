@@ -25,6 +25,7 @@ func newRootCmd() *cobra.Command {
 	pf.StringVar(&flagConfig, "config", "", "path to config file (reserved; no-op until stage 2)")
 	pf.BoolVar(&flagDebug, "debug", false, "enable verbose logging to stderr")
 	pf.StringVar(&flagLogLevel, "log-level", "info", "logging level: debug|info|warn|error")
+	pf.BoolVar(&flagPolling, "polling", false, "force history polling instead of updates.Manager (fallback for gap-prone connections)")
 
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		level, err := obs.ParseLevel(flagLogLevel)

@@ -40,7 +40,7 @@ func TestRunMigrations_FreshInstall(t *testing.T) {
 		t.Fatalf("run migrations: %v", err)
 	}
 
-	for _, table := range []string{"accounts", "chats", "messages", "peers", "state", "schema_migrations"} {
+	for _, table := range []string{"accounts", "chats", "messages", "peers", "state", "channel_state", "schema_migrations"} {
 		exists, err := tableExists(ctx, db, table)
 		if err != nil {
 			t.Fatalf("check %s: %v", table, err)
