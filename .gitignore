@@ -1,0 +1,35 @@
+# Binaries
+bin/
+dist/
+*.exe
+*.test
+*.out
+
+# Coverage
+coverage.out
+coverage.html
+*.coverprofile
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config / secrets
+.env
+.env.*
+!.env.example
+*.session
+*.session.bin
+secrets.age
+
+# Build artifacts
+vendor/
+
+# Logs
+*.log
