@@ -1,0 +1,91 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - gosec
+    - revive
+    - gocritic
+    - depguard
+    - ineffassign
+    - unused
+
+  settings:
+    depguard:
+      rules:
+        core:
+          list-mode: lax
+          files:
+            - "**/internal/core/**"
+          deny:
+            - pkg: "github.com/gotd/td"
+              desc: "internal/core must not import gotd; use internal/tg"
+            - pkg: "github.com/charmbracelet/bubbletea"
+              desc: "internal/core must not import bubbletea; UI lives in internal/ui"
+        ui:
+          list-mode: lax
+          files:
+            - "**/internal/ui/**"
+          deny:
+            - pkg: "github.com/gotd/td"
+              desc: "internal/ui must not import gotd; use internal/core abstractions"
+        storage:
+          list-mode: lax
+          files:
+            - "**/internal/storage/**"
+          deny:
+            - pkg: "github.com/pgmac/lazytg/internal/ui"
+              desc: "internal/storage must not depend on UI"
+            - pkg: "github.com/pgmac/lazytg/internal/tg"
+              desc: "internal/storage must not depend on Telegram layer"
+
+    revive:
+      severity: warning
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: increment-decrement
+        - name: var-naming
+        - name: var-declaration
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unreachable-code
+        - name: redefines-builtin-id
+
+    gosec:
+      excludes:
+        - G104
+
+  exclusions:
+    generated: lax
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - gocritic
+          - revive
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

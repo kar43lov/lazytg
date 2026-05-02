@@ -46,14 +46,14 @@
 
 ### Task 1: Bootstrap репозитория + tooling
 
-- [ ] Создать `/Users/pgmac/Data/prjcts/lazytg/go.mod` командой `go mod init github.com/pgmac/lazytg` (Go 1.22+)
-- [ ] Создать `.gitignore` с правилами для Go: `*.exe`, `bin/`, `dist/`, `coverage.out`, `.env*`, `*.test`, `vendor/`
-- [ ] Создать `.editorconfig` со стандартными правилами Go (tab indent, LF, trim trailing)
-- [ ] Создать `Makefile` с целями: `build` (`go build -o bin/lazytg ./cmd/lazytg`), `test` (`go test -race ./...`), `lint` (`golangci-lint run`), `clean` (`rm -rf bin/ dist/ coverage.out`), `tidy` (`go mod tidy`)
-- [ ] Создать `.golangci.yml` с линтерами: `errcheck`, `govet`, `staticcheck`, `gosec`, `revive`, `gocritic`, `depguard`. В секции `linters-settings.depguard` задать правило: `internal/core/...` не может импортировать `github.com/gotd/td/...` или `github.com/charmbracelet/bubbletea`. `internal/ui/...` не может импортировать `github.com/gotd/td/...`. `internal/storage/...` не может импортировать `internal/ui` или `internal/tg`
-- [ ] Создать `lefthook.yml` с pre-commit hook'ами: `gofmt`, `go vet ./...`, `go test -short ./...`
-- [ ] Создать пустой `cmd/lazytg/main.go` с `package main` и `func main() {}`, проверить `go build ./...` собирается
-- [ ] Запустить `golangci-lint run` — должно быть zero warnings (на пустом проекте)
+- [x] Создать `/Users/pgmac/Data/prjcts/lazytg/go.mod` командой `go mod init github.com/pgmac/lazytg` (Go 1.22+)
+- [x] Создать `.gitignore` с правилами для Go: `*.exe`, `bin/`, `dist/`, `coverage.out`, `.env*`, `*.test`, `vendor/`
+- [x] Создать `.editorconfig` со стандартными правилами Go (tab indent, LF, trim trailing)
+- [x] Создать `Makefile` с целями: `build` (`go build -o bin/lazytg ./cmd/lazytg`), `test` (`go test -race ./...`), `lint` (`golangci-lint run`), `clean` (`rm -rf bin/ dist/ coverage.out`), `tidy` (`go mod tidy`)
+- [x] Создать `.golangci.yml` с линтерами: `errcheck`, `govet`, `staticcheck`, `gosec`, `revive`, `gocritic`, `depguard`. В секции `linters-settings.depguard` задать правило: `internal/core/...` не может импортировать `github.com/gotd/td/...` или `github.com/charmbracelet/bubbletea`. `internal/ui/...` не может импортировать `github.com/gotd/td/...`. `internal/storage/...` не может импортировать `internal/ui` или `internal/tg`
+- [x] Создать `lefthook.yml` с pre-commit hook'ами: `gofmt`, `go vet ./...`, `go test -short ./...`
+- [x] Создать пустой `cmd/lazytg/main.go` с `package main` и `func main() {}`, проверить `go build ./...` собирается
+- [x] Запустить `golangci-lint run` — должно быть zero warnings (на пустом проекте)
 
 ### Task 2: Скелет 3-слойной архитектуры + event bus
 
