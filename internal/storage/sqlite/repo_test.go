@@ -329,6 +329,80 @@ func TestRepo_ForeignKeysEnforcedAcrossPool(t *testing.T) {
 	}
 }
 
+// TestRepo_SaveMessages_BatchAndUpsert exercises the batch insert path: a
+// single transaction must be atomic (all-or-nothing) and idempotent
+// (re-inserting the same (chat_id, id) updates the row instead of erroring).
+func TestRepo_SaveMessages_BatchAndUpsert(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	if err := repo.SaveChat(ctx, domain.Chat{ID: 9001, Type: domain.ChatTypePrivate, Title: "p"}); err != nil {
+		t.Fatalf("save chat: %v", err)
+	}
+
+	msgs := []domain.Message{
+		{ID: 1, ChatID: 9001, FromID: 1, Date: now.Add(-3 * time.Minute), Text: "a"},
+		{ID: 2, ChatID: 9001, FromID: 1, Date: now.Add(-2 * time.Minute), Text: "b"},
+		{ID: 3, ChatID: 9001, FromID: 1, Date: now.Add(-1 * time.Minute), Text: "c"},
+	}
+	if err := repo.SaveMessages(ctx, msgs); err != nil {
+		t.Fatalf("first batch: %v", err)
+	}
+
+	// Update the middle message and add a new one in the next batch — UPSERT
+	// must rewrite text on conflict and append the new row.
+	msgs[1].Text = "b-updated"
+	more := []domain.Message{
+		msgs[1],
+		{ID: 4, ChatID: 9001, FromID: 1, Date: now, Text: "d"},
+	}
+	if err := repo.SaveMessages(ctx, more); err != nil {
+		t.Fatalf("second batch: %v", err)
+	}
+
+	got, err := repo.GetMessages(ctx, 9001, 100, 0)
+	if err != nil {
+		t.Fatalf("get messages: %v", err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("got %d messages, want 4", len(got))
+	}
+	if findMsg(got, 2).Text != "b-updated" {
+		t.Fatalf("upsert did not rewrite text: %+v", findMsg(got, 2))
+	}
+}
+
+func TestRepo_SaveMessages_EmptyIsNoop(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+	if err := repo.SaveMessages(ctx, nil); err != nil {
+		t.Fatalf("empty SaveMessages should be a no-op, got %v", err)
+	}
+}
+
+// TestRepo_SaveMessages_ValidatesAllBeforeWriting documents the atomic
+// behaviour: if any item is invalid, none of the items are persisted.
+func TestRepo_SaveMessages_ValidatesAllBeforeWriting(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := repo.SaveChat(ctx, domain.Chat{ID: 11, Type: domain.ChatTypeGroup, Title: "g"}); err != nil {
+		t.Fatalf("save chat: %v", err)
+	}
+	mixed := []domain.Message{
+		{ID: 1, ChatID: 11, Date: now, Text: "ok"},
+		{ID: 2, ChatID: 0, Date: now, Text: "bad"}, // missing chat_id
+	}
+	if err := repo.SaveMessages(ctx, mixed); err == nil {
+		t.Fatalf("expected validation error for missing chat_id")
+	}
+	got, err := repo.GetMessages(ctx, 11, 10, 0)
+	if err != nil {
+		t.Fatalf("get messages: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("partial write detected: %d rows persisted, want 0", len(got))
+	}
+}
+
 func findChat(cs []domain.Chat, id int64) domain.Chat {
 	for _, c := range cs {
 		if c.ID == id {

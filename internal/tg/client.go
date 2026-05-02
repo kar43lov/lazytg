@@ -9,6 +9,7 @@ import (
 
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
+	"github.com/gotd/td/tg"
 )
 
 // Environment variable names for the Telegram API credentials. We keep them
@@ -74,6 +75,11 @@ func CredentialsFromEnv() (apiID int, apiHash string, err error) {
 // public to other packages — the wrapper itself stays unexported across
 // package boundaries by convention.
 func (c *Client) Raw() *telegram.Client { return c.tg }
+
+// API returns the raw RPC client used to issue typed MTProto calls
+// (messages.getHistory, messages.sendMessage, …). The Stage 2 sync helpers
+// in this package call it to keep `internal/core` free of gotd imports.
+func (c *Client) API() *tg.Client { return c.tg.API() }
 
 // Run starts the MTProto session and blocks until fn returns or ctx is
 // cancelled. fn is invoked with a sub-context that is cancelled when the

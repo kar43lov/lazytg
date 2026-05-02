@@ -276,6 +276,69 @@ func (r *Repo) SaveMessage(ctx context.Context, m domain.Message) error {
 	return nil
 }
 
+// SaveMessages inserts or replaces a batch of messages inside a single
+// transaction. The atomic write avoids the per-statement fsync amplification
+// that history backfills would otherwise hit (200 messages × WAL fsync turns
+// into a multi-second stall on slow disks). Empty input is a no-op.
+//
+// Validation matches SaveMessage: a message with chat_id == 0, id == 0 or a
+// zero Date is rejected before any row is written so a single bad item cannot
+// leave the rest half-applied.
+func (r *Repo) SaveMessages(ctx context.Context, msgs []domain.Message) error {
+	if len(msgs) == 0 {
+		return nil
+	}
+	for i, m := range msgs {
+		if m.ChatID == 0 {
+			return fmt.Errorf("message[%d]: chat_id is required", i)
+		}
+		if m.ID == 0 {
+			return fmt.Errorf("message[%d]: id is required", i)
+		}
+		if m.Date.IsZero() {
+			return fmt.Errorf("message[%d]: date is required", i)
+		}
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.PrepareContext(ctx, `
+        INSERT INTO messages (id, chat_id, from_id, date, text, reply_to, raw_blob)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(chat_id, id) DO UPDATE SET
+            from_id  = excluded.from_id,
+            date     = excluded.date,
+            text     = excluded.text,
+            reply_to = excluded.reply_to,
+            raw_blob = excluded.raw_blob
+    `)
+	if err != nil {
+		return fmt.Errorf("prepare stmt: %w", err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	for _, m := range msgs {
+		if _, err := stmt.ExecContext(ctx,
+			m.ID,
+			m.ChatID,
+			nullableInt64(m.FromID),
+			m.Date.UTC().Unix(),
+			m.Text,
+			nullableInt64(m.ReplyTo),
+			m.RawBlob,
+		); err != nil {
+			return fmt.Errorf("save message %d/%d: %w", m.ChatID, m.ID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
 // GetMessages returns up to limit messages from chatID ordered by date desc.
 // Offset is applied after ordering. Pass limit <= 0 to get an empty slice.
 func (r *Repo) GetMessages(ctx context.Context, chatID int64, limit, offset int) ([]domain.Message, error) {
