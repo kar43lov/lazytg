@@ -157,6 +157,68 @@ func TestRepo_SaveMessage_RequiresChatID(t *testing.T) {
 	}
 }
 
+func TestRepo_AccountsCRUD(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+
+	t1 := time.Now().UTC().Truncate(time.Second).Add(-2 * time.Hour)
+	t2 := t1.Add(time.Hour)
+
+	want := []domain.Account{
+		{Phone: "+79990001111", Alias: "primary", CreatedAt: t1},
+		{Phone: "+79990002222", Alias: "secondary", CreatedAt: t2},
+	}
+	for _, a := range want {
+		if err := repo.SaveAccount(ctx, a); err != nil {
+			t.Fatalf("save account %q: %v", a.Phone, err)
+		}
+	}
+
+	got, err := repo.GetAccounts(ctx)
+	if err != nil {
+		t.Fatalf("get accounts: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d accounts, want 2", len(got))
+	}
+	if got[0].Phone != "+79990001111" || got[1].Phone != "+79990002222" {
+		t.Fatalf("accounts not ordered by created_at asc: got %+v", got)
+	}
+
+	// Upsert: second SaveAccount with same phone updates the alias.
+	updated := domain.Account{Phone: "+79990001111", Alias: "renamed", CreatedAt: t1}
+	if err := repo.SaveAccount(ctx, updated); err != nil {
+		t.Fatalf("update account: %v", err)
+	}
+	got, err = repo.GetAccounts(ctx)
+	if err != nil {
+		t.Fatalf("get accounts: %v", err)
+	}
+	if got[0].Alias != "renamed" {
+		t.Errorf("alias not updated, got %q", got[0].Alias)
+	}
+
+	if err := repo.DeleteAccount(ctx, "+79990001111"); err != nil {
+		t.Fatalf("delete account: %v", err)
+	}
+	if err := repo.DeleteAccount(ctx, "+79990001111"); err != nil {
+		t.Fatalf("delete account (idempotent): %v", err)
+	}
+	got, err = repo.GetAccounts(ctx)
+	if err != nil {
+		t.Fatalf("get accounts: %v", err)
+	}
+	if len(got) != 1 || got[0].Phone != "+79990002222" {
+		t.Fatalf("expected one remaining account, got %+v", got)
+	}
+}
+
+func TestRepo_SaveAccount_RequiresPhone(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+	if err := repo.SaveAccount(ctx, domain.Account{Alias: "x"}); err == nil {
+		t.Fatal("expected error for missing phone, got nil")
+	}
+}
+
 func TestRepo_GetMessages_LimitZeroReturnsNil(t *testing.T) {
 	repo, ctx := openTestRepo(t)
 	got, err := repo.GetMessages(ctx, 1, 0, 0)

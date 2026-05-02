@@ -95,16 +95,16 @@
 
 ### Task 5: Cobra CLI skeleton
 
-- [ ] Добавить зависимость `go get github.com/spf13/cobra`
-- [ ] Создать `cmd/lazytg/cmd/root.go` с `rootCmd = &cobra.Command{Use: "lazytg", Short: "Local-first Telegram TUI client", Long: "..."}`. Persistent флаги: `--account string` (phone аккаунта), `--config string` (путь к config-файлу), `--debug bool` (verbose logging), `--log-level string` (debug|info|warn|error, default "info")
-- [ ] Создать `cmd/lazytg/cmd/login.go` с `loginCmd = &cobra.Command{Use: "login", Short: "Authenticate a Telegram account"}`. Run: создаёт `Client`, прогоняет `auth.Login` с stdin-prompter (phone из `--account` или интерактивно), сохраняет session
-- [ ] Создать `cmd/lazytg/cmd/logout.go` — удаляет сессию указанного `--account` из SecretStore
-- [ ] Создать `cmd/lazytg/cmd/accounts.go` — печатает список аккаунтов из БД (поле alias + phone), помечает активный
-- [ ] Создать `cmd/lazytg/cmd/version.go` с переменными `version`, `commit`, `date` (заполняются через `-ldflags` от GoReleaser, default "dev"). Печатает форматированно
-- [ ] Создать `cmd/lazytg/cmd/debug.go` с `debugCmd` (parent для debug-подкоманд) и `debugBundleCmd` (Use: "debug-bundle") — пока stub: печатает `"debug-bundle stub: implementation in stage 3"` и exit 0. Полная реализация — этап 3 плана
-- [ ] Обновить `cmd/lazytg/main.go`: импортировать `cmd`, вызывать `cmd.Execute()`, при ошибке exit 1
-- [ ] Создать `cmd/lazytg/cmd/root_test.go` с тестами на парсинг флагов через `rootCmd.SetArgs([]string{...})` и проверку `rootCmd.PersistentFlags().Lookup("debug")`. Smoke-тест на `debug-bundle`: выполнить команду через `rootCmd.SetArgs([]string{"debug-bundle"})`, проверить exit 0 и что в stdout есть "debug-bundle stub"
-- [ ] Запустить `go build ./cmd/lazytg && ./bin/lazytg --help` (через Makefile target `build`) — должна вывестись справка
+- [x] Добавить зависимость `go get github.com/spf13/cobra`
+- [x] Создать `cmd/lazytg/cmd/root.go` с `rootCmd = &cobra.Command{Use: "lazytg", Short: "Local-first Telegram TUI client", Long: "..."}`. Persistent флаги: `--account string` (phone аккаунта), `--config string` (путь к config-файлу), `--debug bool` (verbose logging), `--log-level string` (debug|info|warn|error, default "info")
+- [x] Создать `cmd/lazytg/cmd/login.go` с `loginCmd = &cobra.Command{Use: "login", Short: "Authenticate a Telegram account"}`. Run: создаёт `Client`, прогоняет `auth.Login` с stdin-prompter (phone из `--account` или интерактивно), сохраняет session
+- [x] Создать `cmd/lazytg/cmd/logout.go` — удаляет сессию указанного `--account` из SecretStore
+- [x] Создать `cmd/lazytg/cmd/accounts.go` — печатает список аккаунтов из БД (поле alias + phone), помечает активный
+- [x] Создать `cmd/lazytg/cmd/version.go` с переменными `version`, `commit`, `date` (заполняются через `-ldflags` от GoReleaser, default "dev"). Печатает форматированно
+- [x] Создать `cmd/lazytg/cmd/debug.go` с `debugCmd` (parent для debug-подкоманд) и `debugBundleCmd` (Use: "debug-bundle") — пока stub: печатает `"debug-bundle stub: implementation in stage 3"` и exit 0. Полная реализация — этап 3 плана
+- [x] Обновить `cmd/lazytg/main.go`: импортировать `cmd`, вызывать `cmd.Execute()`, при ошибке exit 1
+- [x] Создать `cmd/lazytg/cmd/root_test.go` с тестами на парсинг флагов через `rootCmd.SetArgs([]string{...})` и проверку `rootCmd.PersistentFlags().Lookup("debug")`. Smoke-тест на `debug-bundle`: выполнить команду через `rootCmd.SetArgs([]string{"debug-bundle"})`, проверить exit 0 и что в stdout есть "debug-bundle stub"
+- [x] Запустить `go build ./cmd/lazytg && ./bin/lazytg --help` (через Makefile target `build`) — должна вывестись справка
 
 ### Task 6: Logging slog + redaction
 

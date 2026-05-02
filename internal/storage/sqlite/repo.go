@@ -43,6 +43,80 @@ func (r *Repo) Close() error { return r.db.Close() }
 // expected not to close this handle.
 func (r *Repo) DB() *sql.DB { return r.db }
 
+// SaveAccount upserts an account row by phone. CreatedAt is preserved on
+// updates so the original login moment survives alias changes.
+func (r *Repo) SaveAccount(ctx context.Context, a domain.Account) error {
+	if a.Phone == "" {
+		return errors.New("account: phone is required")
+	}
+	created := a.CreatedAt
+	if created.IsZero() {
+		created = time.Now().UTC()
+	}
+	_, err := r.db.ExecContext(ctx, `
+        INSERT INTO accounts (id, phone, alias, created_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET
+            alias = excluded.alias
+    `,
+		nullableInt64(a.ID),
+		a.Phone,
+		nullableString(a.Alias),
+		created.UTC().Unix(),
+	)
+	if err != nil {
+		return fmt.Errorf("save account %q: %w", a.Phone, err)
+	}
+	return nil
+}
+
+// GetAccounts returns every persisted account ordered by created_at ascending
+// so the oldest one is shown first (handy for "active by default" semantics).
+func (r *Repo) GetAccounts(ctx context.Context) ([]domain.Account, error) {
+	rows, err := r.db.QueryContext(ctx, `
+        SELECT id, phone, alias, created_at
+        FROM accounts
+        ORDER BY created_at ASC, phone ASC
+    `)
+	if err != nil {
+		return nil, fmt.Errorf("query accounts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.Account
+	for rows.Next() {
+		var (
+			a       domain.Account
+			id      sql.NullInt64
+			alias   sql.NullString
+			created int64
+		)
+		if err := rows.Scan(&id, &a.Phone, &alias, &created); err != nil {
+			return nil, fmt.Errorf("scan account: %w", err)
+		}
+		a.ID = id.Int64
+		a.Alias = alias.String
+		a.CreatedAt = time.Unix(created, 0).UTC()
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate accounts: %w", err)
+	}
+	return out, nil
+}
+
+// DeleteAccount removes an account row by phone. Returns nil if the account
+// does not exist so logout flows are idempotent.
+func (r *Repo) DeleteAccount(ctx context.Context, phone string) error {
+	if phone == "" {
+		return errors.New("account: phone is required")
+	}
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM accounts WHERE phone = ?`, phone); err != nil {
+		return fmt.Errorf("delete account %q: %w", phone, err)
+	}
+	return nil
+}
+
 // SaveChat upserts a chat row using SQLite's ON CONFLICT REPLACE semantics.
 func (r *Repo) SaveChat(ctx context.Context, c domain.Chat) error {
 	_, err := r.db.ExecContext(ctx, `
@@ -200,6 +274,15 @@ func nullableInt64(v int64) sql.NullInt64 {
 		return sql.NullInt64{}
 	}
 	return sql.NullInt64{Int64: v, Valid: true}
+}
+
+// nullableString returns NULL for an empty string so optional text columns can
+// hold real NULLs instead of empty strings (eases SQL filters like IS NULL).
+func nullableString(v string) sql.NullString {
+	if v == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: v, Valid: true}
 }
 
 func boolToInt(b bool) int {
