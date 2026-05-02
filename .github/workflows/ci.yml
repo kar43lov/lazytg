@@ -34,13 +34,12 @@ jobs:
           args: --timeout=5m
 
   test:
-    name: Test (${{ matrix.os }}, tags=${{ matrix.tags }})
+    name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        tags: ["", "sqlcipher"]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -58,26 +57,18 @@ jobs:
             ~/go/pkg/mod
             ~/.cache/go-build
             ~/Library/Caches/go-build
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-${{ matrix.tags }}
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
 
-      - name: Install SQLCipher (Linux)
-        if: matrix.tags == 'sqlcipher' && runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libsqlcipher-dev
-
-      - name: Install SQLCipher (macOS)
-        if: matrix.tags == 'sqlcipher' && runner.os == 'macOS'
-        run: brew install sqlcipher
-
       - name: Build
-        run: go build -tags "${{ matrix.tags }}" ./...
+        run: go build ./...
 
       - name: Test
-        run: go test -race -coverprofile=coverage.out -covermode=atomic -tags "${{ matrix.tags }}" ./...
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Upload coverage
-        if: matrix.os == 'ubuntu-latest' && matrix.tags == ''
+        if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage.out

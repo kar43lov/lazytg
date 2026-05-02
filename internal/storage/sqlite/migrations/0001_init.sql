@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS chats (
 
 CREATE TABLE IF NOT EXISTS messages (
     id        INTEGER NOT NULL,
-    chat_id   INTEGER NOT NULL REFERENCES chats(id),
+    chat_id   INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
     from_id   INTEGER,
     date      INTEGER NOT NULL,
     text      TEXT,
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS peers (
 );
 
 CREATE TABLE IF NOT EXISTS state (
-    account_id INTEGER PRIMARY KEY REFERENCES accounts(id),
+    account_id INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
     pts        INTEGER,
     qts        INTEGER,
     date       INTEGER,

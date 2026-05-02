@@ -230,6 +230,29 @@ func TestRepo_GetMessages_LimitZeroReturnsNil(t *testing.T) {
 	}
 }
 
+// TestRepo_ForeignKeysEnforcedAcrossPool inserts a message that references a
+// non-existent chat_id from many goroutines in parallel. Without the DSN-level
+// _pragma=foreign_keys(1), only one connection in the pool would enforce the
+// constraint and the rest would silently accept the orphan row — see the
+// comment in repo.Open. Every concurrent attempt must fail.
+func TestRepo_ForeignKeysEnforcedAcrossPool(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+	const goroutines = 16
+	errs := make(chan error, goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func(i int) {
+			errs <- repo.SaveMessage(ctx, domain.Message{
+				ID: int64(i + 1), ChatID: 99999, Date: time.Now().UTC(), Text: "orphan",
+			})
+		}(i)
+	}
+	for i := 0; i < goroutines; i++ {
+		if err := <-errs; err == nil {
+			t.Errorf("iteration %d: expected FK violation, got nil", i)
+		}
+	}
+}
+
 func findChat(cs []domain.Chat, id int64) domain.Chat {
 	for _, c := range cs {
 		if c.ID == id {

@@ -18,7 +18,7 @@ func TestRedact_Patterns(t *testing.T) {
 		{"empty", "", ""},
 		{"clean text", "hello world", "hello world"},
 		{"phone with plus", "call +79991112233 now", "call +*** now"},
-		{"phone without plus", "call 79991112233 now", "call +*** now"},
+		{"phone without plus stays", "call 79991112233 now", "call 79991112233 now"},
 		{"phone short ignored", "id 12345", "id 12345"},
 		{
 			"api_hash 32 hex",
@@ -26,8 +26,13 @@ func TestRedact_Patterns(t *testing.T) {
 			"api_hash=<api_hash> tail",
 		},
 		{
-			"session base64",
-			"session: AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwXxYy",
+			"long hex blob (auth_key) caught by api_hash",
+			"key=" + strings.Repeat("0123456789abcdef", 4),
+			"key=<api_hash>",
+		},
+		{
+			"session base64 with /",
+			"session: AaBb/CcDdEeFfGg+HhIiJjKkLlMmNnOoPpQqRrSsTtUuVv",
 			"session: <session>",
 		},
 		{
@@ -40,6 +45,11 @@ func TestRedact_Patterns(t *testing.T) {
 			"deadbeef",
 			"deadbeef",
 		},
+		// false-positive guards: previously these were eaten by the regexes.
+		{"int64 chat_id stays", "chat_id=1700000000 ok", "chat_id=1700000000 ok"},
+		{"15-digit numeric ID stays", "user_id 123456789012345 found", "user_id 123456789012345 found"},
+		{"pure-alpha 50-char identifier stays", "ref AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwX done", "ref AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwX done"},
+		{"unix timestamp stays", "ts=1735689600 evt=ok", "ts=1735689600 evt=ok"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -57,7 +67,7 @@ func TestRedactingHandler_ScrubsMessageAndAttrs(t *testing.T) {
 	logger := slog.New(h)
 
 	logger.Info("login for +79991112233",
-		slog.String("session", "AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVv"),
+		slog.String("session", "AaBb/CcDdEeFfGg+HhIiJjKkLlMmNnOoPpQqRrSsTtUuVv"),
 		slog.Int("retry", 3),
 	)
 

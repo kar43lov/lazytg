@@ -23,24 +23,22 @@ Think `lazygit` ergonomics, but for Telegram conversations: keyboard-driven, sin
 Current capabilities:
 
 - `lazytg login` — phone + code + 2FA authentication via [gotd/td](https://github.com/gotd/td); session is persisted to OS keyring (with `age`-encrypted file fallback for headless boxes).
-- `lazytg accounts` — list authenticated accounts.
-- `lazytg logout` — drop a stored session.
+- `lazytg accounts` — list authenticated accounts (read-only, no Telegram round-trip).
+- `lazytg logout --account <phone>` — drop a stored session.
 - `lazytg version` — print version, commit, build date.
+- `lazytg debug-bundle` — stub in Stage 1; real implementation in Stage 3.
 - SQLite storage layer with FTS5 trigram index (verified for both Cyrillic and Latin text).
+
+## Requirements
+
+- Go ≥ 1.25 to build (`go.mod` toolchain pin).
+- On Linux: a running D-Bus session with a Secret Service provider (gnome-keyring, KWallet, etc.) for keyring storage. Headless boxes fall back to an `age`-encrypted file gated by a master passphrase.
+- SQLite ≥ 3.34 is bundled by `modernc.org/sqlite` — no system SQLite required.
+- Telegram API credentials in `LAZYTG_API_ID` / `LAZYTG_API_HASH` (see <https://my.telegram.org/apps>).
 
 ## Install
 
-### From source (Go ≥ 1.22)
-
-```sh
-go install github.com/pgmac/lazytg/cmd/lazytg@latest
-```
-
-### Pre-built binaries
-
-Pre-built archives for `linux` and `darwin` (`amd64` + `arm64`) are published on the [Releases](https://github.com/pgmac/lazytg/releases) page. SHA256 checksums and cosign keyless signatures are attached to every release.
-
-### From this repository
+### From source
 
 ```sh
 git clone https://github.com/pgmac/lazytg.git
@@ -48,11 +46,15 @@ cd lazytg
 make build          # → bin/lazytg
 ```
 
-`make build` produces a pure-Go binary. To opt into CGo-backed SQLCipher (encrypted SQLite database):
+Once a release is tagged, `go install github.com/pgmac/lazytg/cmd/lazytg@latest` will also work.
 
-```sh
-go build -tags sqlcipher -o bin/lazytg ./cmd/lazytg
-```
+### Pre-built binaries
+
+Pre-built archives for `linux` and `darwin` (`amd64` + `arm64`) are published on the [Releases](https://github.com/pgmac/lazytg/releases) page. SHA256 checksums and cosign keyless signatures are attached to every release.
+
+### Encrypted database (planned for Stage 3)
+
+A `sqlcipher` build tag is reserved for the CGo-backed encrypted driver and is **not yet wired**. Until Stage 3 lands, the database is unencrypted regardless of build tag — rely on filesystem permissions (`0600`/`0700`) and OS-level disk encryption.
 
 ## Quickstart
 
@@ -74,14 +76,26 @@ lazytg logout --account +71234567890
 
 The session is stored in your OS keyring (Keychain on macOS, Secret Service on Linux, Credential Manager on Windows). On a headless server without D-Bus, lazytg falls back to a file encrypted with [age](https://age-encryption.org/), gated by a master passphrase you provide at startup.
 
-Configuration, data, and cache directories follow the [XDG Base Directory spec](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html):
+### Persistent flags
 
-| Purpose         | Path                                |
-|-----------------|-------------------------------------|
-| Config          | `$XDG_CONFIG_HOME/lazytg/`          |
-| Data (SQLite)   | `$XDG_DATA_HOME/lazytg/`            |
-| State           | `$XDG_STATE_HOME/lazytg/`           |
-| Cache           | `$XDG_CACHE_HOME/lazytg/`           |
+All subcommands accept:
+
+- `--account <phone>` — phone number to operate on.
+- `--debug` — duplicates JSON logs to stderr in addition to the rotated file sink.
+- `--log-level debug|info|warn|error` (default `info`).
+
+### Files lazytg creates
+
+Configuration, data, and cache directories follow the [XDG Base Directory spec](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html) on Linux. macOS uses Apple's user-data conventions where the spec defers to them.
+
+| Purpose         | Linux                               | macOS                                                   |
+|-----------------|-------------------------------------|---------------------------------------------------------|
+| Config          | `$XDG_CONFIG_HOME/lazytg/`          | `~/Library/Application Support/lazytg/`                 |
+| Data (SQLite)   | `$XDG_DATA_HOME/lazytg/`            | `~/Library/Application Support/lazytg/`                 |
+| State (logs)    | `$XDG_STATE_HOME/lazytg/`           | `~/Library/Application Support/lazytg/`                 |
+| Cache           | `$XDG_CACHE_HOME/lazytg/`           | `~/Library/Caches/lazytg/`                              |
+
+Logs go to `<state>/lazytg.log` with lumberjack rotation (10 MB × 3 backups × 30 days). Phone numbers, session blobs, and `api_hash` strings are scrubbed before write.
 
 ## Architecture
 
@@ -89,9 +103,9 @@ Configuration, data, and cache directories follow the [XDG Base Directory spec](
 
 - `internal/tg/` — gotd/td wrapper (knows MTProto)
 - `internal/core/` — domain types, storage interfaces, event bus, sync (no gotd, no bubbletea)
-- `internal/ui/` — Bubble Tea models and views (no gotd)
-- `internal/storage/sqlite/` — SQLite repository (modernc.org/sqlite by default; SQLCipher via `-tags sqlcipher`)
-- `internal/app/` — manual DI wiring
+- `internal/ui/` — Bubble Tea models and views (Stage 2; only a `doc.go` placeholder today)
+- `internal/storage/sqlite/` — SQLite repository (modernc.org/sqlite, pure-Go)
+- `internal/app/` — manual DI wiring (Stage 2; only a `doc.go` placeholder today, wiring lives in `cmd/lazytg/cmd/runtime.go` for now)
 - `cmd/lazytg/` — cobra entry point
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full layout, dependency rules, and stack rationale.

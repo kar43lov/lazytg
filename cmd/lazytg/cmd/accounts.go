@@ -27,7 +27,7 @@ func runAccounts(cmd *cobra.Command, _ []string) error {
 		ctx = context.Background()
 	}
 
-	paths, _, err := resolvePaths()
+	paths, err := resolvePathsOnly()
 	if err != nil {
 		return err
 	}

@@ -6,15 +6,26 @@ import (
 	"context"
 	"log/slog"
 	"regexp"
+	"strings"
 )
 
 // Patterns match common Telegram-related secrets that must never reach disk
 // or stderr verbatim. Order matters: api_hash must be tried before the
 // generic session matcher because a 32-hex string also matches the long
 // base64-ish pattern.
+//
+// phoneRe deliberately requires a leading "+" so that bare numeric IDs
+// (chat_id, account_id, unix timestamps — all int64 values that frequently
+// reach 10+ digits) survive unredacted. Telegram phone numbers are always
+// rendered with the "+" country prefix, so this is a safe narrowing.
+//
+// sessionRe requires the run to contain at least one non-hex character so
+// long hex blobs (auth keys, message hashes) fall through to api_hash or
+// remain visible. A pure base64 token will always include "+" / "/" / "=" or
+// upper/lower case mix, so this barely changes coverage of real secrets.
 var (
-	phoneRe   = regexp.MustCompile(`\+?\d{10,15}`)
-	apiHashRe = regexp.MustCompile(`\b[0-9a-fA-F]{32}\b`)
+	phoneRe   = regexp.MustCompile(`\+\d{10,15}\b`)
+	apiHashRe = regexp.MustCompile(`\b[0-9a-fA-F]{32,}\b`)
 	sessionRe = regexp.MustCompile(`[A-Za-z0-9+/=_-]{40,}`)
 )
 
@@ -22,12 +33,22 @@ var (
 // MTProto session blobs and api_hash hex strings. The function is best-effort
 // — it is meant to keep accidents out of logs, not to defeat a determined
 // reader. Order: api_hash → session (longer) → phone (shorter).
+//
+// The session matcher is broad (40+ base64-ish chars), so we apply it only
+// to runs that contain at least one of "+/=_-". A pure-alphanumeric run of
+// that length is almost always an identifier (URL slug, hex hash already
+// caught by api_hash, repo path) rather than a session blob.
 func Redact(s string) string {
 	if s == "" {
 		return s
 	}
 	s = apiHashRe.ReplaceAllString(s, "<api_hash>")
-	s = sessionRe.ReplaceAllString(s, "<session>")
+	s = sessionRe.ReplaceAllStringFunc(s, func(m string) string {
+		if strings.ContainsAny(m, "+/=_-") {
+			return "<session>"
+		}
+		return m
+	})
 	s = phoneRe.ReplaceAllString(s, "+***")
 	return s
 }

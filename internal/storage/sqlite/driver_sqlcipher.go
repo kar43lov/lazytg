@@ -2,16 +2,18 @@
 
 package sqlite
 
-// SQLCipher driver. The real CGo-backed implementation is wired in stage 3
-// of the lazytg roadmap. This stub keeps the build-tag matrix compiling so
-// that CI can validate the tag flow before the real driver is plugged in.
+// SQLCipher driver placeholder. The CGo-backed implementation is planned for
+// Stage 3 of the lazytg roadmap. Until then, building with -tags sqlcipher
+// must NOT silently produce a binary that uses the unencrypted modernc driver
+// — that would be a security misrepresentation. Instead this init panics so
+// the failure is visible at first run.
 //
-// When the real driver lands, replace the import below with:
+// When the real driver lands, replace this file with:
 //
 //	import _ "github.com/mutecomm/go-sqlcipher/v4"
+//	const driverName = "sqlite3"
 //
-// and set driverName to "sqlite3" (the name go-sqlcipher registers under).
-import _ "modernc.org/sqlite" //nolint:revive // blank import is the documented way to register a database/sql driver
-
-// driverName is the database/sql driver to use when opening connections.
-const driverName = "sqlite"
+// (and remove the panic).
+func init() {
+	panic("sqlcipher build tag is reserved for lazytg Stage 3 (CGo SQLCipher); rebuild without -tags sqlcipher for now")
+}

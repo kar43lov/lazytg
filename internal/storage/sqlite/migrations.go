@@ -22,23 +22,6 @@ type migration struct {
 	sql     string
 }
 
-// applyPragmas configures connection-wide SQLite pragmas. Called by Open before
-// migrations so that the WAL journal mode and foreign-key enforcement are in
-// effect for subsequent statements.
-func applyPragmas(ctx context.Context, db *sql.DB) error {
-	pragmas := []string{
-		"PRAGMA journal_mode = WAL",
-		"PRAGMA foreign_keys = ON",
-		"PRAGMA synchronous = NORMAL",
-	}
-	for _, p := range pragmas {
-		if _, err := db.ExecContext(ctx, p); err != nil {
-			return fmt.Errorf("apply %q: %w", p, err)
-		}
-	}
-	return nil
-}
-
 // loadMigrations parses all SQL files from the embedded migrations directory.
 // Filenames must match the pattern NNNN_name.sql where NNNN is a positive
 // integer version. Returns the migrations sorted by version ascending.

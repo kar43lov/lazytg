@@ -4,8 +4,8 @@ This document describes the runtime topology, package layout, and import-directi
 
 ## Goals
 
-1. **Local-first.** All persistent state (messages, peers, FTS index) lives in a single SQLite file under `$XDG_DATA_HOME/lazytg/`. lazytg works offline against the cache.
-2. **Pure-Go default.** No CGo in the default build, so cross-compilation for `linux` and `darwin` × `amd64` and `arm64` is a single `go build`. CGo is opt-in via the `sqlcipher` build tag for users who want an encrypted database.
+1. **Local-first.** All persistent state (messages, peers, FTS index) lives in a single SQLite file under `$XDG_DATA_HOME/lazytg/` (or the macOS equivalent). lazytg works offline against the cache.
+2. **Pure-Go default.** No CGo in the default build, so cross-compilation for `linux` and `darwin` × `amd64` and `arm64` is a single `go build`. CGo for SQLCipher is reserved for Stage 3 behind a build tag — not yet wired.
 3. **Strict layering.** UI does not talk to MTProto, MTProto does not talk to the UI, storage talks to neither. Enforced by `depguard` — see below.
 4. **Minimum behavioural footprint vs Telegram.** The auth/send/sync code lives in one place (`internal/tg/`) and is the only layer that issues real RPC. It is small enough to audit for ban-risk indicators end-to-end.
 
@@ -38,18 +38,20 @@ This document describes the runtime topology, package layout, and import-directi
 
 ## Package map
 
-| Package                       | Responsibility                                                                                     | May import                              | MUST NOT import                                                |
-|-------------------------------|-----------------------------------------------------------------------------------------------------|-----------------------------------------|----------------------------------------------------------------|
-| `cmd/lazytg`                  | Cobra commands (`login`, `logout`, `accounts`, `version`, `debug-bundle`).                          | everything                              | —                                                              |
-| `internal/app`                | Manual constructor wiring (DI without a framework).                                                 | `internal/{tg,core,storage,ui}`         | —                                                              |
-| `internal/tg`                 | The only layer that speaks MTProto. Wraps `gotd/td`: client, auth flow, session storage, send, history, updates manager, FloodWait handling, file up/download. | `internal/core`, `gotd/td`              | `internal/ui`                                                   |
-| `internal/core`               | Domain types, storage interfaces, event bus, sync logic, search, config, observability, security. Pure logic, no I/O against Telegram or terminals. | `internal/storage` (interface only)     | `gotd/td`, `charmbracelet/bubbletea`                            |
-| `internal/core/events`        | Typed in-process event bus (publish/subscribe with fan-out under mutex, drop-on-overflow).          | stdlib only                             | —                                                              |
-| `internal/core/domain`        | Plain Go types for `Account`, `Chat`, `Message` exchanged across layers.                            | stdlib only                             | —                                                              |
-| `internal/core/config`        | XDG path resolution, secret store abstraction (`KeyringStore`, `AgeFileStore`).                     | stdlib, `zalando/go-keyring`, `filippo.io/age` | —                                                       |
-| `internal/core/obs`           | `slog` logger factory, redacting handler, lumberjack rotation.                                      | stdlib, `lumberjack`                    | —                                                               |
-| `internal/storage/sqlite`     | Repository implementation. Migrations, PRAGMAs, CRUD. FTS5 index lives here.                        | `internal/core/domain`                  | `internal/ui`, `internal/tg`                                    |
-| `internal/ui`                 | Bubble Tea models, views, key bindings, panes, palette. Lives in stage 2.                           | `internal/core` (interfaces)            | `gotd/td`                                                       |
+Packages marked **(Stage 1)** ship in this branch. **(Stage 2/3)** packages exist as `doc.go` placeholders or are not present yet — they will appear when the corresponding stage lands.
+
+| Package                       | Stage | Responsibility                                                                                     | May import                              | MUST NOT import                                                |
+|-------------------------------|-------|-----------------------------------------------------------------------------------------------------|-----------------------------------------|----------------------------------------------------------------|
+| `cmd/lazytg`                  | 1     | Cobra commands (`login`, `logout`, `accounts`, `version`, `debug-bundle`).                          | everything                              | —                                                              |
+| `internal/app`                | 2     | Manual constructor wiring (DI without a framework). Stage 1 only ships `doc.go`; wiring lives inline in `cmd/lazytg/cmd/runtime.go`. | `internal/{tg,core,storage,ui}`         | —                                                              |
+| `internal/tg`                 | 1     | The only layer that speaks MTProto. Wraps `gotd/td`: client, auth flow, session storage. Send/history/updates/files arrive in stage 2. | `internal/core`, `gotd/td`              | `internal/ui`                                                   |
+| `internal/core`               | 1     | Domain types, storage interfaces, event bus, config, observability. Sync/search/files/security land in later stages. | `internal/storage` (interface only)     | `gotd/td`, `charmbracelet/bubbletea`                            |
+| `internal/core/events`        | 1     | Typed in-process event bus (publish/subscribe with fan-out under mutex, drop-on-overflow). No producers in stage 1; first consumers arrive with stage 2 sync. | stdlib only                             | —                                                              |
+| `internal/core/domain`        | 1     | Plain Go types for `Account`, `Chat`, `Message` exchanged across layers.                            | stdlib only                             | —                                                              |
+| `internal/core/config`        | 1     | XDG path resolution, secret store abstraction (`KeyringStore`, `AgeFileStore`).                     | stdlib, `zalando/go-keyring`, `filippo.io/age` | —                                                       |
+| `internal/core/obs`           | 1     | `slog` logger factory, redacting handler, lumberjack rotation.                                      | stdlib, `lumberjack`                    | —                                                               |
+| `internal/storage/sqlite`     | 1     | Repository implementation. Migrations, DSN-level PRAGMAs (WAL, foreign_keys, synchronous), CRUD. FTS5 index will live here from stage 3. | `internal/core/domain`                  | `internal/ui`, `internal/tg`                                    |
+| `internal/ui`                 | 2     | Bubble Tea models, views, key bindings, panes, palette. Stage 1 only ships `doc.go`.                | `internal/core` (interfaces)            | `gotd/td`                                                       |
 
 ## Dependency-direction enforcement (depguard)
 
@@ -69,11 +71,11 @@ These choices come out of the v0.1.0 brainstorm + dialectic; the trade-offs are 
 
 | Concern             | Choice                                            | Rejected (and why)                                                                                                                  |
 |---------------------|---------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|
-| Language            | Go ≥ 1.22                                         | Python+Textual, Rust+ratatui — Go matches the `lazygit` mental model and gives a single binary cross-build with no CGo by default.   |
+| Language            | Go ≥ 1.25 (pinned in go.mod)                       | Python+Textual, Rust+ratatui — Go matches the `lazygit` mental model and gives a single binary cross-build with no CGo by default.   |
 | MTProto             | `github.com/gotd/td`                              | TDLib over CGo (kills pure-Go cross-build, doesn't help ban-risk); Bot API (insufficient, can't read user history).                 |
 | TUI                 | `charmbracelet/bubbletea` v2 + `lipgloss` + `bubbles` (stage 2) | `gocui`, `tview` — small ecosystems, GitLab is migrating away from `tview` to bubbletea; bubbletea has 10k+ apps in production.     |
 | SQLite              | `modernc.org/sqlite` (pure Go)                    | `mattn/go-sqlite3` — needs CGo, breaks easy cross-compilation. modernc gives ~75% of CGo performance and supports FTS5 + trigram.    |
-| Encrypted DB (opt-in) | `mutecomm/go-sqlcipher` via build tag `sqlcipher` | Encrypting by default — adds a CGo toolchain requirement for every contributor and complicates releases. Opt-in is the right default. |
+| Encrypted DB (planned) | `mutecomm/go-sqlcipher` via build tag `sqlcipher`, **not yet wired** (Stage 3) | Encrypting by default — adds a CGo toolchain requirement for every contributor and complicates releases. Opt-in is the right default. |
 | Secrets             | `zalando/go-keyring` (with `filippo.io/age` fallback) | `99designs/keyring` — less active, more complex API.                                                                                |
 | CLI                 | `spf13/cobra`                                     | `urfave/cli` — cobra is the de facto standard, plays nice with viper if we ever need it.                                            |
 | Logging             | `log/slog` (stdlib) + `gopkg.in/natefinch/lumberjack.v2` | `zap`, `zerolog` — slog is now stdlib and has structured handlers; lumberjack only handles rotation.                                |
@@ -94,15 +96,14 @@ These choices come out of the v0.1.0 brainstorm + dialectic; the trade-offs are 
 ## Security (see [SECURITY.md](SECURITY.md))
 
 - Sessions are stored via the `SecretStore` interface — never as cleartext on disk.
-- Session and config files are checked at startup; mode `0600` for files, `0700` for directories. Wider permissions cause a fail-fast.
-- Send path has a hard rate-limit guard (`max 10 msg/sec`) to keep behavioural fingerprints low and reduce ban-risk.
-- The `debug-bundle` command (Stage 3) MUST NOT include session data, `api_hash`, or message bodies; this is verified by a grep test in CI.
+- The `age`-encrypted secrets file is fail-fast at startup: a mode wider than `0600` aborts the process. Re-validating directory modes is planned for Stage 3 hardening.
+- Send path will get a hard rate-limit guard (`max 10 msg/sec`) once the send path lands in Stage 2, to keep behavioural fingerprints low and reduce ban-risk.
+- The `debug-bundle` command (Stage 3) MUST NOT include session data, `api_hash`, or message bodies; this will be verified by a grep test in CI.
 
 ## Build modes
 
 ```sh
-make build                       # pure-Go, default
-go build -tags sqlcipher ./...   # CGo + SQLCipher (encrypted DB)
+make build                       # pure-Go, only supported mode in Stage 1
 ```
 
-CI runs the test matrix on both tag sets to make sure neither implementation rots.
+The `sqlcipher` build tag is reserved for Stage 3 (CGo + SQLCipher). Until that driver is wired, the tag is intentionally absent so that `go build -tags sqlcipher` fails loudly rather than producing a binary that pretends to encrypt.

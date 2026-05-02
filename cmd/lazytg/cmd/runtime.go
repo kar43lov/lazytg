@@ -21,13 +21,27 @@ import (
 // Kept centralised so login/logout/accounts agree on where the DB lives.
 const dbFileName = "lazytg.db"
 
-// resolvePaths returns the XDG paths and an open SecretStore. The passphrase
-// prompter is wired to read from /dev/tty (no echo) so it works inside SSH
-// sessions where stdin may already be redirected.
-func resolvePaths() (config.Paths, config.SecretStore, error) {
+// resolvePathsOnly returns the XDG paths without opening the SecretStore. Use
+// this from read-only commands (accounts, version, debug-bundle) so they do
+// not trigger a passphrase prompt on headless boxes that fall back to the
+// age-encrypted file store.
+func resolvePathsOnly() (config.Paths, error) {
 	paths, err := config.Resolve()
 	if err != nil {
-		return config.Paths{}, nil, fmt.Errorf("resolve paths: %w", err)
+		return config.Paths{}, fmt.Errorf("resolve paths: %w", err)
+	}
+	return paths, nil
+}
+
+// resolvePaths returns the XDG paths and an open SecretStore. The passphrase
+// prompter is wired to read from /dev/tty (no echo) so it works inside SSH
+// sessions where stdin may already be redirected. Only commands that touch
+// session secrets (login, logout) should call this — others should use
+// resolvePathsOnly to avoid a needless passphrase prompt.
+func resolvePaths() (config.Paths, config.SecretStore, error) {
+	paths, err := resolvePathsOnly()
+	if err != nil {
+		return config.Paths{}, nil, err
 	}
 	store, err := config.NewSecretStore(paths.Config, ttyPassphrasePrompter)
 	if err != nil {

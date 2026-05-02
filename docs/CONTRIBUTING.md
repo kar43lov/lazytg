@@ -6,9 +6,9 @@ Thanks for considering a contribution. lazytg is in alpha — APIs, package layo
 
 ### Toolchain
 
-- Go ≥ 1.22 (we develop on the latest stable; CI runs against 1.22+)
+- Go ≥ 1.25 (pinned in `go.mod`; CI uses `go-version-file: go.mod`)
 - [`golangci-lint`](https://golangci-lint.run/) — required for any PR
-- [`lefthook`](https://github.com/evilmartians/lefthook) — recommended for client-side pre-commit hooks
+- [`lefthook`](https://github.com/evilmartians/lefthook) — recommended for client-side pre-commit hooks (gofmt, go vet, go test -short)
 - [`goreleaser`](https://goreleaser.com/) — only needed if you want to test the release pipeline locally
 - macOS or Linux. We do not currently develop on Windows; Windows is a target user platform from v0.2.
 
@@ -30,13 +30,7 @@ lefthook install
 make build
 ```
 
-`make build` produces `bin/lazytg` as a pure-Go binary. To exercise the CGo SQLCipher path:
-
-```sh
-go build -tags sqlcipher -o bin/lazytg-sqlcipher ./cmd/lazytg
-```
-
-You will need a working C toolchain for the `sqlcipher` tag (Xcode CLT on macOS, `build-essential` + `libsqlcipher-dev` on Debian/Ubuntu).
+`make build` produces `bin/lazytg` as a pure-Go binary. The `sqlcipher` build tag is reserved for Stage 3 and is not yet wired — until then the database is unencrypted regardless of build tag.
 
 ## Running tests
 
@@ -48,13 +42,13 @@ make tidy           # go mod tidy
 make clean          # rm -rf bin/ dist/ coverage.out
 ```
 
-The CI matrix runs `go test -race -tags=${matrix.tags} ./...` on `ubuntu-latest` and `macos-latest`, with `tags` ∈ `{default, sqlcipher}`. A PR cannot merge until that matrix is green.
+The CI matrix runs `go test -race ./...` on `ubuntu-latest` and `macos-latest`. A PR cannot merge until that matrix is green.
 
 ### Integration tests
 
-- Auth flow tests use `gotd/td/tgtest` (in-process Telegram-protocol mock). They do not need real network access.
-- Storage tests run against `:memory:` SQLite or a temp directory; nothing leaks outside `t.TempDir()`.
-- Coverage gate: `internal/core/...` ≥ 80 % from v0.1.0 onward.
+- Auth flow tests use a hand-rolled `auth.FlowClient` mock (in-process, no MTProto). The `gotd/td/tgtest` SRP server is not yet wired — see Stage 1 plan task 4 deviation.
+- Storage tests run against a temp directory; nothing leaks outside `t.TempDir()`.
+- Coverage gate: `internal/core/...` targets ≥ 80 % from v0.1.0 onward — currently informational, no automated CI gate yet (Stage 4 will add one).
 
 ### Manual smoke (real Telegram)
 
@@ -101,7 +95,7 @@ breaking!: rename --account flag to --phone
 
 Allowed types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `chore`, `build`, `ci`, `security`, `breaking`. The `!` suffix marks breaking changes (also note them in the commit body and `CHANGELOG.md`).
 
-`commitlint` runs as a pre-commit hook (configured in `lefthook.yml`) and on the CI lint job.
+Conventional Commits is currently a **convention only** — there is no automated lint hook or CI check. `commitlint` and `git-cliff` integration is planned for Stage 4 alongside the release-notes pipeline.
 
 ## Pull request checklist
 

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pgmac/lazytg/internal/core/domain"
@@ -19,14 +20,20 @@ type Repo struct {
 
 // Open opens (or creates) the SQLite database at path, applies the WAL/foreign
 // keys pragmas, and runs any pending migrations. Returns a ready-to-use Repo.
+//
+// The pragmas are encoded into the DSN so they apply to every connection in
+// the pool. PRAGMA foreign_keys is connection-scoped: setting it via
+// db.Exec only takes effect on whichever connection the driver hands back,
+// and the rest of the pool would silently ignore foreign-key constraints.
 func Open(ctx context.Context, path string) (*Repo, error) {
-	db, err := sql.Open(driverName, path)
+	dsn := buildDSN(path)
+	db, err := sql.Open(driverName, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open %q: %w", path, err)
 	}
-	if err := applyPragmas(ctx, db); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		return nil, err
+		return nil, fmt.Errorf("ping %q: %w", path, err)
 	}
 	if err := RunMigrations(ctx, db); err != nil {
 		_ = db.Close()
@@ -34,6 +41,28 @@ func Open(ctx context.Context, path string) (*Repo, error) {
 	}
 	return &Repo{db: db}, nil
 }
+
+// buildDSN encodes path-level pragmas so every pooled connection inherits
+// them. modernc.org/sqlite parses the _pragma query parameter and runs each
+// statement on connect.
+func buildDSN(path string) string {
+	if path == ":memory:" || strings.HasPrefix(path, "file:") {
+		// callers passing a file: URI take responsibility for their own
+		// pragma string; for the in-memory case the connection pool is
+		// effectively a single connection so the legacy ExecContext form
+		// would also work, but we keep the call site uniform.
+		sep := "?"
+		if strings.ContainsRune(path, '?') {
+			sep = "&"
+		}
+		return path + sep + pragmaQuery
+	}
+	return "file:" + path + "?" + pragmaQuery
+}
+
+// pragmaQuery is the URL-encoded set of PRAGMAs that must run on every
+// connection in the pool. Order matches what applyPragmas used to do.
+const pragmaQuery = "_pragma=journal_mode(wal)&_pragma=foreign_keys(1)&_pragma=synchronous(normal)"
 
 // Close releases the underlying database connection.
 func (r *Repo) Close() error { return r.db.Close() }
