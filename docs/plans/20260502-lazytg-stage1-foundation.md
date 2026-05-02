@@ -118,13 +118,13 @@
 
 ### Task 7: GitHub Actions CI + GoReleaser snapshot
 
-- [ ] Создать `.github/workflows/ci.yml` с jobs: `lint` (ubuntu-latest, golangci-lint-action@v6), `test` (matrix: os=[ubuntu-latest, macos-latest], tags=[default, sqlcipher], шаги: setup-go@v5 с Go 1.22, `go test -race -coverprofile=coverage.out -tags=${{ matrix.tags }} ./...`, upload coverage в codecov). Cache `~/go/pkg/mod` через actions/cache@v4
-- [ ] Создать `.github/workflows/release.yml`: триггер `on: push: tags: ['v*']`, job `goreleaser` с `goreleaser/goreleaser-action@v6` (`args: release --clean`), permissions `contents: write` + `id-token: write` (для cosign). Env `GITHUB_TOKEN` из secrets
-- [ ] Создать `.goreleaser.yaml` с конфигом: `builds` matrix linux+darwin × amd64+arm64, `archives` (tar.gz, name template `{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}`), `checksum` (algorithm sha256), `changelog` (use git, sort asc), `signs` (cosign keyless через OIDC, artifacts checksum). `release` с `prerelease: auto`. Snapshot config inline через секцию `snapshot.name_template`
-- [ ] Создать `.github/workflows/snapshot.yml`: триггер `on: pull_request` и `on: push: branches: [main]` (без тега), job: `goreleaser/goreleaser-action@v6` с `args: release --snapshot --clean --skip=publish`. Загрузить артефакты через `actions/upload-artifact@v4` для smoke-тестов
-- [ ] Сделать пробный snapshot локально: `goreleaser release --snapshot --clean --skip=publish` (если goreleaser установлен через brew). Проверить что в `dist/` появились архивы
-- [ ] Создать `.github/dependabot.yml` для еженедельных обновлений `gomod` и `github-actions`
-- [ ] Зафиксировать pinned версии в `go.mod` через `go mod tidy`
+- [x] Создать `.github/workflows/ci.yml` с jobs: `lint` (ubuntu-latest, golangci-lint-action@v6), `test` (matrix: os=[ubuntu-latest, macos-latest], tags=[default, sqlcipher], шаги: setup-go@v5 с Go 1.22, `go test -race -coverprofile=coverage.out -tags=${{ matrix.tags }} ./...`, upload coverage в codecov). Cache `~/go/pkg/mod` через actions/cache@v4
+- [x] Создать `.github/workflows/release.yml`: триггер `on: push: tags: ['v*']`, job `goreleaser` с `goreleaser/goreleaser-action@v6` (`args: release --clean`), permissions `contents: write` + `id-token: write` (для cosign). Env `GITHUB_TOKEN` из secrets
+- [x] Создать `.goreleaser.yaml` с конфигом: `builds` matrix linux+darwin × amd64+arm64, `archives` (tar.gz, name template `{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}`), `checksum` (algorithm sha256), `changelog` (use git, sort asc), `signs` (cosign keyless через OIDC, artifacts checksum). `release` с `prerelease: auto`. Snapshot config inline через секцию `snapshot.name_template`
+- [x] Создать `.github/workflows/snapshot.yml`: триггер `on: pull_request` и `on: push: branches: [main]` (без тега), job: `goreleaser/goreleaser-action@v6` с `args: release --snapshot --clean --skip=publish`. Загрузить артефакты через `actions/upload-artifact@v4` для smoke-тестов
+- [x] Сделать пробный snapshot локально: `goreleaser release --snapshot --clean --skip=publish` (если goreleaser установлен через brew). Проверить что в `dist/` появились архивы
+- [x] Создать `.github/dependabot.yml` для еженедельных обновлений `gomod` и `github-actions`
+- [x] Зафиксировать pinned версии в `go.mod` через `go mod tidy`
 
 ### Task 8: Документация фундамента + final verification
 

@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.0.2
+          args: --timeout=5m
+
+  test:
+    name: Test (${{ matrix.os }}, tags=${{ matrix.tags }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        tags: ["", "sqlcipher"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+            ~/Library/Caches/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}-${{ matrix.tags }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install SQLCipher (Linux)
+        if: matrix.tags == 'sqlcipher' && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlcipher-dev
+
+      - name: Install SQLCipher (macOS)
+        if: matrix.tags == 'sqlcipher' && runner.os == 'macOS'
+        run: brew install sqlcipher
+
+      - name: Build
+        run: go build -tags "${{ matrix.tags }}" ./...
+
+      - name: Test
+        run: go test -race -coverprofile=coverage.out -covermode=atomic -tags "${{ matrix.tags }}" ./...
+
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.tags == ''
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.out
+          fail_ci_if_error: false
+        continue-on-error: true

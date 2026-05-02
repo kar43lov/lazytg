@@ -1,0 +1,81 @@
+version: 2
+
+project_name: lazytg
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: lazytg
+    main: ./cmd/lazytg
+    binary: lazytg
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/pgmac/lazytg/cmd/lazytg/cmd.version={{.Version}}
+      - -X github.com/pgmac/lazytg/cmd/lazytg/cmd.commit={{.Commit}}
+      - -X github.com/pgmac/lazytg/cmd/lazytg/cmd.date={{.Date}}
+    flags:
+      - -trimpath
+
+archives:
+  - id: default
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  sort: asc
+  use: git
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
+
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - --yes
+    output: true
+
+release:
+  prerelease: auto
+  draft: false
+  name_template: "lazytg {{ .Version }}"
+  github:
+    owner: pgmac
+    name: lazytg
+  header: |
+    ## lazytg {{ .Version }}
+
+    > ⚠️ Telegram automatically puts unofficial clients under observation. Use lazytg with a test account first. See [SECURITY.md](https://github.com/pgmac/lazytg/blob/main/docs/SECURITY.md).
+  footer: |
+    **Full Changelog**: https://github.com/pgmac/lazytg/compare/{{ .PreviousTag }}...{{ .Tag }}
