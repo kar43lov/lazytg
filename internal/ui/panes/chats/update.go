@@ -36,7 +36,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case events.DialogUpdated, events.MessageReceived:
 		return m.scheduleReload()
 	case tea.KeyPressMsg:
-		if isEnter(typed) && !m.isFilterActive() {
+		if isEnter(typed) && !m.IsFilterActive() {
 			return m.handleEnter()
 		}
 	}
@@ -111,10 +111,12 @@ func isEnter(k tea.KeyPressMsg) bool {
 	return k.Mod == 0
 }
 
-// isFilterActive reports whether the bubbles/list is currently in a
-// state where it should own Enter (filter editing or filter applied
-// with the input still focused). When filtering, Enter applies the
-// filter — intercepting would steal that gesture.
-func (m Model) isFilterActive() bool {
+// IsFilterActive reports whether the bubbles/list is currently in a
+// state where it should own input keys (filter editing). When filtering,
+// Enter applies the filter and "?" is a printable character — the app
+// must skip its own ToggleHelp/Enter handling to avoid stealing those
+// keystrokes. Exported because the app reads it during global-key
+// dispatch in addition to the in-pane Enter check.
+func (m Model) IsFilterActive() bool {
 	return m.list.SettingFilter()
 }

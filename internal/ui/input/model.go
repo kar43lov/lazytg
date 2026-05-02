@@ -75,6 +75,25 @@ type Model struct {
 
 	chatID  int64
 	replyTo *domain.Message
+
+	// inFlight remembers the body and reply pointer of every send that
+	// has been dispatched but not yet reached a terminal Sent / Failed
+	// state on the bus. Used by Update to restore the draft on
+	// OutgoingMessageStateChanged{Failed} — SendService publishes this
+	// async (FloodWait, network retries, validation), so the
+	// synchronous SendFailedMsg path alone covers only the optimistic-
+	// store-write failure surface and would silently drop everything
+	// else.
+	inFlight map[string]inFlightDraft
+}
+
+// inFlightDraft is the state the input pane needs to rebuild a textarea
+// composition after a failed send: the body text and the parent message
+// that was armed as the reply target. Keyed by LocalID returned from
+// SendService.SendText.
+type inFlightDraft struct {
+	text    string
+	replyTo *domain.Message
 }
 
 // New returns a placeholder Model with no send service or keymap
@@ -109,6 +128,7 @@ func NewWithDeps(send SendServiceInterface, km keymap.Keymap, log *slog.Logger) 
 		keymap:   km,
 		send:     send,
 		log:      log,
+		inFlight: make(map[string]inFlightDraft),
 	}
 }
 

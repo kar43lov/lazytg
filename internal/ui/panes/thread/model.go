@@ -73,9 +73,16 @@ type Model struct {
 	// serverID drops the optimistic row instead of appending a
 	// duplicate.
 	pendingServerIDs map[int64]string
-	repo             Repository
-	provider         HistoryProvider
-	log              *slog.Logger
+	// finalizedLocalIDs records every localID that has reached a
+	// terminal Sent or Failed state on the bus. Used by ApplyDispatched
+	// to short-circuit when the synchronous SendDispatchedMsg arrives
+	// AFTER the bus event (the inverted race). Without this guard the
+	// Dispatched insert would re-create a Pending row that no future
+	// event could ever resolve, leaving a phantom [⏳] in the thread.
+	finalizedLocalIDs map[string]struct{}
+	repo              Repository
+	provider          HistoryProvider
+	log               *slog.Logger
 
 	loading bool
 	hasMore bool
@@ -110,11 +117,12 @@ func newModel(repo Repository, provider HistoryProvider, log *slog.Logger) Model
 	)
 	vp.SoftWrap = true
 	return Model{
-		viewport:         vp,
-		repo:             repo,
-		provider:         provider,
-		log:              log,
-		pendingServerIDs: make(map[int64]string),
+		viewport:          vp,
+		repo:              repo,
+		provider:          provider,
+		log:               log,
+		pendingServerIDs:  make(map[int64]string),
+		finalizedLocalIDs: make(map[string]struct{}),
 	}
 }
 
@@ -137,6 +145,7 @@ func (m Model) OpenChat(chatID int64) (Model, tea.Cmd) {
 	m.messages = nil
 	m.outgoing = nil
 	m.pendingServerIDs = make(map[int64]string)
+	m.finalizedLocalIDs = make(map[string]struct{})
 	m.oldestID = 0
 	m.hasMore = false
 	m.loading = true

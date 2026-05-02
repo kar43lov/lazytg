@@ -46,11 +46,19 @@ type EditorClosedMsg struct {
 // has accepted the message (the optimistic record is in the repo) and
 // returned a localID. The app routes this to the thread pane so the
 // pending bubble can render even before the bus event arrives.
+//
+// ReplyToMsg is the parent message the user was replying to (or nil
+// when the send was not a reply). The input pane stashes it under
+// LocalID so a later OutgoingMessageStateChanged{Failed} from the bus
+// can rearm the reply pointer when restoring the draft. ReplyTo (int)
+// stays in the payload so consumers that already work with the wire-
+// level id do not need to dereference the pointer.
 type SendDispatchedMsg struct {
-	LocalID string
-	ChatID  int64
-	Text    string
-	ReplyTo int
+	LocalID    string
+	ChatID     int64
+	Text       string
+	ReplyTo    int
+	ReplyToMsg *domain.Message
 }
 
 // SendFailedMsg fires when SendService.SendText itself returned an error

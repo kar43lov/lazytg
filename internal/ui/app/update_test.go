@@ -136,6 +136,34 @@ func TestHelpModalSwallowsOtherKeys(t *testing.T) {
 	}
 }
 
+// TestQuestionMarkNotHijackedFromInputPane locks the fix for the
+// global "?" hijack: with the input pane focused, "?" is a printable
+// character that must reach the textarea instead of toggling the help
+// overlay. Toggling help on a "?" keystroke would make composing any
+// message ending with a question mark literally impossible.
+func TestQuestionMarkNotHijackedFromInputPane(t *testing.T) {
+	t.Parallel()
+
+	a := newApp(t)
+	// Cycle focus into the input pane.
+	model, cmd := a.Update(keyChord(tea.KeyTab, 0))
+	model, _ = model.Update(cmd())
+	if model.(App).Focus() != FocusInput {
+		t.Fatalf("precondition: expected FocusInput, got %s", model.(App).Focus())
+	}
+
+	// "?" must not produce a help-toggle Cmd while input is focused.
+	model, cmd = model.Update(keyText("?"))
+	if cmd != nil {
+		// If the chord was matched globally we'd see a helpToggledMsg;
+		// applying it would flip Visible to true.
+		model, _ = model.Update(cmd())
+	}
+	if model.(App).HelpVisible() {
+		t.Fatalf("? while input is focused must not toggle help overlay")
+	}
+}
+
 func TestHelpEscDismisses(t *testing.T) {
 	t.Parallel()
 

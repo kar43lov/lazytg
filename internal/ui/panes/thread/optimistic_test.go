@@ -54,12 +54,15 @@ func TestApplyDispatchedIgnoresOtherChat(t *testing.T) {
 	}
 }
 
-// TestOutgoingStatePendingThenSentDropsRow exercises the lifecycle:
+// TestOutgoingStatePendingThenSentKeepsRow exercises the lifecycle:
 // pending entry inserted via ApplyDispatched, then the bus event for
-// state=sent flips the entry — but because the SendService publishes
-// the serverID, the thread drops the entry and remembers the
-// localID→serverID mapping for later dedup of the live echo.
-func TestOutgoingStatePendingThenSentDropsRow(t *testing.T) {
+// state=sent flips the entry to Sent (no glyph). The row is held —
+// applyIncoming will remove it when the live echo arrives — so the
+// user never sees a visible gap between "[⏳] hi" and the real message.
+// For private 1:1 chats Telegram emits UpdateShortSentMessage with no
+// follow-up UpdateNewMessage, so dropping on Sent here would empty the
+// thread until a manual reload.
+func TestOutgoingStatePendingThenSentKeepsRow(t *testing.T) {
 	t.Parallel()
 
 	m := sized(NewWithRepo(newFakeRepo(0), nil, nil))
@@ -73,11 +76,73 @@ func TestOutgoingStatePendingThenSentDropsRow(t *testing.T) {
 		State:    events.OutgoingStateSent,
 	})
 
-	if got := len(m.Outgoing()); got != 0 {
-		t.Fatalf("expected sent → drop, got %d outgoing", got)
+	out := m.Outgoing()
+	if len(out) != 1 {
+		t.Fatalf("expected sent state to keep row for visual continuity, got %d outgoing", len(out))
+	}
+	if out[0].State != events.OutgoingStateSent {
+		t.Fatalf("expected state=sent, got %q", out[0].State)
+	}
+	if out[0].Text != "hi" {
+		t.Fatalf("expected text preserved, got %q", out[0].Text)
 	}
 	if _, tracking := m.pendingServerIDs[555]; !tracking {
 		t.Fatalf("expected pendingServerIDs to track 555 for dedup")
+	}
+	if _, finalized := m.finalizedLocalIDs["local-1"]; !finalized {
+		t.Fatalf("expected localID to be marked finalized so a late SendDispatchedMsg cannot re-create it")
+	}
+}
+
+// TestApplyDispatchedAfterSentSkipsInsert exercises the inverted race
+// where the bus event for Sent (or Failed) reaches the thread before
+// the synchronous SendDispatchedMsg from input. Without the
+// finalizedLocalIDs guard the late ApplyDispatched would re-create a
+// Pending row no future event could resolve.
+func TestApplyDispatchedAfterSentSkipsInsert(t *testing.T) {
+	t.Parallel()
+
+	m := sized(NewWithRepo(newFakeRepo(0), nil, nil))
+	m, _ = m.OpenChat(1)
+
+	// Sent arrives first, before any optimistic row exists. The state
+	// machine records the localID as finalized but cannot patch a row
+	// (no text on hand).
+	m, _ = m.Update(events.OutgoingMessageStateChanged{
+		LocalID:  "local-1",
+		ChatID:   1,
+		ServerID: 555,
+		State:    events.OutgoingStateSent,
+	})
+	if got := len(m.Outgoing()); got != 0 {
+		t.Fatalf("Sent before Dispatched should leave outgoing empty (no text on hand), got %d", got)
+	}
+
+	// Late Dispatched must not resurrect the row.
+	m = m.ApplyDispatched("local-1", 1, "hi")
+	if got := len(m.Outgoing()); got != 0 {
+		t.Fatalf("late ApplyDispatched after Sent must be a no-op, got %d outgoing", got)
+	}
+}
+
+// TestApplyDispatchedAfterFailedSkipsInsert is the symmetric guard for
+// Failed: a late SendDispatchedMsg after a terminal Failed event must
+// not produce a phantom [⏳] row.
+func TestApplyDispatchedAfterFailedSkipsInsert(t *testing.T) {
+	t.Parallel()
+
+	m := sized(NewWithRepo(newFakeRepo(0), nil, nil))
+	m, _ = m.OpenChat(1)
+
+	m, _ = m.Update(events.OutgoingMessageStateChanged{
+		LocalID: "local-1",
+		ChatID:  1,
+		State:   events.OutgoingStateFailed,
+		Error:   "boom",
+	})
+	m = m.ApplyDispatched("local-1", 1, "hi")
+	if got := len(m.Outgoing()); got != 0 {
+		t.Fatalf("late ApplyDispatched after Failed must be a no-op, got %d outgoing", got)
 	}
 }
 

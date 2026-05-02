@@ -5,6 +5,9 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/pgmac/lazytg/internal/core/domain"
+	"github.com/pgmac/lazytg/internal/core/events"
 )
 
 // sendTimeout caps how long SendService.SendText is allowed to take
@@ -31,10 +34,25 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case SetChatMsg:
 		m.chatID = typed.ChatID
 		m.replyTo = nil
+		// The pending-draft tracker is per-chat: switching chats means
+		// the user has moved on and any in-flight Failed event for the
+		// previous chat must not re-populate the new composer with
+		// stale text. Drop the slate so a late bus event finds no
+		// matching localID and silently no-ops.
+		m.inFlight = make(map[string]inFlightDraft)
 		return m, nil
 	case SetReplyMsg:
 		m.replyTo = typed.Msg
 		return m, nil
+	case SendDispatchedMsg:
+		// Remember the dispatched body + reply pointer keyed by
+		// LocalID. The thread pane has its own copy for rendering; we
+		// keep ours so an async Failed event from the bus can restore
+		// the textarea without an extra trip through the thread.
+		m.inFlight[typed.LocalID] = inFlightDraft{text: typed.Text, replyTo: typed.ReplyToMsg}
+		return m, nil
+	case events.OutgoingMessageStateChanged:
+		return m.applyOutgoingState(typed)
 	case OpenEditorMsg:
 		// The chord handler emits OpenEditorMsg as a Cmd so the
 		// program loop has a chance to flush the previous frame
@@ -45,27 +63,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case EditorClosedMsg:
 		return m.applyEditorResult(typed)
 	case SendFailedMsg:
-		// Restore the draft so the user can retry. The reply pointer is
-		// rearmed too so the retry preserves the conversation context
-		// the user was replying into when the original send failed.
-		//
-		// Both restores are conditional: if the user has already started
-		// typing a new message or armed a new reply, we leave that fresher
-		// state alone and silently discard the failed payload. Silently
-		// clobbering a half-typed message with a stale failure body is the
-		// kind of small data-loss UX bug that erodes trust quickly.
-		if m.textarea.Value() == "" {
-			m.setValue(typed.Text)
-		} else if m.log != nil {
-			m.log.Warn("input: send failed but composer holds fresher draft, dropping failed text",
-				"failed_len", len(typed.Text))
-		}
-		if m.replyTo == nil {
-			m.replyTo = typed.ReplyToMsg
-		} else if m.log != nil && typed.ReplyToMsg != nil && typed.ReplyToMsg.ID != m.replyTo.ID {
-			m.log.Warn("input: send failed but reply pointer has been retargeted",
-				"failed_target_id", typed.ReplyToMsg.ID, "current_target_id", m.replyTo.ID)
-		}
+		// Synchronous-error path: SendService.SendText returned an
+		// error before the optimistic record landed (e.g. SaveOutgoing
+		// hit ErrReadOnly). The body never reached a localID-tracked
+		// state, so the bus-event path below cannot help — we restore
+		// directly from the message payload.
+		m.restoreDraft(typed.Text, typed.ReplyToMsg)
 		return m, nil
 	case tea.KeyPressMsg:
 		if cmd, handled := m.handleChord(typed); handled {
@@ -134,11 +137,60 @@ func (m *Model) handleSend() tea.Cmd {
 			}
 		}
 		return SendDispatchedMsg{
-			LocalID: localID,
-			ChatID:  chatID,
-			Text:    text,
-			ReplyTo: replyTo,
+			LocalID:    localID,
+			ChatID:     chatID,
+			Text:       text,
+			ReplyTo:    replyTo,
+			ReplyToMsg: replyToMsg,
 		}
+	}
+}
+
+// applyOutgoingState reacts to the SendService bus events. Sent and
+// Failed are terminal — we drop the localID from inFlight either way.
+// Failed additionally restores the draft so the user can retry: this
+// is the path that catches MTProto-level failures (FloodWait, network
+// retries exhausted, validation), which the synchronous SendFailedMsg
+// path never sees.
+//
+// Pending events are ignored: the thread pane already has a synchronous
+// Dispatched insert and the input pane has nothing to do with the
+// optimistic row's lifecycle. State strings outside the known set are
+// also ignored — keeping the switch closed avoids surprise behaviour
+// when a future state is added without updating this consumer.
+func (m Model) applyOutgoingState(ev events.OutgoingMessageStateChanged) (Model, tea.Cmd) {
+	switch ev.State {
+	case events.OutgoingStateSent:
+		delete(m.inFlight, ev.LocalID)
+	case events.OutgoingStateFailed:
+		draft, ok := m.inFlight[ev.LocalID]
+		delete(m.inFlight, ev.LocalID)
+		if !ok {
+			return m, nil
+		}
+		m.restoreDraft(draft.text, draft.replyTo)
+	}
+	return m, nil
+}
+
+// restoreDraft writes failed text back into the composer if the user
+// has not already typed something fresher; same conditional rule for
+// the reply pointer. Silently clobbering an in-progress draft with a
+// stale failure body is the kind of small data-loss UX bug that erodes
+// trust quickly, so we err on the side of preserving the user's
+// current input and only logging the dropped recovery.
+func (m *Model) restoreDraft(text string, replyTo *domain.Message) {
+	if m.textarea.Value() == "" {
+		m.setValue(text)
+	} else if m.log != nil {
+		m.log.Warn("input: send failed but composer holds fresher draft, dropping failed text",
+			"failed_len", len(text))
+	}
+	if m.replyTo == nil {
+		m.replyTo = replyTo
+	} else if m.log != nil && replyTo != nil && replyTo.ID != m.replyTo.ID {
+		m.log.Warn("input: send failed but reply pointer has been retargeted",
+			"failed_target_id", replyTo.ID, "current_target_id", m.replyTo.ID)
 	}
 }
 

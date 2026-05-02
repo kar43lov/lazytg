@@ -7,10 +7,12 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/pgmac/lazytg/internal/core/domain"
+	"github.com/pgmac/lazytg/internal/core/events"
 	"github.com/pgmac/lazytg/internal/ui/keymap"
 )
 
@@ -393,6 +395,160 @@ func TestViewShowsReplyHintWhenArmed(t *testing.T) {
 	view := m.View()
 	if !strings.Contains(view, "Reply to") || !strings.Contains(view, "previous") {
 		t.Fatalf("View should show reply hint with preview, got %q", view)
+	}
+}
+
+// TestAsyncFailedRestoresDraftAfterDispatch locks the MTProto-failure
+// path: the synchronous SendFailedMsg only fires when SendText itself
+// returns an error before the optimistic record lands. Real-world
+// failures (FloodWait, validation, network retries exhausted) reach
+// the input pane via OutgoingMessageStateChanged{Failed} on the bus.
+// Without the inFlight tracker the textarea would stay empty after
+// such a failure and the user would have to retype the message — a
+// promise the CHANGELOG explicitly makes ("Failed sends restore the
+// draft and the reply pointer") that previously held only for the
+// synchronous surface.
+func TestAsyncFailedRestoresDraftAfterDispatch(t *testing.T) {
+	t.Parallel()
+
+	parent := &domain.Message{ID: 42, Text: "parent"}
+	m := newInput(t, &fakeSender{})
+	m, _ = m.Update(SetChatMsg{ChatID: 7})
+	m, _ = m.Update(SetReplyMsg{Msg: parent})
+
+	// Simulate the dispatch handshake the app would have performed
+	// after the user pressed Enter.
+	m, _ = m.Update(SendDispatchedMsg{
+		LocalID:    "L1",
+		ChatID:     7,
+		Text:       "hello",
+		ReplyTo:    int(parent.ID),
+		ReplyToMsg: parent,
+	})
+	if m.Value() != "" {
+		t.Fatalf("dispatch handshake must not repopulate textarea, got %q", m.Value())
+	}
+
+	// Async failure on the bus.
+	m, _ = m.Update(events.OutgoingMessageStateChanged{
+		LocalID: "L1",
+		ChatID:  7,
+		State:   events.OutgoingStateFailed,
+		Error:   "FLOOD_WAIT_30",
+	})
+
+	if m.Value() != "hello" {
+		t.Fatalf("async Failed must restore textarea body, got %q", m.Value())
+	}
+	if m.ReplyTo() == nil || m.ReplyTo().ID != parent.ID {
+		t.Fatalf("async Failed must rearm reply pointer, got %+v", m.ReplyTo())
+	}
+}
+
+// TestAsyncFailedDoesNotClobberFresherDraft is the symmetric guard:
+// the user has already started typing a new message by the time the
+// failure arrives. We must not silently overwrite their work — the
+// failure body is dropped and only logged.
+func TestAsyncFailedDoesNotClobberFresherDraft(t *testing.T) {
+	t.Parallel()
+
+	m := newInput(t, &fakeSender{})
+	m, _ = m.Update(SetChatMsg{ChatID: 7})
+	m, _ = m.Update(SendDispatchedMsg{LocalID: "L1", ChatID: 7, Text: "old"})
+
+	// User starts typing a new draft.
+	m, _ = m.Update(keyText("n"))
+	m, _ = m.Update(keyText("e"))
+	m, _ = m.Update(keyText("w"))
+
+	m, _ = m.Update(events.OutgoingMessageStateChanged{
+		LocalID: "L1",
+		ChatID:  7,
+		State:   events.OutgoingStateFailed,
+		Error:   "boom",
+	})
+
+	if m.Value() != "new" {
+		t.Fatalf("fresher draft must be preserved, got %q", m.Value())
+	}
+}
+
+// TestAsyncSentClearsInFlight verifies that a successful send drops
+// the localID from the tracker so a later spurious Failed for the
+// same id (e.g. retry of an event already observed) cannot retroactively
+// restore stale text on top of whatever the user has typed since.
+func TestAsyncSentClearsInFlight(t *testing.T) {
+	t.Parallel()
+
+	m := newInput(t, &fakeSender{})
+	m, _ = m.Update(SetChatMsg{ChatID: 7})
+	m, _ = m.Update(SendDispatchedMsg{LocalID: "L1", ChatID: 7, Text: "old"})
+	m, _ = m.Update(events.OutgoingMessageStateChanged{
+		LocalID: "L1",
+		ChatID:  7,
+		State:   events.OutgoingStateSent,
+	})
+	// Now a stray Failed arrives.
+	m, _ = m.Update(events.OutgoingMessageStateChanged{
+		LocalID: "L1",
+		ChatID:  7,
+		State:   events.OutgoingStateFailed,
+		Error:   "should be ignored",
+	})
+	if m.Value() != "" {
+		t.Fatalf("Sent must clear inFlight so a stray Failed is a no-op, got %q", m.Value())
+	}
+}
+
+// TestSetChatClearsInFlight protects against cross-chat state bleed:
+// switching chats discards any pending-failure recovery from the
+// previous conversation so a late Failed event cannot resurrect text
+// into the wrong composer.
+func TestSetChatClearsInFlight(t *testing.T) {
+	t.Parallel()
+
+	m := newInput(t, &fakeSender{})
+	m, _ = m.Update(SetChatMsg{ChatID: 7})
+	m, _ = m.Update(SendDispatchedMsg{LocalID: "L1", ChatID: 7, Text: "old"})
+
+	m, _ = m.Update(SetChatMsg{ChatID: 8})
+
+	m, _ = m.Update(events.OutgoingMessageStateChanged{
+		LocalID: "L1",
+		ChatID:  7,
+		State:   events.OutgoingStateFailed,
+		Error:   "boom",
+	})
+	if m.Value() != "" {
+		t.Fatalf("chat switch must drop in-flight tracker so stale Failed is a no-op, got %q", m.Value())
+	}
+}
+
+// TestReplyHintTruncatesAtRuneBoundaryForCyrillic locks the rune-aware
+// truncation: a Cyrillic reply target longer than replyPreviewLimit
+// runes must be cut on a codepoint boundary, never on a UTF-8 byte
+// boundary. Byte slicing would emit invalid UTF-8 to the terminal and
+// render as replacement characters — the primary audience for the
+// project is Russian-speaking, so this is a critical correctness bug
+// regression test.
+func TestReplyHintTruncatesAtRuneBoundaryForCyrillic(t *testing.T) {
+	t.Parallel()
+
+	// 60 Cyrillic letters — well past the 50-rune cap and 120 bytes in
+	// UTF-8, so a byte slice at offset 50 lands mid-codepoint.
+	long := strings.Repeat("Й", 60)
+	m := newInput(t, &fakeSender{})
+	m = m.SetWidth(200)
+	m, _ = m.Update(SetReplyMsg{Msg: &domain.Message{ID: 1, Text: long}})
+	view := m.View()
+
+	if !utf8.ValidString(view) {
+		t.Fatalf("rendered View must be valid UTF-8 even after truncation, got %q", view)
+	}
+	// Expect the prefix plus 49 Й + ellipsis (truncRunes uses n-1).
+	want := "↳ Reply to: " + strings.Repeat("Й", 49) + "…"
+	if !strings.Contains(view, want) {
+		t.Fatalf("View must contain rune-aware truncation %q, got %q", want, view)
 	}
 }
 

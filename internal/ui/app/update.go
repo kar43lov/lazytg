@@ -48,12 +48,16 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case input.SendDispatchedMsg:
 		// The input pane reports a successful queue-up. Insert the
 		// optimistic row in the thread immediately so the user sees
-		// "[⏳] hello" before the SendService bus event lands. The
-		// input pane has already cleared its textarea — the message
-		// also flows through broadcastToPanes below so the input
-		// itself can react if it ever needs to (today it doesn't).
+		// "[⏳] hello" before the SendService bus event lands. Pass
+		// the same message back through input.Update so the pane can
+		// register the localID in its inFlight tracker — needed for
+		// async draft restoration on a later Failed bus event (the
+		// MTProto-level failure surface that synchronous SendFailedMsg
+		// does not reach).
 		a.thread = a.thread.ApplyDispatched(m.LocalID, m.ChatID, m.Text)
-		return a, nil
+		updated, cmd := a.input.Update(m)
+		a.input = updated
+		return a, cmd
 	case events.MessageReceived,
 		events.DialogUpdated,
 		events.OutgoingMessageStateChanged,
@@ -207,10 +211,19 @@ func (a App) broadcastBusEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, tea.Batch(cmds...)
 	case events.OutgoingMessageStateChanged:
-		updated, cmd := a.thread.Update(ev)
-		a.thread = updated
-		if cmd != nil {
-			cmds = append(cmds, cmd)
+		// Both the thread (renders the [⏳]/[✗] pill) and the input
+		// pane (restores the draft on Failed) need this event. Routing
+		// here keeps each pane's concerns separate while a single
+		// program.Send fan-in stays the upstream entry point.
+		updatedThread, cmdT := a.thread.Update(ev)
+		a.thread = updatedThread
+		if cmdT != nil {
+			cmds = append(cmds, cmdT)
+		}
+		updatedInput, cmdI := a.input.Update(ev)
+		a.input = updatedInput
+		if cmdI != nil {
+			cmds = append(cmds, cmdI)
 		}
 		return a, tea.Batch(cmds...)
 	}
@@ -267,10 +280,16 @@ func (a App) handleResize(msg tea.WindowSizeMsg) App {
 // handleGlobalKey applies app-level shortcuts (toggle help, focus cycling,
 // quit). Returns (cmd, true) when the key was consumed; otherwise the key
 // falls through to the focused sub-pane.
+//
+// ToggleHelp is suppressed when the input pane has focus or the chats
+// pane is in filter-input mode. The default chord is "?" — a printable
+// character — so swallowing it globally would prevent the user from
+// typing "?" into the message body or the chats filter. Quit/FocusNext/
+// FocusPrev are non-printable chords and remain global.
 func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
-	chord := k.String()
+	helpAllowed := a.focus != FocusInput && !a.chats.IsFilterActive()
 	switch {
-	case key.Matches(k, a.keymap.ToggleHelp):
+	case helpAllowed && key.Matches(k, a.keymap.ToggleHelp):
 		return cmdToggleHelp(), true
 	case key.Matches(k, a.keymap.FocusNext):
 		return cmdNextFocus(), true
@@ -279,7 +298,6 @@ func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 	case key.Matches(k, a.keymap.Quit):
 		return cmdQuit(), true
 	}
-	_ = chord
 	return nil, false
 }
 

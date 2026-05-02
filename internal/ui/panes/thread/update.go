@@ -133,12 +133,23 @@ func (m Model) applyIncoming(ev events.MessageReceived) (Model, tea.Cmd) {
 //     catches up. Treating Pending as a no-op eliminates the flicker —
 //     by the time the next state transition (Sent | Failed) arrives,
 //     ApplyDispatched has populated the entry.
-//   - sent: drop the entry once we know the serverID, but stash a
-//     localID → serverID mapping so applyIncoming can dedupe the
-//     server-echo MessageReceived. If we kept the optimistic row, the
-//     user would see two copies of their message.
+//   - sent: flip the entry's State to Sent (RenderOptimistic strips the
+//     [⏳] glyph in this state so the row reads as a normal sent
+//     message), and stash a localID → serverID mapping so applyIncoming
+//     can dedupe the server-echoed MessageReceived. The row is held
+//     until that echo lands rather than being dropped immediately,
+//     because for private 1:1 chats Telegram emits UpdateShortSentMessage
+//     and never re-publishes a corresponding UpdateNewMessage —
+//     dropping on Sent leaves the user staring at an empty thread until
+//     a manual reload. Keeping the row preserves visual continuity in
+//     both branches; applyIncoming still removes it before appending
+//     when the echo eventually arrives, so no duplicate is ever shown.
 //   - failed: keep the entry with the [✗] glyph so the user can see
 //     why and decide whether to retype.
+//
+// Both terminal states record the localID in finalizedLocalIDs so a
+// late SendDispatchedMsg (the inverted race against the bus event)
+// cannot re-create a Pending row that no future event could resolve.
 func (m Model) applyOutgoingState(ev events.OutgoingMessageStateChanged) (Model, tea.Cmd) {
 	if ev.ChatID != m.chatID {
 		return m, nil
@@ -150,15 +161,38 @@ func (m Model) applyOutgoingState(ev events.OutgoingMessageStateChanged) (Model,
 		if ev.ServerID > 0 {
 			m.pendingServerIDs[ev.ServerID] = ev.LocalID
 		}
-		m.outgoing = removeOutgoing(m.outgoing, ev.LocalID)
+		m.finalizedLocalIDs[ev.LocalID] = struct{}{}
+		// If the optimistic row is already present (the common ordering
+		// — ApplyDispatched ran first), flip its state in place. If it
+		// is missing (the inverted race — Sent fired before
+		// SendDispatchedMsg), the state machine is finished: the
+		// finalizedLocalIDs guard tells ApplyDispatched not to re-create
+		// it, and applyIncoming will dedupe the echo via
+		// pendingServerIDs.
+		if text := findOutgoingText(m.outgoing, ev.LocalID); text != "" {
+			m.outgoing = upsertOutgoing(m.outgoing, OutgoingMessage{
+				LocalID: ev.LocalID,
+				ChatID:  ev.ChatID,
+				Text:    text,
+				State:   events.OutgoingStateSent,
+			})
+		}
 	case events.OutgoingStateFailed:
-		m.outgoing = upsertOutgoing(m.outgoing, OutgoingMessage{
-			LocalID: ev.LocalID,
-			ChatID:  ev.ChatID,
-			Text:    findOutgoingText(m.outgoing, ev.LocalID),
-			State:   events.OutgoingStateFailed,
-			Error:   ev.Error,
-		})
+		m.finalizedLocalIDs[ev.LocalID] = struct{}{}
+		// Same caveat as Sent: only patch the row if it already exists.
+		// A Failed event before SendDispatchedMsg would otherwise
+		// produce a [✗]-glyph row with empty text — uglier than no row
+		// at all. The finalizedLocalIDs guard suppresses the late
+		// Dispatched insert, so the user sees nothing instead.
+		if text := findOutgoingText(m.outgoing, ev.LocalID); text != "" {
+			m.outgoing = upsertOutgoing(m.outgoing, OutgoingMessage{
+				LocalID: ev.LocalID,
+				ChatID:  ev.ChatID,
+				Text:    text,
+				State:   events.OutgoingStateFailed,
+				Error:   ev.Error,
+			})
+		}
 	}
 	m.viewport.SetContent(m.renderAll())
 	return m, nil
@@ -171,12 +205,21 @@ func (m Model) applyOutgoingState(ev events.OutgoingMessageStateChanged) (Model,
 // gives us a synchronous insert keyed by Text so applyOutgoingState
 // can flip the state without a separate Text lookup.
 //
+// If the localID has already reached a terminal state on the bus
+// (finalizedLocalIDs holds it) — the inverted race where Sent or
+// Failed arrived before this method — the insert is skipped. Without
+// the guard the row would be re-created in Pending state and stay
+// stuck there because no future event would ever resolve it.
+//
 // Exported (capital A) because the app-level Update routes
 // SendDispatchedMsg directly into this method instead of a generic
 // broadcast — keeping the call site explicit makes the optimistic-UI
 // flow easy to follow when reading app/update.go.
 func (m Model) ApplyDispatched(localID string, chatID int64, text string) Model {
 	if chatID != m.chatID {
+		return m
+	}
+	if _, ok := m.finalizedLocalIDs[localID]; ok {
 		return m
 	}
 	m.outgoing = upsertOutgoing(m.outgoing, OutgoingMessage{
