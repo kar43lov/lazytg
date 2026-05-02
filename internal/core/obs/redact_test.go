@@ -59,6 +59,21 @@ func TestRedact_Patterns(t *testing.T) {
 			"sess=AaBb/0123456789abcdef0123456789abcdef/+++ZzYyXxWwVvUuTtSsRr",
 			"sess=<session>",
 		},
+		// regression guard: alphanumeric base64 with "=" padding is the
+		// shape gotd writes for short []byte fields (e.g. session_id).
+		// Without the "=" trigger the previous heuristic (require "+/")
+		// would let blobs like "qkxqwhVezYU0wNXeAFWa50HCMa7oAAEWoNidpLbsgQc="
+		// through unchanged.
+		{
+			"alnum base64 with single = padding redacted",
+			"sess=qkxqwhVezYU0wNXeAFWa50HCMa7oAAEWoNidpLbsgQc=",
+			"sess=<session>",
+		},
+		{
+			"alnum base64 with double == padding redacted",
+			"key=AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPpQqRrSsTtUuVvWwXx==",
+			"key=<session>",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

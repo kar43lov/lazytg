@@ -15,13 +15,21 @@ const defaultBufferSize = 64
 // subscription is removed and the channel is closed. Publish performs a non-blocking
 // send to every subscriber, dropping events when a slow consumer's buffer is full so
 // that one slow consumer cannot stall the producer.
+//
+// Once a subscriber's context is cancelled, Publish skips it immediately —
+// it does not wait for the cleanup goroutine to remove the subscriber from
+// the slice. Without this, a Publish that wins the lock between ctx.Done()
+// firing and cleanup acquiring the lock could enqueue an event to a
+// subscriber the caller has already cancelled, violating the "after cancel,
+// no more events" contract.
 type Bus struct {
 	mu   sync.Mutex
 	subs []*subscriber
 }
 
 type subscriber struct {
-	ch chan Event
+	ch  chan Event
+	ctx context.Context
 }
 
 // New returns a ready-to-use Bus with no subscribers.
@@ -34,7 +42,7 @@ func New() *Bus {
 // cancelled. Each Subscribe call spawns a single goroutine that exits as soon as
 // ctx.Done fires.
 func (b *Bus) Subscribe(ctx context.Context) <-chan Event {
-	sub := &subscriber{ch: make(chan Event, defaultBufferSize)}
+	sub := &subscriber{ch: make(chan Event, defaultBufferSize), ctx: ctx}
 
 	b.mu.Lock()
 	b.subs = append(b.subs, sub)
@@ -58,10 +66,15 @@ func (b *Bus) Subscribe(ctx context.Context) <-chan Event {
 
 // Publish delivers e to every active subscriber. Delivery is non-blocking: if a
 // subscriber's buffer is full the event is dropped for that subscriber only.
+// Subscribers whose context has been cancelled are skipped — see the Bus
+// doc comment for the race this avoids.
 func (b *Bus) Publish(e Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, s := range b.subs {
+		if s.ctx.Err() != nil {
+			continue
+		}
 		select {
 		case s.ch <- e:
 		default:

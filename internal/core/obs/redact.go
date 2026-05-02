@@ -17,22 +17,25 @@ import (
 // reach 10+ digits) survive unredacted. Telegram phone numbers are always
 // rendered with the "+" country prefix, so this is a safe narrowing.
 //
-// sessionRe is the broadest matcher (40+ standard-base64 chars). The
-// character class is intentionally limited to A-Za-z0-9+/ — gotd serialises
-// MTProto sessions as standard base64, so "+" and "/" are the meaningful
-// session signals. Excluding "=", "_" and "-" prevents the regex from
-// gobbling attribute prefixes ("api_hash=...", "key=...") into a single
+// sessionRe is the broadest matcher (40+ standard-base64 chars plus optional
+// trailing "=" padding). gotd serialises MTProto sessions as standard
+// base64 inside JSON; the marker we trust as the "this is base64, not a
+// random alpha identifier" signal is the presence of one of "+", "/" or
+// "=". Excluding "_" and "-" from the character class prevents the regex
+// from gobbling attribute prefixes ("api_hash=...", "key=...") into a single
 // session match, which would erase the prefix from logs and split secrets
 // awkwardly.
 //
-// At call time we only replace runs that contain at least one of "+/" — a
-// pure-alphanumeric or pure-hex run of 40+ chars is overwhelmingly an
-// identifier or auth-key fragment, the latter swept up by the api_hash
-// matcher.
+// At call time we only replace runs that contain at least one of "+/=" — a
+// pure-alphanumeric run of 40+ chars without padding is overwhelmingly an
+// identifier; an auth-key-shaped pure-hex run is swept up by the api_hash
+// matcher. Padding "=" is the strongest signal we have for "this came from
+// encoding/base64 with StdEncoding", which is exactly how gotd writes []byte
+// fields (auth_key, session_id) in the session JSON blob.
 var (
 	phoneRe   = regexp.MustCompile(`\+\d{10,15}\b`)
 	apiHashRe = regexp.MustCompile(`\b[0-9a-fA-F]{32,}\b`)
-	sessionRe = regexp.MustCompile(`[A-Za-z0-9+/]{40,}`)
+	sessionRe = regexp.MustCompile(`[A-Za-z0-9+/]{40,}={0,2}`)
 )
 
 // Redact masks values that look like Telegram secrets: phone numbers,
@@ -52,7 +55,7 @@ func Redact(s string) string {
 		return s
 	}
 	s = sessionRe.ReplaceAllStringFunc(s, func(m string) string {
-		if strings.ContainsAny(m, "+/") {
+		if strings.ContainsAny(m, "+/=") {
 			return "<session>"
 		}
 		return m

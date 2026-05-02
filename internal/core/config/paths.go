@@ -94,9 +94,31 @@ func CacheDir() (string, error) {
 }
 
 // ensureDir mkdir -p with mode 0700 and returns the path.
+//
+// os.MkdirAll only applies the mode argument to directories it creates;
+// pre-existing directories keep whatever bits they were created with. That
+// is not enough for us: the data and state directories hold the SQLite
+// database (which contains chat metadata) and, when the OS keyring is
+// unavailable, the age-encrypted secrets file. If the user previously
+// created `~/.config/lazytg` at 0755 (umask default on many distros) we
+// would be quietly storing those files under group/other-readable parents.
+// We chmod existing directories down to dirMode for defense-in-depth.
+//
+// We deliberately do NOT chmod the parent XDG bases (~/.config,
+// ~/.local/share, etc.) — those are user-controlled and shared with other
+// applications.
 func ensureDir(path string) (string, error) {
 	if err := os.MkdirAll(path, dirMode); err != nil {
 		return "", fmt.Errorf("mkdir %q: %w", path, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("stat %q: %w", path, err)
+	}
+	if mode := info.Mode().Perm(); mode != dirMode {
+		if err := os.Chmod(path, dirMode); err != nil {
+			return "", fmt.Errorf("chmod %q: %w", path, err)
+		}
 	}
 	return path, nil
 }

@@ -136,6 +136,45 @@ func TestBus_ConcurrentPublishAndSubscribe(t *testing.T) {
 	}
 }
 
+// TestBus_PublishAfterCancelDoesNotEnqueue covers the race between
+// ctx.Done() firing and the cleanup goroutine removing the subscriber.
+// Even if Publish wins the bus mutex first, it must check the subscriber's
+// context and skip delivery — otherwise events leak through to a consumer
+// the caller has already cancelled.
+//
+// Channels with buffered values still drain them before reporting a close,
+// so we must read in a loop and assert that every receive yields ok=false
+// (close marker) rather than a stray Event.
+func TestBus_PublishAfterCancelDoesNotEnqueue(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	bus := New()
+
+	dropCtx, dropCancel := context.WithCancel(context.Background())
+	drop := bus.Subscribe(dropCtx)
+
+	// Cancel and immediately publish without waiting for the cleanup
+	// goroutine to acquire the lock. The subscriber slice may still contain
+	// `drop`, but ctx.Err() != nil, so Publish must skip it.
+	dropCancel()
+	bus.Publish(DialogUpdated{ChatID: 1})
+	bus.Publish(DialogUpdated{ChatID: 2})
+	bus.Publish(DialogUpdated{ChatID: 3})
+
+	timeout := time.After(time.Second)
+	for {
+		select {
+		case ev, ok := <-drop:
+			if !ok {
+				return
+			}
+			t.Fatalf("unexpected event delivered to cancelled subscriber: %+v", ev)
+		case <-timeout:
+			t.Fatal("subscriber channel was not closed within timeout")
+		}
+	}
+}
+
 func drainUntilClosed(t *testing.T, ch <-chan Event) {
 	t.Helper()
 	timeout := time.After(time.Second)
