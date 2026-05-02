@@ -117,17 +117,20 @@
 
 ### Task 5: Keymap loader + emacs key bindings
 
-- [ ] Добавить зависимость `go get github.com/BurntSushi/toml`
-- [ ] Создать `internal/ui/keymap/defaults.go` с типом `Keymap struct{ Send, Newline, Reply, OpenEditor, ToggleHelp, FocusNext, FocusPrev, ScrollUp, ScrollDown, Quit, ... key.Binding }`. Функция `Default() Keymap` возвращает emacs-binding'и: Send=Enter, Newline=Alt+Enter, Reply=Ctrl+R, OpenEditor=Ctrl+E, ToggleHelp=`?`, FocusNext=Tab, FocusPrev=Shift+Tab, ScrollUp=Ctrl+B/PgUp, ScrollDown=Ctrl+F/PgDn, Quit=Ctrl+C/Ctrl+Q
-- [ ] Создать `internal/ui/keymap/loader.go` с функцией `Load(path string) (Keymap, error)` — читает TOML файл `~/.config/lazytg/keymap.toml`, мерджит с `Default()`. Формат: `[bindings]` секция с `send = "enter"`, `reply = "ctrl+r"` etc. Парсинг строк через свой helper `parseKey(s string) (key.Binding, error)` (поддерживает "ctrl+x", "alt+y", "shift+f1", named keys "enter"/"tab"/"esc"/"pgup"/"pgdn"/"home"/"end")
-- [ ] Создать `internal/ui/keymap/conflict.go` с функцией `DetectConflicts(km Keymap) []ConflictReport` — для каждой пары биндингов проверяет совпадение `key.Binding.Keys()`. Возвращает читаемое описание: "send and reply both bound to Ctrl+R"
-- [ ] Создать `internal/ui/keymap/loader_test.go` с табличными тестами:
-  1. Пустой TOML → defaults
-  2. Override `send = "ctrl+s"` → Send изменён, остальные defaults
-  3. Конфликт `send = "ctrl+r"; reply = "ctrl+r"` → ошибка с описанием обоих
-  4. Невалидная строка `send = "frobnicate"` → ошибка парсинга с указанием значения
-- [ ] Создать `internal/ui/keymap/parse_test.go` с табличными тестами на `parseKey`: "enter", "ctrl+a", "alt+enter", "shift+tab", "f1", "esc", невалидные строки
-- [ ] Запустить `go test -race ./internal/ui/keymap/...` — зелёное
+- [x] Добавить зависимость `go get github.com/BurntSushi/toml` (а также `charm.land/bubbles/v2` для `key.Binding` — bubbletea v2 живёт на `charm.land`, не на `github.com/charmbracelet`)
+- [x] Создать `internal/ui/keymap/defaults.go` с типом `Keymap struct{ Send, Newline, Reply, OpenEditor, ToggleHelp, FocusNext, FocusPrev, ScrollUp, ScrollDown, Quit key.Binding }`. Функция `Default() Keymap` возвращает emacs-binding'и: Send=Enter, Newline=Alt+Enter, Reply=Ctrl+R, OpenEditor=Ctrl+E, ToggleHelp=`?`, FocusNext=Tab, FocusPrev=Shift+Tab, ScrollUp=Ctrl+B/PgUp, ScrollDown=Ctrl+F/PgDown, Quit=Ctrl+C/Ctrl+Q
+- [x] Создать `internal/ui/keymap/loader.go` с функцией `Load(path string) (Keymap, error)` — читает TOML файл `~/.config/lazytg/keymap.toml`, мерджит с `Default()`. Формат: `[bindings]` секция с `send = "enter"`, `reply = "ctrl+r"` etc. Парсинг строк через хелпер `parseKey(s string) (key.Binding, error)` в `parse.go` (поддерживает "ctrl+x", "alt+y", "shift+f1", named keys "enter"/"tab"/"esc"/"pgup"/"pgdown"/"home"/"end" и алиасы "return"→"enter", "escape"→"esc", "pgdn"→"pgdown", "del"→"delete"). **Implementation note:** TOML-имена snake_case (`open_editor`, `scroll_up`); неизвестное имя в `[bindings]` — ошибка с перечислением допустимых; `desc` из defaults сохраняется при override (`SetHelp(canonKey, originalDesc)`). Modifier order нормализуется в `ctrl→alt→shift→base` (bubbletea v2 KeyPressMsg.String() emits именно этот порядок), так что `alt+ctrl+x` → `ctrl+alt+x`. Конфликты проверяются на merged map (post-Default) — иначе override типа `send = "ctrl+r"` молча сломал бы reply
+- [x] Создать `internal/ui/keymap/conflict.go` с функцией `DetectConflicts(km Keymap) []ConflictReport` — для каждой пары биндингов проверяет совпадение `key.Binding.Keys()`. Возвращает читаемое описание: формат `"<chord>: <name> and <name>"` (например `"ctrl+r: reply and send"`). Структурированный `ConflictError` экспортируется отдельно для callers, которые хотят рендерить конфликты сами
+- [x] Создать `internal/ui/keymap/loader_test.go` с табличными тестами:
+  1. Пустой TOML → defaults (плюс отдельные подтесты для пустого пути, отсутствующего файла)
+  2. Override `send = "ctrl+s"` → Send изменён, остальные defaults, help.Desc сохраняется
+  3. Конфликт `send = "ctrl+r"; reply = "ctrl+r"` → `*ConflictError`, оба имени в сообщении
+  4. Невалидная строка `send = "frobnicate"` → ошибка с указанием значения и имени биндинга
+  5. Конфликт против default (override `send = "ctrl+r"` без трогания reply) → ошибка ловится
+  6. Неизвестное имя биндинга → ошибка с упоминанием bad name
+  7. Малформированный TOML → ошибка
+- [x] Создать `internal/ui/keymap/parse_test.go` с табличными тестами на `parseKey`: "enter"/"return", "ctrl+a", "alt+enter", "shift+tab", "f1"/"f12", "esc"/"escape", "?", "/", модификаторы в произвольном порядке нормализуются, невалидные строки (empty, `frobnicate`, `ctrl+`, `ctrl+ctrl+a`, `a+ctrl`, `f13`, `f0`)
+- [x] Запустить `go test -race ./internal/ui/keymap/...` — зелёное
 
 ### Task 6: Bubble Tea root model + 2-pane layout + statusbar
 
