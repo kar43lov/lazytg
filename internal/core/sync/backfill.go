@@ -31,6 +31,30 @@ func AsFloodWait(err error) (time.Duration, bool) {
 	return 0, false
 }
 
+// ValidationError signals a non-retryable client-side error from the
+// MTProto layer (400-class responses such as MESSAGE_TOO_LONG,
+// MESSAGE_EMPTY, PEER_ID_INVALID). The internal/tg adapters translate
+// gotd's tgerr.Error into this type so the retry policy in core/sync can
+// distinguish "the user typed something the server refuses" (give up) from
+// "the network blipped" (back off and try again) without importing gotd.
+type ValidationError struct {
+	Reason string
+}
+
+// Error satisfies the error interface.
+func (e *ValidationError) Error() string {
+	return "validation: " + e.Reason
+}
+
+// AsValidation extracts a *ValidationError from err, if any.
+func AsValidation(err error) (string, bool) {
+	var ve *ValidationError
+	if errors.As(err, &ve) {
+		return ve.Reason, true
+	}
+	return "", false
+}
+
 // BackfillService is a small worker pool wrapping HistoryService. It owns
 // a request queue (chatID channel) and a token-bucket gate so that a UI
 // asking to backfill many chats in quick succession does not produce a

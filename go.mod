@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	filippo.io/age v1.3.1
+	github.com/google/uuid v1.6.0
 	github.com/gotd/td v0.143.0
 	github.com/spf13/cobra v1.10.2
 	github.com/zalando/go-keyring v0.2.8
@@ -28,7 +29,6 @@ require (
 	github.com/go-faster/xor v1.0.0 // indirect
 	github.com/go-faster/yaml v0.4.6 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/gotd/ige v0.2.2 // indirect
 	github.com/gotd/neo v0.1.5 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

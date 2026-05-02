@@ -46,3 +46,30 @@ type ConnectionStateChanged struct {
 }
 
 func (ConnectionStateChanged) eventMarker() {}
+
+// OutgoingMessageState enumerates the lifecycle of a locally-composed message
+// that has been handed to the send pipeline. The string form is what gets
+// persisted in the outgoing table so SQLite inspection stays human-readable.
+const (
+	// OutgoingStatePending — record stored locally, RPC not yet completed.
+	OutgoingStatePending = "pending"
+	// OutgoingStateSent — server acknowledged the message and assigned an id.
+	OutgoingStateSent = "sent"
+	// OutgoingStateFailed — RPC failed and exhausted any allowed retries.
+	OutgoingStateFailed = "failed"
+)
+
+// OutgoingMessageStateChanged is emitted when an outgoing message advances
+// through its state machine (pending → sent | failed). LocalID is the UUID
+// the SendService assigned when the user pressed Enter; ServerID is the
+// Telegram-assigned message id and is only meaningful for state="sent".
+// Error carries the human-readable failure reason for state="failed".
+type OutgoingMessageStateChanged struct {
+	LocalID  string
+	ChatID   int64
+	ServerID int64
+	State    string
+	Error    string
+}
+
+func (OutgoingMessageStateChanged) eventMarker() {}

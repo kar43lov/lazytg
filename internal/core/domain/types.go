@@ -92,3 +92,13 @@ type Message struct {
 	ReplyTo int64
 	RawBlob []byte
 }
+
+// Peer is the resolved MTProto access metadata for a chat. AccessHash is
+// required for users and channels and ignored for plain groups; Type
+// mirrors ChatType so the storage layer can pick the right InputPeer
+// variant without re-parsing the chats table.
+type Peer struct {
+	ID         int64
+	Type       ChatType
+	AccessHash int64
+}
