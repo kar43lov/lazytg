@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/pgmac/lazytg/internal/core/obs"
 )
 
 // newRootCmd builds the lazytg root command with persistent flags. A factory
@@ -27,13 +29,23 @@ func newRootCmd() *cobra.Command {
 	pf.BoolVar(&flagDebug, "debug", false, "enable verbose logging to stderr")
 	pf.StringVar(&flagLogLevel, "log-level", "info", "logging level: debug|info|warn|error")
 
-	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		switch strings.ToLower(flagLogLevel) {
 		case "debug", "info", "warn", "error":
-			return nil
 		default:
 			return fmt.Errorf("invalid --log-level %q (want debug|info|warn|error)", flagLogLevel)
 		}
+		level, err := obs.ParseLevel(flagLogLevel)
+		if err != nil {
+			return err
+		}
+		logger := buildLogger(level, flagDebug)
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = cmd.Root().Context()
+		}
+		cmd.SetContext(withLogger(ctx, logger))
+		return nil
 	}
 
 	root.AddCommand(newLoginCmd())

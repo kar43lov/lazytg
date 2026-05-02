@@ -108,13 +108,13 @@
 
 ### Task 6: Logging slog + redaction
 
-- [ ] Добавить зависимость `go get gopkg.in/natefinch/lumberjack.v2`
-- [ ] Создать `internal/core/obs/redact.go` с функцией `Redact(s string) string` — маскирует patterns: phone (regex `\+?\d{10,15}` → `+***`), session strings (>40 символов base64-like → `<session>`), api_hash (hex 32 символа → `<api_hash>`). Тип `RedactingHandler` обёртка над `slog.Handler` — переопределяет `Handle(ctx, r)` обходя атрибуты и применяя `Redact` к строковым значениям
-- [ ] Создать `internal/core/obs/logger.go` с `New(cfg LoggerConfig) *slog.Logger`. `LoggerConfig{Level slog.Level; Format string ("json"|"text"); FilePath string; Debug bool}`. При `FilePath != ""` — JSON в файл через lumberjack (MaxSize 10MB, MaxBackups 3, MaxAge 30 days). При `Debug=true` — дублирует human-readable в stderr. Без `Debug` — stderr подавлен (TUI не должен спамить). Wrap в `RedactingHandler`. Контекстные методы `WithAccount(id int64)`, `WithChat(id int64)`, `WithRequestID(id string)` через `slog.With`
-- [ ] Создать `internal/core/obs/redact_test.go`: таблица `[]struct{name, input, want string}` с кейсами: phone с/без `+`, session string (>40 base64 символов), api_hash (32 hex), нормальный текст без секретов остаётся неизменным. Запустить через `t.Run`
-- [ ] Создать `internal/core/obs/logger_test.go`: проверить что при `Debug=false` stderr пустой, при `Debug=true` есть вывод. Проверить что в JSON-файл попадает уровень/timestamp/message
-- [ ] Интегрировать logger в `cmd/lazytg/cmd/root.go`: в `PersistentPreRun` создать logger из флагов `--log-level` и `--debug`, положить в context через `context.WithValue`. Создать helper `LoggerFromContext(ctx) *slog.Logger`
-- [ ] Запустить `go test -race ./internal/core/obs/...` — должны пройти
+- [x] Добавить зависимость `go get gopkg.in/natefinch/lumberjack.v2`
+- [x] Создать `internal/core/obs/redact.go` с функцией `Redact(s string) string` — маскирует patterns: phone (regex `\+?\d{10,15}` → `+***`), session strings (>40 символов base64-like → `<session>`), api_hash (hex 32 символа → `<api_hash>`). Тип `RedactingHandler` обёртка над `slog.Handler` — переопределяет `Handle(ctx, r)` обходя атрибуты и применяя `Redact` к строковым значениям
+- [x] Создать `internal/core/obs/logger.go` с `New(cfg LoggerConfig) *slog.Logger`. `LoggerConfig{Level slog.Level; Format string ("json"|"text"); FilePath string; Debug bool}`. При `FilePath != ""` — JSON в файл через lumberjack (MaxSize 10MB, MaxBackups 3, MaxAge 30 days). При `Debug=true` — дублирует human-readable в stderr. Без `Debug` — stderr подавлен (TUI не должен спамить). Wrap в `RedactingHandler`. Контекстные методы `WithAccount(id int64)`, `WithChat(id int64)`, `WithRequestID(id string)` через `slog.With`
+- [x] Создать `internal/core/obs/redact_test.go`: таблица `[]struct{name, input, want string}` с кейсами: phone с/без `+`, session string (>40 base64 символов), api_hash (32 hex), нормальный текст без секретов остаётся неизменным. Запустить через `t.Run`
+- [x] Создать `internal/core/obs/logger_test.go`: проверить что при `Debug=false` stderr пустой, при `Debug=true` есть вывод. Проверить что в JSON-файл попадает уровень/timestamp/message
+- [x] Интегрировать logger в `cmd/lazytg/cmd/root.go`: в `PersistentPreRun` создать logger из флагов `--log-level` и `--debug`, положить в context через `context.WithValue`. Создать helper `LoggerFromContext(ctx) *slog.Logger`
+- [x] Запустить `go test -race ./internal/core/obs/...` — должны пройти
 
 ### Task 7: GitHub Actions CI + GoReleaser snapshot
 
