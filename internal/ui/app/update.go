@@ -45,6 +45,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.handleChatSelected(m)
 	case input.RequestReplyMsg:
 		return a.handleReplyRequest()
+	case input.SendDispatchedMsg:
+		// The input pane reports a successful queue-up. Insert the
+		// optimistic row in the thread immediately so the user sees
+		// "[⏳] hello" before the SendService bus event lands. The
+		// input pane has already cleared its textarea — the message
+		// also flows through broadcastToPanes below so the input
+		// itself can react if it ever needs to (today it doesn't).
+		a.thread = a.thread.ApplyDispatched(m.LocalID, m.ChatID, m.Text)
+		return a, nil
 	case events.MessageReceived,
 		events.DialogUpdated,
 		events.OutgoingMessageStateChanged,

@@ -15,12 +15,16 @@ import "strings"
 // While loading we stack a one-line "Loading..." status under the
 // header so the user sees feedback during the initial fetch — without
 // it the pane stays blank for the SQLite round-trip and feels broken.
+// Optimistic outgoing rows count as "something to show" too, so a user
+// who hits Enter on a freshly-opened chat sees their pending message
+// instead of "Loading..." while the SQL read finishes in the
+// background.
 func (m Model) View() string {
 	header := "Thread"
 	if m.Focused {
 		header = "Thread (focused)"
 	}
-	if m.loading && len(m.messages) == 0 {
+	if m.loading && len(m.messages) == 0 && len(m.outgoing) == 0 {
 		return strings.Join([]string{header, "Loading..."}, "\n")
 	}
 	body := m.viewport.View()

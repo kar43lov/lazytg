@@ -24,22 +24,46 @@ import (
 
 // inMemoryStore is a minimal LiveStore that records each Save's
 // completion time so the benchmark can compute end-to-end latency
-// without sharing state with the producer goroutine.
+// without sharing state with the producer goroutine. Each saved
+// message carries its emit timestamp via the FromID-encoded sequence
+// number — the producer stores `time.Now().UnixNano()` of the emit in
+// a side map keyed by message id, and SaveMessage looks it up to
+// record the emit→save delta. This is the only honest way to measure
+// the bus → drain dispatch delay end-to-end since the producer and
+// consumer goroutines do not share a synchronous code path.
 type inMemoryStore struct {
 	mu        sync.Mutex
 	saved     []domain.Message
 	durations []time.Duration
+	emits     map[int64]time.Time
 	clock     func() time.Time
 }
 
 func newInMemoryStore() *inMemoryStore {
-	return &inMemoryStore{clock: time.Now}
+	return &inMemoryStore{
+		emits: make(map[int64]time.Time),
+		clock: time.Now,
+	}
+}
+
+// recordEmit is called by the producer right before bus.Publish so
+// SaveMessage can compute end-to-end latency without sharing the emit
+// instant via a side channel.
+func (s *inMemoryStore) recordEmit(messageID int64, at time.Time) {
+	s.mu.Lock()
+	s.emits[messageID] = at
+	s.mu.Unlock()
 }
 
 func (s *inMemoryStore) SaveMessage(_ context.Context, m domain.Message) error {
+	now := s.clock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.saved = append(s.saved, m)
+	if emit, ok := s.emits[m.ID]; ok {
+		s.durations = append(s.durations, now.Sub(emit))
+		delete(s.emits, m.ID)
+	}
 	return nil
 }
 
@@ -98,9 +122,14 @@ func TestLiveUpdateLatencySLA(t *testing.T) {
 			end = eventCount
 		}
 		for j := i; j < end; j++ {
+			messageID := int64(j) + 1
+			// Stamp the emit instant before Publish so SaveMessage can
+			// compute the bus → drain delta. Without this, durations
+			// stays empty and the percentile assertion below is a no-op.
+			store.recordEmit(messageID, time.Now())
 			bus.Publish(events.MessageReceived{
 				ChatID:    int64(j%10) + 1,
-				MessageID: int64(j) + 1,
+				MessageID: messageID,
 				Text:      fmt.Sprintf("event %d", j),
 				FromID:    int64(j) + 100,
 				Date:      time.Unix(1700000000+int64(j), 0).UTC(),
@@ -145,31 +174,17 @@ func TestLiveUpdateLatencySLA(t *testing.T) {
 		t.Fatalf("expected %d saved events, got %d", eventCount, len(saved))
 	}
 
-	// Approximation: the LiveService updates LastIngestLatency after
-	// every Save, so taking it after the drain reflects the *final*
-	// event's latency. To compute a realistic p95 we use the
-	// per-event interval between consecutive emit/save timestamps:
-	// for each event i, latency = max(emitted[i], last save time
-	// observed for batch). This is an upper bound that catches
-	// regressions where the bus or storage ever falls behind.
-	// Since the inMemoryStore is essentially zero-latency, the p95
-	// here mostly measures bus → drain dispatch delay, which is the
-	// thing the SLA actually polices.
+	// Compute p95 from per-event durations recorded by SaveMessage —
+	// each entry is the wall-clock delta between the producer's
+	// recordEmit (just before bus.Publish) and the consumer's Save
+	// completion. This is the bus → drain dispatch delay, which is what
+	// the SLA actually polices.
 	store.mu.Lock()
 	durations := append([]time.Duration(nil), store.durations...)
 	store.mu.Unlock()
-	if len(durations) < eventCount {
-		// inMemoryStore did not record per-event durations explicitly
-		// (the basic SaveMessage stub does not need to); fall back to
-		// the LiveService's own LastIngestLatency snapshot times the
-		// total event count divided by batch size — a crude but
-		// monotone approximation that flips on a real regression.
-		latest := live.LastIngestLatency()
-		t.Logf("p95 fallback: using LastIngestLatency=%s (per-event durations not recorded)", latest)
-		if latest > p95Budget {
-			t.Fatalf("LastIngestLatency %s > p95 budget %s", latest, p95Budget)
-		}
-		return
+	if len(durations) != eventCount {
+		t.Fatalf("expected %d duration samples, got %d (some events missed the emit→save round-trip)",
+			eventCount, len(durations))
 	}
 	p95 := p95Latency(durations)
 	t.Logf("p95 latency over %d events: %s (budget %s)", eventCount, p95, p95Budget)

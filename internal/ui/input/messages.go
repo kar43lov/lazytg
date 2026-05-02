@@ -55,10 +55,17 @@ type SendDispatchedMsg struct {
 
 // SendFailedMsg fires when SendService.SendText itself returned an error
 // (e.g. validation failed before the RPC was even attempted, or the
-// optimistic write to storage broke). The textarea contents are
-// preserved and re-armed so the user can retry without retyping.
+// optimistic write to storage broke). The textarea contents and the
+// reply pointer are both restored so the user can retry without
+// retyping or re-selecting the message they were replying to.
+//
+// ReplyTo is the int id used in the failed send (so the app's logging
+// matches the wire payload); ReplyToMsg is the original *domain.Message
+// captured before the optimistic reset, used by Update to rearm the
+// pane's reply state.
 type SendFailedMsg struct {
-	Text    string
-	ReplyTo int
-	Err     error
+	Text       string
+	ReplyTo    int
+	ReplyToMsg *domain.Message
+	Err        error
 }

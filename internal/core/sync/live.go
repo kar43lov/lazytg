@@ -108,7 +108,12 @@ func (s *LiveService) drain(ctx context.Context, ch <-chan events.Event) error {
 	}
 }
 
-// persist saves a single message and records the ingest latency.
+// persist saves a single message, records the ingest latency, and
+// republishes a DialogUpdated event so the chats pane can reorder the
+// list (the chat that just received a message bubbles to the top).
+// We piggyback on the same bus the UI already subscribes to instead of
+// adding a second subscription path — keeps fan-out semantics simple
+// and the UI consumer free of LiveService-specific glue.
 func (s *LiveService) persist(ctx context.Context, ev events.MessageReceived) {
 	start := s.now()
 	if err := s.store.SaveMessage(ctx, domain.Message{
@@ -127,4 +132,12 @@ func (s *LiveService) persist(ctx context.Context, ev events.MessageReceived) {
 		latency = 0
 	}
 	s.lastIngestLatency.Store(latency.Milliseconds())
+
+	// Notify the chats pane so it can re-sort by last_message_date. The
+	// publish is best-effort: the bus drops events past per-subscriber
+	// capacity, which is acceptable here because a missed reorder is a
+	// purely cosmetic glitch — the next live event will catch it up.
+	if s.bus != nil {
+		s.bus.Publish(events.DialogUpdated{ChatID: ev.ChatID})
+	}
 }

@@ -90,11 +90,20 @@ func (m Model) applyPagination(msg messagesPaginationLoadedMsg) (Model, tea.Cmd)
 // the thread. Sticky-scroll: if the user was already at the bottom,
 // keep them there so the new message slides into view; if they had
 // scrolled up to read older history, leave their position alone.
+//
+// If the incoming MessageID matches a serverID we are holding for an
+// optimistic-UI entry (a sent message that the live pipeline is now
+// echoing back), the optimistic row is dropped instead of double-
+// rendering the same content.
 func (m Model) applyIncoming(ev events.MessageReceived) (Model, tea.Cmd) {
 	if ev.ChatID != m.chatID {
 		return m, nil
 	}
 	wasAtBottom := m.viewport.AtBottom()
+	if localID, ok := m.pendingServerIDs[ev.MessageID]; ok {
+		m.outgoing = removeOutgoing(m.outgoing, localID)
+		delete(m.pendingServerIDs, ev.MessageID)
+	}
 	m.messages = append(m.messages, domain.Message{
 		ID:     ev.MessageID,
 		ChatID: ev.ChatID,
@@ -112,19 +121,111 @@ func (m Model) applyIncoming(ev events.MessageReceived) (Model, tea.Cmd) {
 
 // applyOutgoingState routes optimistic-state transitions to the matching
 // in-memory entry. The thread pane is the consumer that flips the
-// pending → sent | failed pill in the visible message list. Stage 2
-// Task 8 wires the dispatch but the actual optimistic-message tracking
-// table is owned by Task 11; for now we filter by ChatID and forward
-// to a no-op that the wiring layer can extend.
+// pending → sent | failed pill in the visible message list.
+//
+// State machine:
+//   - pending: insert (or update) the entry so the user sees an
+//     immediate "[⏳] text" line below the latest history.
+//   - sent: drop the entry once we know the serverID, but stash a
+//     localID → serverID mapping so applyIncoming can dedupe the
+//     server-echo MessageReceived. If we kept the optimistic row, the
+//     user would see two copies of their message.
+//   - failed: keep the entry with the [✗] glyph so the user can see
+//     why and decide whether to retype.
 func (m Model) applyOutgoingState(ev events.OutgoingMessageStateChanged) (Model, tea.Cmd) {
 	if ev.ChatID != m.chatID {
 		return m, nil
 	}
-	if m.log != nil {
-		m.log.Debug("thread: outgoing state",
-			"chat_id", ev.ChatID, "local_id", ev.LocalID, "state", ev.State)
+	switch ev.State {
+	case events.OutgoingStatePending:
+		m.outgoing = upsertOutgoing(m.outgoing, OutgoingMessage{
+			LocalID: ev.LocalID,
+			ChatID:  ev.ChatID,
+			Text:    findOutgoingText(m.outgoing, ev.LocalID),
+			State:   events.OutgoingStatePending,
+		})
+	case events.OutgoingStateSent:
+		if ev.ServerID > 0 {
+			m.pendingServerIDs[ev.ServerID] = ev.LocalID
+		}
+		m.outgoing = removeOutgoing(m.outgoing, ev.LocalID)
+	case events.OutgoingStateFailed:
+		m.outgoing = upsertOutgoing(m.outgoing, OutgoingMessage{
+			LocalID: ev.LocalID,
+			ChatID:  ev.ChatID,
+			Text:    findOutgoingText(m.outgoing, ev.LocalID),
+			State:   events.OutgoingStateFailed,
+			Error:   ev.Error,
+		})
 	}
+	m.viewport.SetContent(m.renderAll())
 	return m, nil
+}
+
+// ApplyDispatched inserts a fresh optimistic entry the moment the
+// input pane reports the send was queued (SendDispatchedMsg). The
+// SendService publishes its own pending event over the bus, but that
+// races with the UI update — going through the dispatched message
+// gives us a synchronous insert keyed by Text so applyOutgoingState
+// can flip the state without a separate Text lookup.
+//
+// Exported (capital A) because the app-level Update routes
+// SendDispatchedMsg directly into this method instead of a generic
+// broadcast — keeping the call site explicit makes the optimistic-UI
+// flow easy to follow when reading app/update.go.
+func (m Model) ApplyDispatched(localID string, chatID int64, text string) Model {
+	if chatID != m.chatID {
+		return m
+	}
+	m.outgoing = upsertOutgoing(m.outgoing, OutgoingMessage{
+		LocalID: localID,
+		ChatID:  chatID,
+		Text:    text,
+		State:   events.OutgoingStatePending,
+	})
+	wasAtBottom := m.viewport.AtBottom()
+	m.viewport.SetContent(m.renderAll())
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
+	return m
+}
+
+// upsertOutgoing replaces the entry whose LocalID matches msg.LocalID,
+// or appends msg if no match exists. Order is preserved so the user
+// sees pending rows in send-order.
+func upsertOutgoing(list []OutgoingMessage, msg OutgoingMessage) []OutgoingMessage {
+	for i, m := range list {
+		if m.LocalID == msg.LocalID {
+			list[i] = msg
+			return list
+		}
+	}
+	return append(list, msg)
+}
+
+// removeOutgoing drops the entry whose LocalID matches localID. Idempotent.
+func removeOutgoing(list []OutgoingMessage, localID string) []OutgoingMessage {
+	for i, m := range list {
+		if m.LocalID == localID {
+			return append(list[:i], list[i+1:]...)
+		}
+	}
+	return list
+}
+
+// findOutgoingText returns the Text of the entry with localID, or
+// empty if no match. Used by applyOutgoingState because the bus event
+// only carries State + ServerID + Error — not the original message
+// body. The body comes from the entry already inserted via
+// applyDispatched.
+func findOutgoingText(list []OutgoingMessage, localID string) string {
+	for _, m := range list {
+		if m.LocalID == localID {
+			return m.Text
+		}
+	}
+	return ""
 }
 
 // handleKey forwards the key to the viewport for scrolling, then

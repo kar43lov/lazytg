@@ -45,9 +45,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case EditorClosedMsg:
 		return m.applyEditorResult(typed)
 	case SendFailedMsg:
-		// Restore the draft so the user can retry. ReplyTo is rearmed
-		// so the retry context is preserved.
+		// Restore the draft so the user can retry. The reply pointer is
+		// rearmed too so the retry preserves the conversation context
+		// the user was replying into when the original send failed.
 		m.setValue(typed.Text)
+		m.replyTo = typed.ReplyToMsg
 		return m, nil
 	case tea.KeyPressMsg:
 		if cmd, handled := m.handleChord(typed); handled {
@@ -95,8 +97,9 @@ func (m *Model) handleSend() tea.Cmd {
 		return nil
 	}
 	replyTo := 0
-	if m.replyTo != nil {
-		replyTo = int(m.replyTo.ID)
+	replyToMsg := m.replyTo
+	if replyToMsg != nil {
+		replyTo = int(replyToMsg.ID)
 	}
 	chatID := m.chatID
 	send := m.send
@@ -107,7 +110,12 @@ func (m *Model) handleSend() tea.Cmd {
 		defer cancel()
 		localID, err := send.SendText(ctx, chatID, text, replyTo)
 		if err != nil {
-			return SendFailedMsg{Text: text, ReplyTo: replyTo, Err: err}
+			return SendFailedMsg{
+				Text:       text,
+				ReplyTo:    replyTo,
+				ReplyToMsg: replyToMsg,
+				Err:        err,
+			}
 		}
 		return SendDispatchedMsg{
 			LocalID: localID,

@@ -51,6 +51,13 @@ const (
 // border. The viewport itself receives sizes via SetSize; the model
 // also persists them so a SetFocus call (which does not carry
 // dimensions) does not lose them.
+//
+// The outgoing slice holds optimistic-UI entries for messages the
+// user has just sent: pending until SendService publishes
+// OutgoingMessageStateChanged{State: sent}, at which point the entry
+// is dropped (the server-echoed MessageReceived takes its place via
+// applyIncoming). On {State: failed} the entry is kept with a red [✗]
+// glyph so the user can see why and decide whether to retry.
 type Model struct {
 	Width   int
 	Height  int
@@ -59,9 +66,16 @@ type Model struct {
 	viewport viewport.Model
 	chatID   int64
 	messages []domain.Message
-	repo     Repository
-	provider HistoryProvider
-	log      *slog.Logger
+	outgoing []OutgoingMessage
+	// pendingServerIDs maps localID → serverID for sent optimistic
+	// rows whose server-echo MessageReceived has not yet arrived. Used
+	// by applyIncoming to dedupe — the next live event with that
+	// serverID drops the optimistic row instead of appending a
+	// duplicate.
+	pendingServerIDs map[int64]string
+	repo             Repository
+	provider         HistoryProvider
+	log              *slog.Logger
 
 	loading bool
 	hasMore bool
@@ -96,10 +110,11 @@ func newModel(repo Repository, provider HistoryProvider, log *slog.Logger) Model
 	)
 	vp.SoftWrap = true
 	return Model{
-		viewport: vp,
-		repo:     repo,
-		provider: provider,
-		log:      log,
+		viewport:         vp,
+		repo:             repo,
+		provider:         provider,
+		log:              log,
+		pendingServerIDs: make(map[int64]string),
 	}
 }
 
@@ -112,9 +127,16 @@ func (m Model) Init() tea.Cmd { return nil }
 // populated) plus the load command. Calling OpenChat with the same
 // chatID is *not* idempotent: it always reloads, which is the desired
 // behaviour when the user re-clicks a chat to see its latest state.
+//
+// Outgoing optimistic state is also reset: pending entries are bound
+// to the chat that produced them and switching chats discards stale
+// pendings (the SendService still owns the underlying record in the
+// outgoing table — the UI just stops rendering it here).
 func (m Model) OpenChat(chatID int64) (Model, tea.Cmd) {
 	m.chatID = chatID
 	m.messages = nil
+	m.outgoing = nil
+	m.pendingServerIDs = make(map[int64]string)
 	m.oldestID = 0
 	m.hasMore = false
 	m.loading = true
@@ -183,9 +205,12 @@ func (m Model) SetFocus(f bool) Model {
 	return m
 }
 
-// renderAll concatenates every message with a blank-line separator.
+// renderAll concatenates every message with a blank-line separator,
+// then appends every still-pending or failed optimistic-UI entry.
 // Messages are stored oldest-first so the natural top-to-bottom reading
-// order matches the slice index.
+// order matches the slice index. Optimistic rows are kept after the
+// regular history because they are always the most recent thing the
+// user did — sticky-bottom rendering matches the user's mental model.
 func (m Model) renderAll() string {
 	var b strings.Builder
 	width := m.viewport.Width()
@@ -195,7 +220,23 @@ func (m Model) renderAll() string {
 		}
 		b.WriteString(FormatMessage(msg, width, nil))
 	}
+	for _, out := range m.outgoing {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(RenderOptimistic(out))
+	}
 	return b.String()
+}
+
+// Outgoing returns a copy of the optimistic-UI entries currently
+// rendered. Test helper: lets unit tests verify state transitions
+// (pending → sent → drop, pending → failed) without parsing the
+// rendered viewport content.
+func (m Model) Outgoing() []OutgoingMessage {
+	out := make([]OutgoingMessage, len(m.outgoing))
+	copy(out, m.outgoing)
+	return out
 }
 
 // loadCmd returns a tea.Cmd that fetches the next page from repo and
