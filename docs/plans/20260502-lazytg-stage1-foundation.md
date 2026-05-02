@@ -57,15 +57,15 @@
 
 ### Task 2: Скелет 3-слойной архитектуры + event bus
 
-- [ ] Создать `internal/tg/doc.go` с `// Package tg wraps gotd/td for Telegram MTProto communication.` и `package tg`
-- [ ] Создать `internal/core/doc.go` с описанием domain layer (storage interface, events, sync). Текст: `// Package core contains domain types, storage interfaces, event bus and sync logic.\n// MUST NOT import gotd/td or bubbletea (enforced via depguard).`
-- [ ] Создать `internal/ui/doc.go` для Bubble Tea (используется в этапе 2). Текст: `// Package ui contains Bubble Tea models and views.\n// MUST NOT import gotd/td (enforced via depguard).`
-- [ ] Создать `internal/app/doc.go` для DI без фреймворка
-- [ ] Создать `internal/core/events/events.go` с типизированными событиями: `MessageReceived{ChatID, MessageID int64; Text string; FromID int64; Date time.Time}`, `DialogUpdated{ChatID int64}`, `AuthStateChanged{State string}`, `ConnectionStateChanged{State string}`. Все события имплементируют интерфейс `Event` с методом `eventMarker()`
-- [ ] Создать `internal/core/events/bus.go` с `Bus` struct: метод `Subscribe(ctx context.Context) <-chan Event` (fan-out через slice подписчиков под mutex), метод `Publish(e Event)` (non-blocking send в каждый канал, дроп при overflow). При отмене контекста подписчик удаляется
-- [ ] Создать `internal/core/events/bus_test.go` с тестами: (1) fan-out — публикация одного события доходит до 3 подписчиков; (2) отписка через context cancel — после cancel подписчик не получает событий; (3) goleak-проверка через `defer goleak.VerifyNone(t)` (импорт `go.uber.org/goleak`)
-- [ ] Добавить зависимость `go get go.uber.org/goleak`
-- [ ] Запустить `go test -race ./internal/core/events/...` — должно быть зелёным
+- [x] Создать `internal/tg/doc.go` с `// Package tg wraps gotd/td for Telegram MTProto communication.` и `package tg`
+- [x] Создать `internal/core/doc.go` с описанием domain layer (storage interface, events, sync). Текст: `// Package core contains domain types, storage interfaces, event bus and sync logic.\n// MUST NOT import gotd/td or bubbletea (enforced via depguard).`
+- [x] Создать `internal/ui/doc.go` для Bubble Tea (используется в этапе 2). Текст: `// Package ui contains Bubble Tea models and views.\n// MUST NOT import gotd/td (enforced via depguard).`
+- [x] Создать `internal/app/doc.go` для DI без фреймворка
+- [x] Создать `internal/core/events/events.go` с типизированными событиями: `MessageReceived{ChatID, MessageID int64; Text string; FromID int64; Date time.Time}`, `DialogUpdated{ChatID int64}`, `AuthStateChanged{State string}`, `ConnectionStateChanged{State string}`. Все события имплементируют интерфейс `Event` с методом `eventMarker()`
+- [x] Создать `internal/core/events/bus.go` с `Bus` struct: метод `Subscribe(ctx context.Context) <-chan Event` (fan-out через slice подписчиков под mutex), метод `Publish(e Event)` (non-blocking send в каждый канал, дроп при overflow). При отмене контекста подписчик удаляется
+- [x] Создать `internal/core/events/bus_test.go` с тестами: (1) fan-out — публикация одного события доходит до 3 подписчиков; (2) отписка через context cancel — после cancel подписчик не получает событий; (3) goleak-проверка через `defer goleak.VerifyNone(t)` (импорт `go.uber.org/goleak`)
+- [x] Добавить зависимость `go get go.uber.org/goleak`
+- [x] Запустить `go test -race ./internal/core/events/...` — должно быть зелёным
 
 ### Task 3: SQLite storage + FTS5 trigram spike
 

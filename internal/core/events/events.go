@@ -1,0 +1,48 @@
+// Package events defines the typed event bus used by core/sync, core/storage and the UI layer.
+//
+// All events implement the Event marker interface. Consumers receive events via Bus.Subscribe
+// and use a type switch to react to specific event variants.
+package events
+
+import "time"
+
+// Event is the marker interface implemented by every event type in this package.
+// The unexported eventMarker method prevents accidental implementations from other packages.
+type Event interface {
+	eventMarker()
+}
+
+// MessageReceived is emitted when a new message is observed for a known chat.
+type MessageReceived struct {
+	ChatID    int64
+	MessageID int64
+	Text      string
+	FromID    int64
+	Date      time.Time
+}
+
+func (MessageReceived) eventMarker() {}
+
+// DialogUpdated is emitted when the chat-list ordering or metadata changes (new last message,
+// rename, pin/unpin, unread counter change).
+type DialogUpdated struct {
+	ChatID int64
+}
+
+func (DialogUpdated) eventMarker() {}
+
+// AuthStateChanged is emitted when the Telegram authorization state changes (logged-in/out,
+// password requested, code requested).
+type AuthStateChanged struct {
+	State string
+}
+
+func (AuthStateChanged) eventMarker() {}
+
+// ConnectionStateChanged is emitted when the underlying MTProto connection state changes
+// (connecting, connected, reconnecting, disconnected).
+type ConnectionStateChanged struct {
+	State string
+}
+
+func (ConnectionStateChanged) eventMarker() {}
