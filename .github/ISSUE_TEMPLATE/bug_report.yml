@@ -40,9 +40,10 @@ body:
     id: build_tag
     attributes:
       label: Build mode
+      description: |
+        sqlcipher build is reserved for Stage 3 — `-tags sqlcipher` currently panics on init.
       options:
         - Default (pure Go, modernc/sqlite)
-        - sqlcipher (CGo, encrypted DB)
     validations:
       required: true
   - type: textarea

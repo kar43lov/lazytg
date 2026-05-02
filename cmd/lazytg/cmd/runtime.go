@@ -80,14 +80,18 @@ func ttyPassphrasePrompter() (string, error) {
 // stdinPrompter is the CLI implementation of tg.CodePrompter. It reads phone
 // and code from the user via the provided reader/writer (so tests can swap
 // them) and reads the 2FA password without echo from /dev/tty.
+//
+// The bufio.Reader is built once and reused across prompts: bufio reads ahead,
+// so re-creating it per prompt would discard buffered data and break piped
+// input (`lazytg login < script.txt`) plus any multi-line buffer-based test.
 type stdinPrompter struct {
-	in        io.Reader
+	br        *bufio.Reader
 	out       io.Writer
 	presetPhn string
 }
 
 func newStdinPrompter(in io.Reader, out io.Writer, presetPhone string) *stdinPrompter {
-	return &stdinPrompter{in: in, out: out, presetPhn: presetPhone}
+	return &stdinPrompter{br: bufio.NewReader(in), out: out, presetPhn: presetPhone}
 }
 
 func (p *stdinPrompter) Phone(_ context.Context) (string, error) {
@@ -119,14 +123,13 @@ func (p *stdinPrompter) Password(_ context.Context) (string, error) {
 	return strings.TrimSpace(string(pw)), nil
 }
 
-// readLine prints prompt and reads a single line; returns ErrEmptyInput if
-// the line is blank so the caller can decide whether to retry.
+// readLine prints prompt and reads a single line; returns an error if the
+// line is blank so the caller can decide whether to retry.
 func (p *stdinPrompter) readLine(prompt string) (string, error) {
 	if _, err := fmt.Fprint(p.out, prompt); err != nil {
 		return "", err
 	}
-	r := bufio.NewReader(p.in)
-	line, err := r.ReadString('\n')
+	line, err := p.br.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
 	}

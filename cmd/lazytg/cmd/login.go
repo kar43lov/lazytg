@@ -39,16 +39,14 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 
 	// We need the phone before opening the session store because the store is
 	// keyed on phone. If the user passed --account we use that; otherwise we
-	// ask via the prompter and reuse the answer below.
+	// ask via the prompter and reuse the answer below — the auth flow takes
+	// `phone` directly so the prompter's Phone() is not called again.
 	phone := strings.TrimSpace(flagAccount)
 	if phone == "" {
 		phone, err = prompter.Phone(ctx)
 		if err != nil {
 			return fmt.Errorf("read phone: %w", err)
 		}
-		// Once we know the phone, the prompter must not ask again inside the
-		// auth flow — pass it to the adapter via Login's phone argument.
-		prompter.presetPhn = phone
 	}
 
 	sess := tgclient.NewSessionStore(secrets, phone)

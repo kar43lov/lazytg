@@ -291,8 +291,9 @@ func (a *AgeFileStore) persist() error {
 	return nil
 }
 
-// writeFileAtomic writes data to a temp file in the same directory, fsyncs,
-// and renames over the destination. Always sets the requested mode on the
+// writeFileAtomic writes data to a temp file in the same directory, fsyncs the
+// file, renames over the destination, and fsyncs the directory so the rename
+// itself is durable across power loss. Always sets the requested mode on the
 // temp file before the rename so the destination never appears with looser
 // bits, even briefly.
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
@@ -325,6 +326,13 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := os.Rename(tmpName, path); err != nil {
 		cleanup()
 		return err
+	}
+	// fsync the parent dir so the rename is durable. Errors here aren't fatal
+	// (some filesystems / kernels don't support it) but we still try.
+	// dir is filepath.Dir of the caller-supplied path; G304 false positive.
+	if d, derr := os.Open(dir); derr == nil { //nolint:gosec // dir is derived from validated caller path
+		_ = d.Sync()
+		_ = d.Close()
 	}
 	return nil
 }
