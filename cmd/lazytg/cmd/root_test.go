@@ -2,6 +2,9 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
+	"io/fs"
+	"os"
 	"strings"
 	"testing"
 )
@@ -142,5 +145,50 @@ func TestLogout_RequiresAccount(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--account") {
 		t.Fatalf("error %q does not mention --account", err)
+	}
+}
+
+func TestLogout_RejectsInvalidPhone(t *testing.T) {
+	setupCmdTest(t)
+	root := newRootCmd()
+	out := &bytes.Buffer{}
+	root.SetArgs([]string{"--account", "not-a-phone", "logout"})
+	root.SetOut(out)
+	root.SetErr(out)
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid phone, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid phone") {
+		t.Fatalf("error %q does not mention invalid phone", err)
+	}
+}
+
+// TestAccounts_NoDatabase verifies that `lazytg accounts` does not silently
+// create the SQLite file on a fresh machine — the command is documented as
+// read-only.
+func TestAccounts_NoDatabase(t *testing.T) {
+	setupCmdTest(t)
+	root := newRootCmd()
+	out := &bytes.Buffer{}
+	root.SetArgs([]string{"accounts"})
+	root.SetOut(out)
+	root.SetErr(&bytes.Buffer{})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out.String(), "no accounts logged in") {
+		t.Fatalf("expected friendly empty message, got %q", out.String())
+	}
+
+	// Verify the SQLite database was NOT created as a side effect.
+	paths, err := resolvePathsOnly()
+	if err != nil {
+		t.Fatalf("resolvePathsOnly: %v", err)
+	}
+	if _, statErr := os.Stat(dbPath(paths)); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Fatalf("accounts unexpectedly created %s (statErr=%v)", dbPath(paths), statErr)
 	}
 }

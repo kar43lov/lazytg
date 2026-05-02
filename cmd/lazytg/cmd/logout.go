@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/pgmac/lazytg/internal/core/domain"
 	"github.com/pgmac/lazytg/internal/storage/sqlite"
 	tgclient "github.com/pgmac/lazytg/internal/tg"
 )
@@ -29,9 +30,15 @@ func runLogout(cmd *cobra.Command, _ []string) error {
 		ctx = context.Background()
 	}
 
-	phone := strings.TrimSpace(flagAccount)
-	if phone == "" {
+	raw := strings.TrimSpace(flagAccount)
+	if raw == "" {
 		return errors.New("logout requires --account <phone>")
+	}
+	// Normalise so that callers who pass spaces or dashes hit the same
+	// session-store key the matching `lazytg login` wrote.
+	phone, err := domain.NormalizePhone(raw)
+	if err != nil {
+		return fmt.Errorf("phone %q: %w", raw, err)
 	}
 
 	paths, secrets, err := resolvePaths()

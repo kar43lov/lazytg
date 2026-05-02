@@ -4,7 +4,45 @@
 // them without dragging in transitive heavy dependencies.
 package domain
 
-import "time"
+import (
+	"errors"
+	"strings"
+	"time"
+)
+
+// ErrInvalidPhone is returned by NormalizePhone when the input cannot be
+// reduced to an E.164-shaped string (leading '+' followed by 10–15 digits).
+var ErrInvalidPhone = errors.New("invalid phone number")
+
+// NormalizePhone strips whitespace, dashes, parentheses and dots from s and
+// returns the canonical E.164 representation ("+" + 10..15 digits). Used as
+// the secret-store key and accounts.phone primary key so that "+7 999 111 22
+// 33" and "+79991112233" map to the same logical account.
+func NormalizePhone(s string) (string, error) {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i, r := range strings.TrimSpace(s) {
+		switch {
+		case i == 0 && r == '+':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == ' ' || r == '-' || r == '(' || r == ')' || r == '.' || r == '\t':
+			// stripped
+		default:
+			return "", ErrInvalidPhone
+		}
+	}
+	out := b.String()
+	if !strings.HasPrefix(out, "+") {
+		return "", ErrInvalidPhone
+	}
+	digits := out[1:]
+	if len(digits) < 10 || len(digits) > 15 {
+		return "", ErrInvalidPhone
+	}
+	return out, nil
+}
 
 // ChatType enumerates the kinds of Telegram peers lazytg cares about.
 // Stored in the database as a short string so that values remain readable

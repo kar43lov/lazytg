@@ -219,6 +219,35 @@ func TestRepo_SaveAccount_RequiresPhone(t *testing.T) {
 	}
 }
 
+// TestRepo_SaveAccount_PreservesAliasOnReUpsert documents the contract that a
+// SaveAccount call with an empty Alias must NOT overwrite an existing alias
+// — that way `lazytg login` re-running on a known account never silently
+// nukes whatever alias the user (or a future rename UI) previously set.
+func TestRepo_SaveAccount_PreservesAliasOnReUpsert(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+	created := time.Now().UTC().Truncate(time.Second)
+
+	if err := repo.SaveAccount(ctx, domain.Account{
+		Phone: "+79990001111", Alias: "work", CreatedAt: created,
+	}); err != nil {
+		t.Fatalf("initial save: %v", err)
+	}
+
+	if err := repo.SaveAccount(ctx, domain.Account{
+		Phone: "+79990001111", CreatedAt: created,
+	}); err != nil {
+		t.Fatalf("re-upsert: %v", err)
+	}
+
+	got, err := repo.GetAccounts(ctx)
+	if err != nil {
+		t.Fatalf("get accounts: %v", err)
+	}
+	if len(got) != 1 || got[0].Alias != "work" {
+		t.Fatalf("alias must survive re-upsert with empty Alias, got %+v", got)
+	}
+}
+
 func TestRepo_GetMessages_LimitZeroReturnsNil(t *testing.T) {
 	repo, ctx := openTestRepo(t)
 	got, err := repo.GetMessages(ctx, 1, 0, 0)

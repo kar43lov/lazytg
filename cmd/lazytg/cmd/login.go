@@ -35,18 +35,22 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	prompter := newStdinPrompter(cmd.InOrStdin(), cmd.OutOrStdout(), strings.TrimSpace(flagAccount))
+	// Phone is the secret-store key and the accounts.phone primary key, so it
+	// must be canonicalised before either store is touched. Without this,
+	// `+7 999 111 22 33` and `+79991112233` would create two distinct sessions
+	// and accounts rows for the same Telegram account.
+	rawPhone := strings.TrimSpace(flagAccount)
+	prompter := newStdinPrompter(cmd.InOrStdin(), cmd.OutOrStdout(), rawPhone)
 
-	// We need the phone before opening the session store because the store is
-	// keyed on phone. If the user passed --account we use that; otherwise we
-	// ask via the prompter and reuse the answer below — the auth flow takes
-	// `phone` directly so the prompter's Phone() is not called again.
-	phone := strings.TrimSpace(flagAccount)
-	if phone == "" {
-		phone, err = prompter.Phone(ctx)
+	if rawPhone == "" {
+		rawPhone, err = prompter.Phone(ctx)
 		if err != nil {
 			return fmt.Errorf("read phone: %w", err)
 		}
+	}
+	phone, err := domain.NormalizePhone(rawPhone)
+	if err != nil {
+		return fmt.Errorf("phone %q: %w", rawPhone, err)
 	}
 
 	sess := tgclient.NewSessionStore(secrets, phone)

@@ -73,7 +73,10 @@ func (r *Repo) Close() error { return r.db.Close() }
 func (r *Repo) DB() *sql.DB { return r.db }
 
 // SaveAccount upserts an account row by phone. CreatedAt is preserved on
-// updates so the original login moment survives alias changes.
+// updates so the original login moment survives alias changes. When the
+// supplied Alias is empty we keep whatever alias the row already has — that
+// way `lazytg login` re-running on an existing account does not silently
+// clear an alias the user (or a future `accounts rename` command) set.
 func (r *Repo) SaveAccount(ctx context.Context, a domain.Account) error {
 	if a.Phone == "" {
 		return errors.New("account: phone is required")
@@ -86,7 +89,7 @@ func (r *Repo) SaveAccount(ctx context.Context, a domain.Account) error {
         INSERT INTO accounts (id, phone, alias, created_at)
         VALUES (?, ?, ?, ?)
         ON CONFLICT(phone) DO UPDATE SET
-            alias = excluded.alias
+            alias = COALESCE(excluded.alias, accounts.alias)
     `,
 		nullableInt64(a.ID),
 		a.Phone,

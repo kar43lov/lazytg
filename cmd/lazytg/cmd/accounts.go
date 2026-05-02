@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strings"
 	"text/tabwriter"
 
@@ -32,7 +35,21 @@ func runAccounts(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	repo, err := sqlite.Open(ctx, dbPath(paths))
+	// `accounts` is documented as read-only. If the user has never run
+	// `lazytg login`, the SQLite file does not exist — opening it here would
+	// silently materialise the database (and run migrations) just to print
+	// "no accounts logged in", contradicting the read-only contract. Stat
+	// first and short-circuit when the file is missing.
+	dbFile := dbPath(paths)
+	if _, statErr := os.Stat(dbFile); statErr != nil {
+		if errors.Is(statErr, fs.ErrNotExist) {
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), "no accounts logged in (run `lazytg login --account +<phone>`)")
+			return err
+		}
+		return fmt.Errorf("stat database: %w", statErr)
+	}
+
+	repo, err := sqlite.Open(ctx, dbFile)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
