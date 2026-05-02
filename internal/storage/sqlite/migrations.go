@@ -55,6 +55,16 @@ func loadMigrations() ([]migration, error) {
 		out = append(out, migration{version: v, name: name, sql: string(body)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].version < out[j].version })
+	// Reject duplicate versions: two files sharing a prefix (e.g. an accidental
+	// `0001_init.sql` + `0001_addon.sql`) would silently apply both bodies on
+	// a fresh DB while INSERT OR IGNORE swallows the schema_migrations PK
+	// conflict — leaving production drift impossible to spot from the table.
+	for i := 1; i < len(out); i++ {
+		if out[i].version == out[i-1].version {
+			return nil, fmt.Errorf("duplicate migration version %04d (%s and %s)",
+				out[i].version, out[i-1].name, out[i].name)
+		}
+	}
 	return out, nil
 }
 

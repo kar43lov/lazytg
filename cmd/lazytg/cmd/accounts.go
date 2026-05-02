@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/pgmac/lazytg/internal/core/domain"
 	"github.com/pgmac/lazytg/internal/storage/sqlite"
 )
 
@@ -64,7 +65,16 @@ func runAccounts(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Stored phones are canonical (NormalizePhone form), so normalise --account
+	// before the comparison — otherwise `--account "+7 999 111 22 33"` and the
+	// stored "+79991112233" would never match and the active marker would
+	// silently disappear. Fall back to the trimmed value if normalisation
+	// fails so the comparison still happens (no row will match an invalid
+	// phone, which is the desired outcome).
 	active := strings.TrimSpace(flagAccount)
+	if normalised, err := domain.NormalizePhone(active); err == nil {
+		active = normalised
+	}
 	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintln(tw, "ACTIVE\tPHONE\tALIAS\tCREATED"); err != nil {
 		return err

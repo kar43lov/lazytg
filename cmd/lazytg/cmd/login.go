@@ -63,7 +63,9 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 	// SecretStore *during* auth (gotd writes via SessionStore.Set), so a DB
 	// failure that happens after a successful auth leaves the user in an
 	// inconsistent state where the session exists but `lazytg accounts`
-	// shows nothing. Failing fast on DB-open keeps the two stores in sync.
+	// shows nothing. Failing fast on DB-open catches the common failure
+	// (DB unwritable) before we burn an SMS code; SaveAccount errors after
+	// auth are handled below by rolling the session back via Forget().
 	repo, err := sqlite.Open(ctx, dbPath(paths))
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -80,6 +82,13 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 	}
 
 	if err := repo.SaveAccount(ctx, domain.Account{Phone: phone}); err != nil {
+		// Roll back the session that gotd wrote during auth — otherwise the
+		// secret store and the DB drift apart and the user has to re-auth on
+		// next login or manually clear the keychain. Forget() failures are
+		// reported alongside the original error so the operator sees both.
+		if forgetErr := sess.Forget(); forgetErr != nil {
+			return fmt.Errorf("save account: %w (session rollback also failed: %v)", err, forgetErr)
+		}
 		return fmt.Errorf("save account: %w", err)
 	}
 

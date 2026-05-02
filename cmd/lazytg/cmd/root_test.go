@@ -2,11 +2,16 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io/fs"
 	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/pgmac/lazytg/internal/core/domain"
+	"github.com/pgmac/lazytg/internal/storage/sqlite"
 )
 
 // resetFlags clears package-level persistent flag state so tests can be run
@@ -163,6 +168,51 @@ func TestLogout_RejectsInvalidPhone(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid phone") {
 		t.Fatalf("error %q does not mention invalid phone", err)
+	}
+}
+
+// TestAccounts_ActiveMarker_NormalisesFlag asserts that --account marks the
+// stored canonical phone even when the user passes a non-canonical form
+// ("+7 999 ..."). Without normalisation the marker silently disappears.
+func TestAccounts_ActiveMarker_NormalisesFlag(t *testing.T) {
+	setupCmdTest(t)
+
+	// Pre-populate the DB with a canonical phone the way `login` would.
+	paths, err := resolvePathsOnly()
+	if err != nil {
+		t.Fatalf("resolvePathsOnly: %v", err)
+	}
+	if mkErr := os.MkdirAll(paths.Data, 0o700); mkErr != nil {
+		t.Fatalf("mkdir data: %v", mkErr)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	repo, err := sqlite.Open(ctx, dbPath(paths))
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	if saveErr := repo.SaveAccount(ctx, domain.Account{Phone: "+79991112233"}); saveErr != nil {
+		t.Fatalf("save account: %v", saveErr)
+	}
+	if closeErr := repo.Close(); closeErr != nil {
+		t.Fatalf("close repo: %v", closeErr)
+	}
+
+	root := newRootCmd()
+	out := &bytes.Buffer{}
+	root.SetArgs([]string{"--account", "+7 999 111 22 33", "accounts"})
+	root.SetOut(out)
+	root.SetErr(&bytes.Buffer{})
+
+	if execErr := root.Execute(); execErr != nil {
+		t.Fatalf("Execute: %v", execErr)
+	}
+	got := out.String()
+	if !strings.Contains(got, "*") {
+		t.Fatalf("active marker missing for non-canonical --account: %q", got)
+	}
+	if !strings.Contains(got, "+79991112233") {
+		t.Fatalf("canonical phone missing in output: %q", got)
 	}
 }
 

@@ -2,7 +2,9 @@ package sqlite_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -162,6 +164,43 @@ func TestRepo_SaveMessage_RequiresID(t *testing.T) {
 	err := repo.SaveMessage(ctx, domain.Message{ChatID: 1, Date: time.Now()})
 	if err == nil {
 		t.Fatal("expected error for zero id, got nil")
+	}
+}
+
+// TestRepo_SaveMessage_RequiresDate guards against zero-Time messages landing
+// in the DB as Unix epoch -62135596800 (year 1 BCE) and poisoning ordering /
+// future FTS5 before:/after: filters.
+func TestRepo_SaveMessage_RequiresDate(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+	err := repo.SaveMessage(ctx, domain.Message{ID: 1, ChatID: 1})
+	if err == nil {
+		t.Fatal("expected error for zero date, got nil")
+	}
+}
+
+// TestRepo_Open_DBFileMode0600 verifies that Open enforces the 0600 mode the
+// SECURITY.md threat model promises, regardless of the process umask.
+func TestRepo_Open_DBFileMode0600(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission model not applicable on Windows")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	t.Cleanup(cancel)
+
+	path := filepath.Join(t.TempDir(), "perm.db")
+	repo, err := sqlite.Open(ctx, path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	mode := info.Mode().Perm()
+	if mode != 0o600 {
+		t.Errorf("db file mode: got %o, want 0600", mode)
 	}
 }
 

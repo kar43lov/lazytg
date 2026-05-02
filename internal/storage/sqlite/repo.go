@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -35,6 +36,19 @@ func Open(ctx context.Context, path string) (*Repo, error) {
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping %q: %w", path, err)
+	}
+	// SECURITY.md and the threat model promise the DB file lives at 0600
+	// (it stores account phones, chat titles and message text — same threat
+	// model as the secrets file). modernc.org/sqlite respects the process
+	// umask, which on stock Unix is 022 and would land the file at 0644.
+	// Force 0600 here so the documented invariant holds regardless of umask.
+	// Skip in-memory and file: URI forms (the URI form may carry mode=ro and
+	// pragma query strings that we shouldn't shove at os.Chmod).
+	if !strings.HasPrefix(path, ":memory:") && !strings.HasPrefix(path, "file:") {
+		if err := os.Chmod(path, 0o600); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("chmod %q: %w", path, err)
+		}
 	}
 	if err := RunMigrations(ctx, db); err != nil {
 		_ = db.Close()
@@ -230,6 +244,13 @@ func (r *Repo) SaveMessage(ctx context.Context, m domain.Message) error {
 	}
 	if m.ID == 0 {
 		return errors.New("message: id is required")
+	}
+	// time.Time{}.UTC().Unix() == -62135596800 (year 1 BCE in Unix epoch),
+	// which would poison every downstream consumer (UI ordering, FTS5
+	// before:/after: filters, the lazy-index "last 5000" cap). Guard here so
+	// the row is rejected before it lands in the column.
+	if m.Date.IsZero() {
+		return errors.New("message: date is required")
 	}
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO messages (id, chat_id, from_id, date, text, reply_to, raw_blob)
