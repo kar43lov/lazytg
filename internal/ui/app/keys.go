@@ -1,0 +1,36 @@
+package app
+
+import tea "charm.land/bubbletea/v2"
+
+// focusCycledMsg is the tea.Msg emitted by cmdNextFocus / cmdPrevFocus when
+// Tab/Shift-Tab moves focus. Update consumes it to apply the focus change.
+// Routing through a Cmd (rather than mutating the model in-line) lets tests
+// observe the cycle as an externally visible event and matches the rest of
+// the bubbletea event-loop convention.
+type focusCycledMsg struct{ Direction int }
+
+// helpToggledMsg flips the help overlay visibility. Same rationale as
+// focusCycledMsg — go through Cmd so behaviour is observable in tests.
+type helpToggledMsg struct{}
+
+// cmdNextFocus advances focus to the next FocusTarget in spatial order.
+func cmdNextFocus() tea.Cmd {
+	return func() tea.Msg { return focusCycledMsg{Direction: +1} }
+}
+
+// cmdPrevFocus moves focus to the previous FocusTarget in spatial order.
+func cmdPrevFocus() tea.Cmd {
+	return func() tea.Msg { return focusCycledMsg{Direction: -1} }
+}
+
+// cmdToggleHelp emits a helpToggledMsg.
+func cmdToggleHelp() tea.Cmd {
+	return func() tea.Msg { return helpToggledMsg{} }
+}
+
+// cmdQuit is tea.Quit — re-exported under our naming convention so call
+// sites can stay self-explanatory and so future replacements (e.g. a "are
+// you sure?" confirmation) only need to be wired in one place.
+func cmdQuit() tea.Cmd {
+	return tea.Quit
+}

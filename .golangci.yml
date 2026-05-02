@@ -29,6 +29,12 @@ linters:
               desc: "internal/core must not import gotd; use internal/tg"
             - pkg: "github.com/charmbracelet/bubbletea"
               desc: "internal/core must not import bubbletea; UI lives in internal/ui"
+            - pkg: "charm.land/bubbletea"
+              desc: "internal/core must not import bubbletea v2; UI lives in internal/ui"
+            - pkg: "charm.land/bubbles"
+              desc: "internal/core must not import bubbles v2; UI lives in internal/ui"
+            - pkg: "charm.land/lipgloss"
+              desc: "internal/core must not import lipgloss v2; UI lives in internal/ui"
         ui:
           list-mode: lax
           files:

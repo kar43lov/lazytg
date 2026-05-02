@@ -134,22 +134,31 @@
 
 ### Task 6: Bubble Tea root model + 2-pane layout + statusbar
 
-- [ ] Добавить зависимости: `go get github.com/charmbracelet/bubbletea`, `go get github.com/charmbracelet/bubbles`, `go get github.com/charmbracelet/lipgloss`, `go get github.com/charmbracelet/x/exp/teatest`
-- [ ] Создать `internal/ui/app/model.go` с `App struct{ chats chats.Model; thread thread.Model; status statusbar.Model; help overlay.Help; input input.Model; focus FocusTarget; width, height int; keymap keymap.Keymap; bus *events.Bus; log *slog.Logger }`. Тип `FocusTarget` enum: `FocusChats`, `FocusInput`, `FocusThread`. Конструктор `New(deps Deps) App` где Deps включает bus, log, keymap, начальные модели pane'ов
-- [ ] Создать `internal/ui/app/update.go` с `func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd)`. Обрабатывает:
-  - `tea.WindowSizeMsg` → `a.width, a.height = msg.Width, msg.Height`. При `width<80 || height<24` — установить флаг `tooSmall=true`, при resize обратно — снять. Пропорции: chats 30% width, thread остаток. Status bar — bottom 1 строка. Input — bottom 3 строки над status bar
-  - `tea.KeyMsg` → если `keymap.ToggleHelp` matches → `a.help.Visible = !a.help.Visible`. Если `keymap.FocusNext` → циклически переключить focus. Если help открыт — приоритет в help.Update. Иначе делегировать в фокусированный компонент
-  - События из bus (через `tea.Cmd`-обёртку) → роутить в нужные panes
-- [ ] Создать `internal/ui/app/view.go` с `func (a App) View() string`. Если `tooSmall` — вернуть `"Terminal too small (min 80x24)"` отцентрованный. Иначе через lipgloss.JoinHorizontal: `chats.View()` + `thread.View()` (с разделителем `│`), JoinVertical с input.View() и statusbar.View(). Использовать `lipgloss.NewStyle().Border(lipgloss.NormalBorder())` для текущей фокусной панели (highlight)
-- [ ] Создать `internal/ui/app/keys.go` с глобальными command-functions: `cmdNextFocus()`, `cmdToggleHelp()`, `cmdQuit()`. Каждая возвращает `tea.Msg`-маркер или `tea.Quit`
-- [ ] Создать `internal/ui/statusbar/model.go` с `Model{accountAlias, chatTitle string; unreadTotal int; connState string; storageMode string; floodWait time.Duration}`. Метод `View(width int) string` — lipgloss horizontal layout: левая часть `accountAlias | chatTitle`, правая часть `unread N | connState [floodwait Xs] | storage`. Состояния connState: "connecting" (yellow), "online" (green), "offline" (red), "floodwait" (yellow)
-- [ ] Создать `internal/ui/statusbar/view_test.go` с golden-snapshots для всех 4 состояний (connecting/online/offline/floodwait) на ширине 100. Сохранить эталоны в `testdata/statusbar/*.txt`, обновлять через флаг `-update`
-- [ ] Создать `internal/ui/app/update_test.go` через teatest:
-  1. WindowSize 100x30 → ожидаем не tooSmall
-  2. WindowSize 60x20 → ожидаем "Terminal too small" в View
-  3. KeyMsg `?` → help.Visible=true
-  4. KeyMsg Tab → focus сменился c FocusChats на FocusInput
-- [ ] Запустить `go test -race ./internal/ui/...` — зелёное
+- [x] Добавить зависимости: `charm.land/bubbletea/v2`, `charm.land/bubbles/v2`, `charm.land/lipgloss/v2` (bubbletea v2 живёт на charm.land, не на github.com/charmbracelet — keymap уже использует v2). **Note:** `github.com/charmbracelet/x/exp/teatest` НЕ подключён — он импортирует bubbletea v1 и несовместим с v2; тесты пишутся напрямую через `Update`/`View` (детерминированно, не нужен event-loop)
+- [x] Создать `internal/ui/app/model.go` с `App struct{ chats chats.Model; thread thread.Model; status statusbar.Model; help overlay.Help; input input.Model; focus FocusTarget; width, height int; keymap keymap.Keymap; bus *events.Bus; log *slog.Logger }`. Тип `FocusTarget` enum: `FocusChats`, `FocusInput`, `FocusThread`. Конструктор `New(deps Deps) App` где Deps включает bus, log, keymap, начальные модели pane'ов. **Implementation note:** Deps.{Chats,Thread,Input,Status} опциональные (`*Model`) — если nil, используется package-level конструктор; chooseModel-generic чистит nil-checks. Это нужно чтобы Task 6 был тестируем до Tasks 7-9
+- [x] Создать `internal/ui/app/update.go` с `func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd)`. Обрабатывает:
+  - `tea.WindowSizeMsg` → `a.width, a.height = msg.Width, msg.Height`. При `width<80 || height<24` — установить флаг `tooSmall=true`, при resize обратно — снять. Пропорции: chats 30% width (min 20), thread остаток. Status bar — bottom 1 строка. Input — bottom 3 строки над status bar
+  - `tea.KeyPressMsg` → если `keymap.ToggleHelp` matches → emit `helpToggledMsg` через Cmd. Если `keymap.FocusNext`/`FocusPrev` → emit `focusCycledMsg{Direction}` через Cmd. Если help открыт — приоритет в help.Update (модальный, swallows other keys). Если `keymap.Quit` matches → tea.Quit. Иначе делегировать в фокусированный компонент. **Implementation note:** focus/help-toggle идут через Cmd (а не in-place мутация модели) чтобы тесты могли наблюдать переход как event и чтобы соблюсти bubbletea-конвенцию
+  - События из bus (через `tea.Cmd`-обёртку) → роутить в нужные panes (полная wiring — Task 11)
+- [x] Создать `internal/ui/app/view.go` с `func (a App) View() tea.View`. Если `tooSmall` — вернуть `"Terminal too small (min 80x24)"` отцентрованный через lipgloss.Place. Иначе через lipgloss.JoinHorizontal: `chats.View()` + vertical separator (`│`) + `thread.View()`, JoinVertical с input.View() и statusbar.View(). Focused pane получает bright-blue foreground через paneStyle. **Note:** в bubbletea v2 View возвращает `tea.View` (не string) — содержит Content + опциональный Cursor + bg/fg overrides. Мы только заполняем Content
+- [x] Создать `internal/ui/app/keys.go` с глобальными command-functions: `cmdNextFocus()`, `cmdPrevFocus()`, `cmdToggleHelp()`, `cmdQuit()`. Каждая возвращает `tea.Cmd` который при выполнении эмитит соответствующий tea.Msg-маркер (focusCycledMsg/helpToggledMsg) или вызывает tea.Quit
+- [x] Создать `internal/ui/statusbar/model.go` с `Model{AccountAlias, ChatTitle string; UnreadTotal int; ConnState string; StorageMode string; FloodWait time.Duration}`. Метод `View(width int) string` — lipgloss horizontal layout: левая часть `accountAlias | chatTitle` (с truncation chat→alias), правая часть `unread N | connState | storage`. FloodWait > 0 заменяет conn-cell на `floodwait Xs`. Состояния connState: "connecting" (ANSI 3 yellow), "online" (ANSI 2 green), "offline" (ANSI 1 red), "floodwait" (yellow). Константы цветов как ANSI индексы — стабильны для golden snapshots на любых терминалах
+- [x] Создать `internal/ui/statusbar/view_test.go` с golden-snapshots для всех 4 состояний (connecting/online/offline/floodwait) на ширине 100. Эталоны в `testdata/statusbar_*.txt`, обновляются флагом `-update`. Дополнительно: тесты на ширину (40/60/80/120 — все exact match), truncation (alias preserved, chat truncated с ellipsis), floodwait override conn, blank fields → defaults
+- [x] Создать `internal/ui/app/update_test.go` (без teatest — напрямую через Update/View):
+  1. WindowSize 100x30 → не tooSmall, dimensions stored
+  2. WindowSize 60x20 → tooSmall, View содержит "Terminal too small"
+  3. WindowSize 40x10 → 120x40 → recovers (tooSmall очищается)
+  4. KeyPressMsg `?` → focusCycledMsg/helpToggledMsg → help.Visible=true; повторное `?` (через модальный overlay) — hides
+  5. KeyPressMsg Tab → focus сменился c FocusChats на FocusInput; Tab×3 — wrap-around к FocusChats
+  6. Shift+Tab → wrap к FocusThread
+  7. Help-modal swallows Tab — focus не меняется пока overlay открыт
+  8. Esc dismisses help
+  9. Ctrl+C → tea.QuitMsg
+  10. Focused pane показывает focus-флаг в View
+- [x] Создать stub-реализации `internal/ui/panes/chats/`, `internal/ui/panes/thread/`, `internal/ui/input/`, `internal/ui/overlay/help.go` (минимальные `Model{Width,Height,Focused}` + Init/Update/View/SetSize/SetFocus). Полная реализация — Tasks 7-10. Stub нужен чтобы Task 6 был самодостаточен и тестируем до Tasks 7-9
+- [x] Создать `internal/ui/overlay/help_test.go` — Hidden=true → empty View; Visible=true → содержит "send"/"enter"/"reply"/"ctrl+r"; Esc/q/? dismisses; unrelated key игнорится
+- [x] Обновить `.golangci.yml`: добавить `charm.land/bubbletea`, `charm.land/bubbles`, `charm.land/lipgloss` в depguard core deny-list (раньше был только github.com/charmbracelet/bubbletea — поскольку v2 на charm.land, нужно явно банить и его)
+- [x] Запустить `go test -race ./internal/ui/...` — зелёное; `golangci-lint run ./...` — 0 issues
 
 ### Task 7: Chats pane
 
