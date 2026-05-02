@@ -201,27 +201,35 @@
 
 ### Task 9: Input field (emacs/readline) + composer + reply state
 
-- [ ] Создать `internal/ui/input/model.go` с `Model{textarea textarea.Model; replyTo *domain.Message; sendService SendServiceInterface; chatID int64; keymap keymap.Keymap; log *slog.Logger}` где `SendServiceInterface{SendText(ctx, chatID, text, replyTo int) (localID string, err error)}`. Конструктор `New(send, km, log) Model`. Textarea с custom `key.Bindings` из keymap. Высота фиксированно 3 строки
-- [ ] Создать `internal/ui/input/emacs.go` с функцией `ApplyEmacsBindings(ta *textarea.Model, km keymap.Keymap)` — переопределяет встроенные key.Binding'и textarea: WordForward (Alt+F), WordBack (Alt+B), DeleteWordBack (Ctrl+W), DeleteAfterCursor (Ctrl+K), DeleteBeforeCursor (Ctrl+U), LineStart (Ctrl+A), LineEnd (Ctrl+E), CharacterForward/Backward (стрелки + Ctrl+F/B). Vim-like биндинги НЕ добавляем (отложено на v0.2)
-- [ ] Создать `internal/ui/input/history.go` с `History{entries []string; cursor int; max int}` — circular buffer на 100 последних отправленных сообщений. Методы `Add(text string)`, `Prev() string`, `Next() string`. Persistence в `~/.local/state/lazytg/input_history.txt` (опционально, можно отложить — пока in-memory)
-- [ ] Создать `internal/ui/input/update.go` с `func (m Model) Update(msg tea.Msg) (Model, tea.Cmd)`:
-  - `tea.KeyMsg` matches `keymap.Send` (Enter) → если `m.textarea.Value()` пустой — no-op; иначе вызвать `m.sendService.SendText(...)` через tea.Cmd, очистить textarea, добавить в history. Если `replyTo` set — передать `replyTo.ID`, потом сбросить replyTo
-  - `tea.KeyMsg` matches `keymap.Newline` (Alt+Enter) → вставить `\n`
-  - `tea.KeyMsg` matches `keymap.Reply` (Ctrl+R) → эмитировать `requestReplyMsg` (UI app найдёт выбранное сообщение и установит `replyTo`)
-  - `tea.KeyMsg` matches `keymap.OpenEditor` (Ctrl+E) → эмитировать `openEditorMsg{currentText: m.textarea.Value()}`
-  - `tea.KeyMsg` history Ctrl+P/N → передать в `m.history.Prev()` / `.Next()`, установить в textarea
-- [ ] Создать `internal/ui/input/view.go` — `m.textarea.View()` с подсказкой `replyTo` сверху (если set): `↳ Reply to <author>: <preview>` (italic). Hint строка снизу при пустом textarea: "Enter to send, Alt+Enter for newline, Ctrl+E for editor, Ctrl+R to reply"
-- [ ] Создать `internal/ui/input/emacs_test.go` с тестами:
-  1. Set value `"hello world"`, KeyMsg Ctrl+A → cursor в начало
-  2. KeyMsg Ctrl+E → cursor в конец
-  3. KeyMsg Ctrl+W → удалить последнее слово ("hello ")
-  4. KeyMsg Ctrl+K → удалить от cursor до конца
-  5. KeyMsg Ctrl+U → удалить от cursor до начала
-  6. KeyMsg Alt+F с курсором в начале → cursor после "hello"
-  7. KeyMsg Alt+B с курсором в конце → cursor перед "world"
-- [ ] Создать `internal/ui/input/history_test.go`: добавить 5 entries, Prev → последний, Prev → предпоследний, Next → последний, Next → пустая строка (новый ввод). Circular после 100: 101-й вытесняет 1-й
-- [ ] Создать `internal/ui/input/model_test.go` через teatest: пустой textarea + Enter → no-op (sendService не вызван). Текст "test" + Enter → sendService.SendText вызван с text="test", textarea очищен, "test" в history
-- [ ] Запустить `go test -race ./internal/ui/input/...` — зелёное
+- [x] Создать `internal/ui/input/model.go` с `Model{textarea textarea.Model; replyTo *domain.Message; sendService SendServiceInterface; chatID int64; keymap keymap.Keymap; log *slog.Logger}` где `SendServiceInterface{SendText(ctx, chatID, text, replyTo int) (localID string, err error)}`. Конструктор `NewWithDeps(send, km, log) Model` (плюс `New()` для placeholder). Textarea с emacs-биндингами через `ApplyEmacsBindings`. Высота textarea body = 1 строка (3-строчный pane с reply hint сверху + emptyHint снизу). **Implementation note:** добавлен `SetFocus` swap-prompt (`focusedPrompt = "› "`, `blurredPrompt = "  "`) для детерминированного focus marker в app/view-тестах; обновлён `internal/ui/app/update_test.go::TestFocusedPaneAppliesFocusFlag` (старый `"> _"` → новый `"› "`)
+- [x] Создать `internal/ui/input/emacs.go` с функцией `ApplyEmacsBindings(km *textarea.KeyMap)` — стрипает конфликтующие keys из textarea KeyMap: `enter` из `InsertNewline` (Send живёт на input уровне), `ctrl+e` из `LineEnd` (OpenEditor приоритетнее), `ctrl+p`/`ctrl+n` из `LinePrevious`/`LineNext` (history). Остальные emacs-биндинги (LineStart=Ctrl+A, DeleteAfterCursor=Ctrl+K, DeleteBeforeCursor=Ctrl+U, DeleteWordBackward=Ctrl+W, WordForward/Backward=Alt+F/B, CharacterForward/Backward=Ctrl+F/B+стрелки) идут в textarea defaults — не переопределяем. Vim-like биндинги НЕ добавляем (отложено на v0.2). **Implementation note:** Ctrl+B/Ctrl+F остаются character-motion в textarea несмотря на global keymap.ScrollUp/Down — app роутит keys только в фокусированный pane, конфликт безвреден
+- [x] Создать `internal/ui/input/history.go` с `History{entries []string; max int; cursor int}` — circular buffer на 100 последних отправленных сообщений. Методы `Add(text string)` (skip empty, evict oldest на переполнении), `Prev() (string, bool)`, `Next() (string, bool)`, `Reset()`. Persistence в `~/.local/state/lazytg/input_history.txt` отложен — пока in-memory. **Implementation note:** cursor=-1 — "draft slot" (Next от newest парк здесь, возвращает ""); nil-safe (`var h *History; h.Add(...)` не паникует)
+- [x] Создать `internal/ui/input/update.go` с `func (m Model) Update(msg tea.Msg) (Model, tea.Cmd)`:
+  - `SetChatMsg{ChatID}` → bind chat id, reset replyTo (защита от cross-chat reply leakage)
+  - `SetReplyMsg{Msg}` → arm/clear reply pointer
+  - `EditorClosedMsg` → write back текст в textarea, refocus
+  - `SendFailedMsg` → restore draft (composer не теряет текст при validation/network failure)
+  - `tea.KeyPressMsg` matches `keymap.Send` (Enter) → если text пустой или send/chatID не wired — no-op; иначе async tea.Cmd с `sendService.SendText(...)`, очистить textarea, добавить в history, replyTo сбросить. Cmd возвращает `SendDispatchedMsg` (success) или `SendFailedMsg` (failure)
+  - `keymap.Newline` (Alt+Enter) → `m.textarea.InsertString("\n")`
+  - `keymap.Reply` (Ctrl+R) → tea.Cmd → `RequestReplyMsg{}` (app резолвит выбранное thread-сообщение и шлёт обратно `SetReplyMsg`)
+  - `keymap.OpenEditor` (Ctrl+E) → tea.Cmd → `OpenEditorMsg{CurrentText}` (Task 10 spawnит $EDITOR)
+  - history Ctrl+P/N → `m.history.Prev()` / `.Next()`, set в textarea + cursor end
+  - **Implementation note:** Ctrl+P/N захардкожены в `isHistoryPrev`/`isHistoryNext` (а не в keymap) — readline-конвенция, не user-tunable. Иначе пришлось бы добавлять keymap.HistoryPrev/Next и заново чистить textarea LinePrevious/LineNext binding, что было бы fragile при keymap override
+- [x] Создать `internal/ui/input/view.go` — 3-строчный layout: row 1 = optional reply hint (`↳ Reply to: <preview>` italic grey, либо blank padding для стабильной высоты), row 2 = textarea body, row 3 = empty-state hint при пустом textarea (`Enter to send, Alt+Enter for newline, Ctrl+E for editor, Ctrl+R to reply`)
+- [x] Создать `internal/ui/input/emacs_test.go` с тестами:
+  1. `ApplyEmacsBindings` стрипает enter/ctrl+e/ctrl+p/ctrl+n из textarea conflict-keys
+  2. `ApplyEmacsBindings` keep'ит ctrl+a/ctrl+f/ctrl+b/ctrl+w/ctrl+k/ctrl+u/alt+f/alt+b
+  3. Ctrl+A → cursor в col 0
+  4. End key → cursor в конец (Ctrl+E убран — reserved for OpenEditor; verified Ctrl+E игнорится textarea)
+  5. Ctrl+W → удаление last word
+  6. Ctrl+K → удаление after cursor
+  7. Ctrl+U → удаление before cursor
+  8. Alt+F → cursor парк на 5 (textarea v2 doWordRight парк в trailing space, не start of next word — задокументировано в тесте)
+  9. Alt+B → cursor парк на 6 (start of "world")
+  10. nil-safe `ApplyEmacsBindings(nil)` — no panic
+- [x] Создать `internal/ui/input/history_test.go`: Add empty → ignored, Prev/Next walk через 5 entries, Prev at oldest stays, Next from draft no-op, circular evicts oldest (capacity=3 + 4 add → first evicted), Add resets browse cursor (Prev после Add возвращает свежий entry), nil-safe
+- [x] Создать `internal/ui/input/model_test.go` (без teatest — напрямую через Update/View, тот же подход что в app/chats/thread): пустой textarea + Enter → no-op + sendService не вызван; текст "hi" + Enter → SendDispatchedMsg + sendService.SendText вызван + textarea очищен + history записан; reply armed + Send → ReplyTo передаётся в SendText + reply pointer cleared; SendFailedMsg → draft restored; Alt+Enter → literal "\n"; Ctrl+R → RequestReplyMsg; Ctrl+E → OpenEditorMsg{CurrentText}; EditorClosedMsg → textarea populated; Ctrl+P/N → history navigation; SetChatMsg → reply cleared; Send без chatID → no-op; printable keys → accumulate; View hint when empty/reply armed; SetFocus → focus prompt swap
+- [x] Запустить `go test -race ./internal/ui/input/...` — зелёное
 
 ### Task 10: $EDITOR delegation (Ctrl-E) + Help overlay (?)
 

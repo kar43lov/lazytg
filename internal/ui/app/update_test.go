@@ -232,7 +232,7 @@ func TestFocusedPaneAppliesFocusFlag(t *testing.T) {
 	if !strings.Contains(view, "Chats") || strings.Contains(view, "Chats (focused)") {
 		t.Fatalf("Chats pane should drop focus on Tab; got %q", view)
 	}
-	if !strings.Contains(view, "> _") {
-		t.Fatalf("Input pane should advertise focus after Tab; got %q", view)
+	if !strings.Contains(view, "› ") {
+		t.Fatalf("Input pane should advertise focus marker after Tab; got %q", view)
 	}
 }
