@@ -258,6 +258,40 @@ func TestDialogUpdatedSchedulesDebouncedReload(t *testing.T) {
 	_ = got
 }
 
+func TestMessageReceivedSchedulesDebouncedReload(t *testing.T) {
+	t.Parallel()
+
+	// LiveService persists incoming messages but no longer republishes a
+	// DialogUpdated (avoids self-feedback into its own bus subscription).
+	// The chats pane reorders by reacting to MessageReceived directly.
+	repo := &fakeRepo{chats: []domain.Chat{makeChat(1, "Only", false, 0, 0)}}
+	m := sized(NewWithRepo(repo, nil))
+	loaded := runCmd(t, m.Init()).(chatsLoadedMsg)
+	got, _ := m.Update(loaded)
+	if repo.callCount != 1 {
+		t.Fatalf("expected 1 repo call after init, got %d", repo.callCount)
+	}
+
+	got, cmd := got.Update(events.MessageReceived{ChatID: 1, MessageID: 42, Text: "hi"})
+	if cmd == nil {
+		t.Fatalf("MessageReceived should arm a debounced tick cmd")
+	}
+	out := cmd()
+	if _, ok := out.(reloadDebouncedMsg); !ok {
+		t.Fatalf("expected reloadDebouncedMsg from tick, got %T", out)
+	}
+	_, reloadCmd := got.Update(out)
+	if reloadCmd == nil {
+		t.Fatalf("latest debounce tick should produce a load cmd")
+	}
+	if _, ok := reloadCmd().(chatsLoadedMsg); !ok {
+		t.Fatalf("expected chatsLoadedMsg from reload, got %T", reloadCmd())
+	}
+	if repo.callCount != 2 {
+		t.Fatalf("expected exactly 2 repo calls, got %d", repo.callCount)
+	}
+}
+
 func TestRepoErrorDoesNotPanic(t *testing.T) {
 	t.Parallel()
 

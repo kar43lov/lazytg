@@ -169,6 +169,65 @@ func TestSendFailureRestoresDraft(t *testing.T) {
 	}
 }
 
+func TestSendFailureRestoresReplyPointer(t *testing.T) {
+	t.Parallel()
+
+	send := &fakeSender{err: errors.New("boom")}
+	m := newInput(t, send)
+	reply := &domain.Message{ID: 4242, ChatID: 42, Text: "earlier message"}
+	m, _ = m.Update(SetReplyMsg{Msg: reply})
+	if m.ReplyTo() == nil {
+		t.Fatalf("seed: reply should be armed")
+	}
+	m, _ = m.Update(keyText("z"))
+	got, cmd := m.Update(keyChord(tea.KeyEnter, 0))
+	if cmd == nil {
+		t.Fatalf("Send must always produce a Cmd to await result")
+	}
+	failed, ok := cmd().(SendFailedMsg)
+	if !ok {
+		t.Fatalf("expected SendFailedMsg, got %T", cmd())
+	}
+	if failed.ReplyToMsg == nil || failed.ReplyToMsg.ID != 4242 {
+		t.Fatalf("SendFailedMsg should carry original reply target, got %+v", failed.ReplyToMsg)
+	}
+	got, _ = got.Update(failed)
+	if got.ReplyTo() == nil || got.ReplyTo().ID != 4242 {
+		t.Fatalf("reply pointer should be rearmed after failure, got %+v", got.ReplyTo())
+	}
+}
+
+func TestSendFailureKeepsFresherDraft(t *testing.T) {
+	t.Parallel()
+
+	// A fresher draft typed while the failed send was in flight must not be
+	// clobbered when SendFailedMsg lands. Silently overwriting half-typed
+	// text would be a small but trust-eroding data-loss bug.
+	m := newInput(t, &fakeSender{})
+	failed := SendFailedMsg{Text: "stale"}
+	m, _ = m.Update(keyText("f"))
+	m, _ = m.Update(keyText("r"))
+	m, _ = m.Update(failed)
+	if m.Value() != "fr" {
+		t.Fatalf("fresher draft must survive SendFailedMsg, got %q", m.Value())
+	}
+}
+
+func TestSendFailureKeepsRetargetedReply(t *testing.T) {
+	t.Parallel()
+
+	// If the user has armed a new reply pointer while the failed send was
+	// in flight, the failure must not retarget it back to the original.
+	m := newInput(t, &fakeSender{})
+	original := &domain.Message{ID: 1, ChatID: 42}
+	retargeted := &domain.Message{ID: 2, ChatID: 42}
+	m, _ = m.Update(SetReplyMsg{Msg: retargeted})
+	m, _ = m.Update(SendFailedMsg{Text: "", ReplyToMsg: original})
+	if got := m.ReplyTo(); got == nil || got.ID != 2 {
+		t.Fatalf("retargeted reply must survive SendFailedMsg, got %+v", got)
+	}
+}
+
 func TestNewlineInsertsLiteralNewline(t *testing.T) {
 	t.Parallel()
 

@@ -124,8 +124,15 @@ func (m Model) applyIncoming(ev events.MessageReceived) (Model, tea.Cmd) {
 // pending → sent | failed pill in the visible message list.
 //
 // State machine:
-//   - pending: insert (or update) the entry so the user sees an
-//     immediate "[⏳] text" line below the latest history.
+//   - pending: no-op. The optimistic entry is inserted synchronously by
+//     ApplyDispatched (driven by SendDispatchedMsg) which carries the
+//     message body. The bus event for "pending" arrives via a separate
+//     async path (forwardBusEvents → program.Send) and races with
+//     SendDispatchedMsg; if it wins the race, an upsert here would
+//     create an entry with empty text that flickers until ApplyDispatched
+//     catches up. Treating Pending as a no-op eliminates the flicker —
+//     by the time the next state transition (Sent | Failed) arrives,
+//     ApplyDispatched has populated the entry.
 //   - sent: drop the entry once we know the serverID, but stash a
 //     localID → serverID mapping so applyIncoming can dedupe the
 //     server-echo MessageReceived. If we kept the optimistic row, the
@@ -138,12 +145,7 @@ func (m Model) applyOutgoingState(ev events.OutgoingMessageStateChanged) (Model,
 	}
 	switch ev.State {
 	case events.OutgoingStatePending:
-		m.outgoing = upsertOutgoing(m.outgoing, OutgoingMessage{
-			LocalID: ev.LocalID,
-			ChatID:  ev.ChatID,
-			Text:    findOutgoingText(m.outgoing, ev.LocalID),
-			State:   events.OutgoingStatePending,
-		})
+		return m, nil
 	case events.OutgoingStateSent:
 		if ev.ServerID > 0 {
 			m.pendingServerIDs[ev.ServerID] = ev.LocalID

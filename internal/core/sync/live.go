@@ -108,12 +108,19 @@ func (s *LiveService) drain(ctx context.Context, ch <-chan events.Event) error {
 	}
 }
 
-// persist saves a single message, records the ingest latency, and
-// republishes a DialogUpdated event so the chats pane can reorder the
-// list (the chat that just received a message bubbles to the top).
-// We piggyback on the same bus the UI already subscribes to instead of
-// adding a second subscription path — keeps fan-out semantics simple
-// and the UI consumer free of LiveService-specific glue.
+// persist saves a single message and records the ingest latency. The
+// chats pane reorders the dialog list by subscribing directly to
+// MessageReceived (same event the UI already routes through the bus
+// fan-in), so there is no need to republish a DialogUpdated here.
+//
+// Earlier revisions of this method emitted a DialogUpdated to drive the
+// chats pane reload, but that re-publish landed in LiveService's own
+// subscriber buffer (Bus.Publish fans out to every subscriber, including
+// the producer). Under bursty traffic the self-delivered event halved
+// the effective buffer capacity and could cause real MessageReceived
+// events to drop. Routing the reload directly off MessageReceived keeps
+// the bus single-producer-per-event-type and removes the back-pressure
+// surprise.
 func (s *LiveService) persist(ctx context.Context, ev events.MessageReceived) {
 	start := s.now()
 	if err := s.store.SaveMessage(ctx, domain.Message{
@@ -132,12 +139,4 @@ func (s *LiveService) persist(ctx context.Context, ev events.MessageReceived) {
 		latency = 0
 	}
 	s.lastIngestLatency.Store(latency.Milliseconds())
-
-	// Notify the chats pane so it can re-sort by last_message_date. The
-	// publish is best-effort: the bus drops events past per-subscriber
-	// capacity, which is acceptable here because a missed reorder is a
-	// purely cosmetic glitch — the next live event will catch it up.
-	if s.bus != nil {
-		s.bus.Publish(events.DialogUpdated{ChatID: ev.ChatID})
-	}
 }

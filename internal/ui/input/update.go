@@ -48,8 +48,24 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// Restore the draft so the user can retry. The reply pointer is
 		// rearmed too so the retry preserves the conversation context
 		// the user was replying into when the original send failed.
-		m.setValue(typed.Text)
-		m.replyTo = typed.ReplyToMsg
+		//
+		// Both restores are conditional: if the user has already started
+		// typing a new message or armed a new reply, we leave that fresher
+		// state alone and silently discard the failed payload. Silently
+		// clobbering a half-typed message with a stale failure body is the
+		// kind of small data-loss UX bug that erodes trust quickly.
+		if m.textarea.Value() == "" {
+			m.setValue(typed.Text)
+		} else if m.log != nil {
+			m.log.Warn("input: send failed but composer holds fresher draft, dropping failed text",
+				"failed_len", len(typed.Text))
+		}
+		if m.replyTo == nil {
+			m.replyTo = typed.ReplyToMsg
+		} else if m.log != nil && typed.ReplyToMsg != nil && typed.ReplyToMsg.ID != m.replyTo.ID {
+			m.log.Warn("input: send failed but reply pointer has been retargeted",
+				"failed_target_id", typed.ReplyToMsg.ID, "current_target_id", m.replyTo.ID)
+		}
 		return m, nil
 	case tea.KeyPressMsg:
 		if cmd, handled := m.handleChord(typed); handled {

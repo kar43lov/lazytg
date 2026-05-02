@@ -148,6 +148,33 @@ func TestLiveEchoDedupesOptimisticRow(t *testing.T) {
 	}
 }
 
+// TestPendingBusEventBeforeDispatchedIsIgnored protects against the
+// race where the SendService publishes OutgoingStateChanged{Pending}
+// before the input pane's SendDispatchedMsg lands in the program loop.
+// If applyOutgoingState{Pending} created an entry under those
+// conditions it would render an empty "[⏳]" row that flickers until
+// ApplyDispatched catches up. Treating Pending as a no-op eliminates
+// the flicker — Sent | Failed transitions still arrive after
+// ApplyDispatched has populated the entry, so the lifecycle remains
+// correct.
+func TestPendingBusEventBeforeDispatchedIsIgnored(t *testing.T) {
+	t.Parallel()
+
+	m := sized(NewWithRepo(newFakeRepo(0), nil, nil))
+	m, _ = m.OpenChat(1)
+
+	// Bus event arrives without ApplyDispatched having run yet.
+	m, _ = m.Update(events.OutgoingMessageStateChanged{
+		LocalID: "local-1",
+		ChatID:  1,
+		State:   events.OutgoingStatePending,
+	})
+
+	if got := len(m.Outgoing()); got != 0 {
+		t.Fatalf("Pending bus event before dispatch should not insert an empty row; got %d outgoing", got)
+	}
+}
+
 // TestOpenChatResetsOptimistic protects against optimistic state
 // leaking between chats — switching to chat 2 must wipe pendings that
 // were added while chat 1 was open.

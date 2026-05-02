@@ -217,6 +217,58 @@ func TestViewIncludesStatusBar(t *testing.T) {
 	}
 }
 
+func TestScrollChordRoutedToThreadWhenFocused(t *testing.T) {
+	t.Parallel()
+
+	// ScrollUp / ScrollDown chords (default ctrl+b / ctrl+f) must reach the
+	// thread pane's viewport when the thread is focused, otherwise a
+	// user-customisable scroll binding is just decorative.
+	a := newApp(t)
+	model, cmd := a.Update(keyChord(tea.KeyTab, 0)) // chats → input
+	model, _ = model.Update(cmd())
+	model, cmd = model.Update(keyChord(tea.KeyTab, 0)) // input → thread
+	model, _ = model.Update(cmd())
+	if got := model.(App).Focus(); got != FocusThread {
+		t.Fatalf("precondition: expected FocusThread, got %s", got)
+	}
+
+	// Chord must be consumed (no cmd fall-through to delegateToFocused
+	// since we apply scroll before delegating). The viewport scroll itself
+	// is exercised elsewhere — what we verify here is that the chord does
+	// not fall through to the focused pane's Update (which would attempt
+	// pagination).
+	_, cmd = model.Update(keyChord('b', tea.ModCtrl))
+	if cmd != nil {
+		t.Fatalf("ScrollUp chord must not produce a fall-through Cmd, got %T", cmd())
+	}
+	_, cmd = model.Update(keyChord('f', tea.ModCtrl))
+	if cmd != nil {
+		t.Fatalf("ScrollDown chord must not produce a fall-through Cmd, got %T", cmd())
+	}
+}
+
+func TestScrollChordIgnoredWhenInputFocused(t *testing.T) {
+	t.Parallel()
+
+	// Ctrl+B / Ctrl+F when the input pane is focused are emacs character-
+	// motion chords that the textarea expects. They must NOT be hijacked
+	// by the global scroll handler.
+	a := newApp(t)
+	model, cmd := a.Update(keyChord(tea.KeyTab, 0))
+	model, _ = model.Update(cmd())
+	if got := model.(App).Focus(); got != FocusInput {
+		t.Fatalf("precondition: expected FocusInput, got %s", got)
+	}
+
+	// The textarea returns nil for unfocused-but-routed key updates here,
+	// but the test's contract is just that App didn't claim the key as a
+	// global scroll. Verify by checking focus is unchanged and no panic.
+	updated, _ := model.Update(keyChord('b', tea.ModCtrl))
+	if updated.(App).Focus() != FocusInput {
+		t.Fatalf("Ctrl+B in input must not change focus, got %s", updated.(App).Focus())
+	}
+}
+
 func TestFocusedPaneAppliesFocusFlag(t *testing.T) {
 	t.Parallel()
 

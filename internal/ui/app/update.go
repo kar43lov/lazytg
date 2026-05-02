@@ -72,6 +72,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd, handled := a.handleGlobalKey(k); handled {
 			return a, cmd
 		}
+		if updated, handled := a.applyScrollKey(k); handled {
+			return updated, nil
+		}
 		return a.delegateToFocused(msg)
 	}
 
@@ -164,9 +167,12 @@ func (a App) handleReplyRequest() (tea.Model, tea.Cmd) {
 // broadcastBusEvent fans a bus event out to every interested pane. The
 // status bar only reacts to connection / storage transitions; the
 // thread pane filters by chat id internally; the chats pane
-// debounce-reloads on DialogUpdated. Routing here means the
-// program.Send → tea.Msg fan-in (cmd/lazytg/cmd/tui.go) does not need
-// to know which pane owns which event.
+// debounce-reloads on DialogUpdated *and* MessageReceived (the latter
+// drives the dialog reorder when a new message lands — LiveService
+// persists the row but does not republish a DialogUpdated, see
+// internal/core/sync/live.go). Routing here means the program.Send →
+// tea.Msg fan-in (cmd/lazytg/cmd/tui.go) does not need to know which
+// pane owns which event.
 func (a App) broadcastBusEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -184,7 +190,23 @@ func (a App) broadcastBusEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 		return a, tea.Batch(cmds...)
-	case events.MessageReceived, events.OutgoingMessageStateChanged:
+	case events.MessageReceived:
+		// Both panes care: thread filters by current chat id internally
+		// and appends the message to the visible list; chats reloads
+		// the dialog list so the chat hosting this message bubbles to
+		// the top.
+		updatedThread, cmdT := a.thread.Update(ev)
+		a.thread = updatedThread
+		if cmdT != nil {
+			cmds = append(cmds, cmdT)
+		}
+		updatedChats, cmdC := a.chats.Update(ev)
+		a.chats = updatedChats
+		if cmdC != nil {
+			cmds = append(cmds, cmdC)
+		}
+		return a, tea.Batch(cmds...)
+	case events.OutgoingMessageStateChanged:
 		updated, cmd := a.thread.Update(ev)
 		a.thread = updated
 		if cmd != nil {
@@ -259,6 +281,32 @@ func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 	}
 	_ = chord
 	return nil, false
+}
+
+// applyScrollKey checks whether the key matches the configurable
+// ScrollUp/ScrollDown chords and, if so, scrolls the thread viewport.
+// Scroll keys are intentionally a focus-aware override that only fires
+// when the thread pane (or chats pane) is focused — when the input pane
+// has focus the same chord (ctrl+b / ctrl+f by default) is the emacs
+// character motion the textarea expects, and stealing it would break
+// every emacs muscle memory.
+//
+// Returns (updated app, true) when the chord was consumed, otherwise
+// the original app and false so the caller can fall through to the
+// regular delegate path.
+func (a App) applyScrollKey(k tea.KeyPressMsg) (App, bool) {
+	if a.focus == FocusInput {
+		return a, false
+	}
+	switch {
+	case key.Matches(k, a.keymap.ScrollUp):
+		a.thread = a.thread.ScrollUp()
+		return a, true
+	case key.Matches(k, a.keymap.ScrollDown):
+		a.thread = a.thread.ScrollDown()
+		return a, true
+	}
+	return a, false
 }
 
 // applyFocusChange shifts focus by +/-1 (mod 3) and propagates the change

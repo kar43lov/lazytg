@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stage 2 TUI: 2-pane Bubble Tea v2 (chats + thread) with status bar, modal help overlay (`?`), focus cycling (Tab/Shift+Tab), small-terminal fallback (<80×24).
 - `lazytg` (no subcommand) opens the TUI as the default entry point; `lazytg tui` is a hidden alias.
 - History sync via gotd `messages.GetHistory` with batch upsert (`Repo.SaveMessages`) and 200-message pagination on scroll-up.
-- Live updates via gotd `updates.Manager` over a SQLite-backed `StateStorage` (composite key `(account_id, channel_id)`) with LRU dedup (256 entries) on `(chat_id, message_id)`. SLA: <500ms p95 from MTProto update to repo write, gated by `test/perf/live_latency_test.go`. `LiveService.persist` re-publishes `DialogUpdated` so the chats pane reorders on every incoming message.
+- Live updates via gotd `updates.Manager` over a SQLite-backed `StateStorage` (composite key `(account_id, channel_id)`) with LRU dedup (256 entries) on `(chat_id, message_id)`. SLA: <500ms p95 from MTProto update to repo write, gated by `test/perf/live_latency_test.go`. The chats pane reacts to `MessageReceived` directly (debounced reload coalesces bursts) — `LiveService.persist` does not republish a `DialogUpdated` because that self-fanout halved the effective subscriber buffer.
 - `--polling` flag — 3s history-poll fallback (`internal/tg/polling.go`) when updates.Manager creates gaps. Wiring into `runTUI` is deferred — flag is currently a no-op until Stage 2 follow-up lands.
 - Send + reply with optimistic UI: `outgoing(local_id PK, state)` table and `OutgoingMessageStateChanged` events drive a pending → sent | failed pill in the thread pane. Failed sends restore the draft *and* the reply pointer so retry preserves the conversation context.
 - `OutgoingMessage` rendering in the thread pane (`RenderOptimistic`): `[⏳]` glyph for pending, `[✗]` red glyph for failed (with the failure reason on a trailing line), no glyph for sent (the live echo dedupes the optimistic row via a localID → serverID mapping).
@@ -51,7 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- (none yet)
+- Optimistic-UI flicker race: `applyOutgoingState{Pending}` is now a no-op so the bus event cannot insert an empty `[⏳]` row before `SendDispatchedMsg` (carrying the message body) lands.
+- `SendFailedMsg` no longer clobbers a fresher draft or retargeted reply pointer when the user moved on while the failed send was in flight — the failure is dropped and surfaced as a warn log.
+- Configurable `ScrollUp`/`ScrollDown` chords (default `ctrl+b`/`ctrl+f`) now actually scroll the thread viewport when the thread or chats pane is focused; previously the chord was advertised in `keymap.toml` and the help overlay but no code consumed it.
+- `LiveService.persist` no longer republishes `DialogUpdated` onto its own subscription — the chats pane reacts to `MessageReceived` directly, which removes the buffer halving and the resulting potential for dropped events under burst.
 
 ### Known gaps (Stage 2 follow-up)
 

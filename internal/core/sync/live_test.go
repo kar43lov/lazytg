@@ -123,6 +123,68 @@ func TestLiveService_SwallowsStorageError(t *testing.T) {
 	}
 }
 
+func TestLiveService_DoesNotRepublishDialogUpdated(t *testing.T) {
+	t.Parallel()
+
+	// Earlier revisions republished events.DialogUpdated from persist to
+	// nudge the chats pane reload. That self-publish landed in
+	// LiveService's own subscription buffer (Bus.Publish fans out to all
+	// subscribers including the producer) which halved effective capacity
+	// under burst. The chats pane now reacts directly to MessageReceived,
+	// so persist must NOT emit DialogUpdated.
+	bus := events.New()
+	store := &recordingStore{}
+	svc := NewLiveService(store, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Subscribe a probe BEFORE Start so any DialogUpdated from persist would
+	// reach this channel. The probe's drain runs on the test goroutine so we
+	// can assert no DialogUpdated arrived.
+	probe := bus.Subscribe(ctx)
+
+	_ = svc.Start(ctx)
+
+	bus.Publish(events.MessageReceived{ChatID: 7, MessageID: 1, Text: "x", Date: time.Now().UTC()})
+
+	// Wait for the persist call to complete.
+	deadline := time.After(time.Second)
+	for {
+		if got := store.snapshot(); len(got) >= 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("persist did not run; calls=%d", len(store.snapshot()))
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+
+	// Drain the probe channel briefly. It should see only the original
+	// MessageReceived (the bus delivers to every subscriber including this
+	// probe), and never a DialogUpdated.
+	timeout := time.After(50 * time.Millisecond)
+	sawMessage := false
+loop:
+	for {
+		select {
+		case ev := <-probe:
+			switch ev.(type) {
+			case events.MessageReceived:
+				sawMessage = true
+			case events.DialogUpdated:
+				t.Fatalf("LiveService.persist must not republish DialogUpdated")
+			}
+		case <-timeout:
+			break loop
+		}
+	}
+	if !sawMessage {
+		t.Fatalf("probe should have observed the original MessageReceived")
+	}
+}
+
 func TestLiveService_RecordsLastIngestLatency(t *testing.T) {
 	t.Parallel()
 	bus := events.New()

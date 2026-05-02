@@ -205,6 +205,23 @@ func (m Model) SetFocus(f bool) Model {
 	return m
 }
 
+// ScrollUp moves the viewport up by one page. Exposed so the app's
+// global key handler can route the configurable ScrollUp chord (which
+// the viewport's stock keymap does not recognise — pgup/pgdown are
+// detected via key strings, but ctrl+b is not) without poking at the
+// embedded viewport directly.
+func (m Model) ScrollUp() Model {
+	m.viewport.PageUp()
+	return m
+}
+
+// ScrollDown is the symmetric helper for the configurable ScrollDown
+// chord. See ScrollUp for the rationale.
+func (m Model) ScrollDown() Model {
+	m.viewport.PageDown()
+	return m
+}
+
 // renderAll concatenates every message with a blank-line separator,
 // then appends every still-pending or failed optimistic-UI entry.
 // Messages are stored oldest-first so the natural top-to-bottom reading

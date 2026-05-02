@@ -13,9 +13,12 @@ import (
 //  1. Domain payloads (chatsLoadedMsg, *chatsLoadFailedMsg, reloadDebouncedMsg)
 //     run first so a list refresh from the repo is applied before any
 //     subsequent key processing.
-//  2. events.DialogUpdated schedules a debounced reload via tea.Tick — the
-//     bus → tea.Cmd fan-in lives in Task 11; for now Update accepts the
-//     event directly so unit tests can synthesise it.
+//  2. events.DialogUpdated and events.MessageReceived both schedule a
+//     debounced reload — DialogUpdated is the canonical "dialog metadata
+//     changed" signal, while MessageReceived is the "new message
+//     arrived" signal. Either should bubble the chat to the top of the
+//     list, and the 200ms debounce coalesces bursts so we don't redo the
+//     repo round-trip on every event.
 //  3. Enter is intercepted before the list sees it so we can publish a
 //     ChatSelectedMsg with the selected ID. Everything else goes to the
 //     list (cursor movement, filter, paging).
@@ -30,7 +33,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 	case reloadDebouncedMsg:
 		return m.applyDebouncedReload(typed.generation)
-	case events.DialogUpdated:
+	case events.DialogUpdated, events.MessageReceived:
 		return m.scheduleReload()
 	case tea.KeyPressMsg:
 		if isEnter(typed) && !m.isFilterActive() {
