@@ -25,6 +25,9 @@ type OutgoingMessage struct {
 // SaveOutgoing inserts a new optimistic record. CreatedAt defaults to
 // time.Now in UTC when the caller leaves it as the zero value.
 func (r *Repo) SaveOutgoing(ctx context.Context, m OutgoingMessage) error {
+	if r.readOnly.Load() {
+		return ErrReadOnly
+	}
 	if m.LocalID == "" {
 		return errors.New("outgoing: local_id is required")
 	}
@@ -62,6 +65,9 @@ func (r *Repo) SaveOutgoing(ctx context.Context, m OutgoingMessage) error {
 // sql.ErrNoRows if no record matches localID — callers should treat this
 // as a programming error (every transition follows a SaveOutgoing).
 func (r *Repo) UpdateOutgoingState(ctx context.Context, localID, state string, serverID int64, errMsg string) error {
+	if r.readOnly.Load() {
+		return ErrReadOnly
+	}
 	if localID == "" {
 		return errors.New("outgoing: local_id is required")
 	}

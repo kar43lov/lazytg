@@ -8,16 +8,30 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pgmac/lazytg/internal/core/domain"
 )
 
+// ErrReadOnly is returned by every write method when the repo has been
+// marked read-only by DegradationDetector. Callers should check via
+// errors.Is and surface a friendly "storage is read-only" message in the
+// UI rather than retrying.
+var ErrReadOnly = errors.New("repo: read-only mode")
+
 // Repo is the SQLite-backed storage repository. It owns the *sql.DB and runs
 // migrations during Open. Methods are safe for concurrent use; SQLite (in WAL
 // mode) handles serialisation of writes for us.
+//
+// readOnly toggles the soft read-only mode set by DegradationDetector when
+// the underlying file rejects writes (chmod 0444, disk full, SQLITE_READONLY).
+// Read paths keep working so the UI can still browse cached history while
+// writes return ErrReadOnly. The flag is an atomic.Bool because the detector
+// goroutine flips it concurrently with read/write traffic.
 type Repo struct {
-	db *sql.DB
+	db       *sql.DB
+	readOnly atomic.Bool
 }
 
 // Open opens (or creates) the SQLite database at path, applies the WAL/foreign
@@ -87,6 +101,44 @@ const pragmaQuery = "_pragma=journal_mode(wal)&_pragma=foreign_keys(1)&_pragma=s
 // Close releases the underlying database connection.
 func (r *Repo) Close() error { return r.db.Close() }
 
+// IsReadOnly reports whether the repo is currently in soft read-only mode.
+// Set asynchronously by DegradationDetector when writes fail; cleared again
+// when access is restored.
+func (r *Repo) IsReadOnly() bool { return r.readOnly.Load() }
+
+// SetReadOnly toggles the soft read-only flag. DegradationDetector is the
+// only legitimate writer in production; tests use it directly to assert
+// the gating behaviour without touching filesystem permissions.
+func (r *Repo) SetReadOnly(v bool) { r.readOnly.Store(v) }
+
+// ProbeWrite verifies the database file accepts writes without polluting
+// any user-visible table. The probe acquires a dedicated connection,
+// issues BEGIN IMMEDIATE (which requires the write lock — SQLite returns
+// SQLITE_READONLY here when the file is on a read-only mount or chmoded
+// 0444), then rolls back. DegradationDetector translates a non-nil error
+// into StorageStateChanged{read-only}.
+//
+// The probe deliberately bypasses the soft read-only flag so the detector
+// can re-arm rw mode once the underlying issue is resolved.
+//
+// A dedicated *sql.Conn is used because BEGIN/ROLLBACK on a pooled
+// connection would leak transaction state to whichever goroutine the
+// pool hands the connection to next.
+func (r *Repo) ProbeWrite(ctx context.Context) error {
+	conn, err := r.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("probe conn: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("probe begin immediate: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+		return fmt.Errorf("probe rollback: %w", err)
+	}
+	return nil
+}
+
 // DB exposes the underlying *sql.DB. Used by tests and by code that needs to
 // run ad-hoc statements (e.g. the FTS index builder in stage 3). Callers are
 // expected not to close this handle.
@@ -98,6 +150,9 @@ func (r *Repo) DB() *sql.DB { return r.db }
 // way `lazytg login` re-running on an existing account does not silently
 // clear an alias the user (or a future `accounts rename` command) set.
 func (r *Repo) SaveAccount(ctx context.Context, a domain.Account) error {
+	if r.readOnly.Load() {
+		return ErrReadOnly
+	}
 	if a.Phone == "" {
 		return errors.New("account: phone is required")
 	}
@@ -160,6 +215,9 @@ func (r *Repo) GetAccounts(ctx context.Context) ([]domain.Account, error) {
 // DeleteAccount removes an account row by phone. Returns nil if the account
 // does not exist so logout flows are idempotent.
 func (r *Repo) DeleteAccount(ctx context.Context, phone string) error {
+	if r.readOnly.Load() {
+		return ErrReadOnly
+	}
 	if phone == "" {
 		return errors.New("account: phone is required")
 	}
@@ -171,6 +229,9 @@ func (r *Repo) DeleteAccount(ctx context.Context, phone string) error {
 
 // SaveChat upserts a chat row using SQLite's ON CONFLICT REPLACE semantics.
 func (r *Repo) SaveChat(ctx context.Context, c domain.Chat) error {
+	if r.readOnly.Load() {
+		return ErrReadOnly
+	}
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO chats (id, type, title, username, last_message_date, unread_count, pinned)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -239,6 +300,9 @@ func (r *Repo) GetChats(ctx context.Context) ([]domain.Chat, error) {
 // SaveMessage inserts or replaces a message. The composite primary key is
 // (chat_id, id), matching Telegram's per-chat message numbering.
 func (r *Repo) SaveMessage(ctx context.Context, m domain.Message) error {
+	if r.readOnly.Load() {
+		return ErrReadOnly
+	}
 	if m.ChatID == 0 {
 		return errors.New("message: chat_id is required")
 	}
@@ -287,6 +351,9 @@ func (r *Repo) SaveMessage(ctx context.Context, m domain.Message) error {
 func (r *Repo) SaveMessages(ctx context.Context, msgs []domain.Message) error {
 	if len(msgs) == 0 {
 		return nil
+	}
+	if r.readOnly.Load() {
+		return ErrReadOnly
 	}
 	for i, m := range msgs {
 		if m.ChatID == 0 {

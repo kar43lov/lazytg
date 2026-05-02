@@ -32,8 +32,16 @@ type ClientConfig struct {
 // Client is the lazytg-specific wrapper around gotd's *telegram.Client. The
 // wrapper exists so the rest of the code base never imports gotd packages
 // directly — the depguard rules forbid `internal/core` from doing so.
+//
+// disconnect is the buffered (cap=1) channel that surfaces transport-level
+// failures from the gotd Run loop. ReconnectManager (core/sync) listens on
+// OnDisconnect to schedule reconnection with exponential backoff. The
+// channel is buffered so a Run that errors before anyone reads cannot
+// deadlock; only the most recent error is preserved (subsequent writes
+// non-blocking-drop when the buffer is full — newer error wins).
 type Client struct {
-	tg *telegram.Client
+	tg         *telegram.Client
+	disconnect chan error
 }
 
 // New constructs a Client from the given ClientConfig. It does not connect to
@@ -48,7 +56,10 @@ func New(cfg ClientConfig) (*Client, error) {
 	tgClient := telegram.NewClient(cfg.APIID, cfg.APIHash, telegram.Options{
 		SessionStorage: cfg.SessionStore,
 	})
-	return &Client{tg: tgClient}, nil
+	return &Client{
+		tg:         tgClient,
+		disconnect: make(chan error, 1),
+	}, nil
 }
 
 // CredentialsFromEnv reads APIID/APIHash from the standard env vars. Returns
@@ -84,9 +95,43 @@ func (c *Client) API() *tg.Client { return c.tg.API() }
 // Run starts the MTProto session and blocks until fn returns or ctx is
 // cancelled. fn is invoked with a sub-context that is cancelled when the
 // connection is torn down.
+//
+// On return, Run forwards the terminal error (or nil) on the disconnect
+// channel using a non-blocking send. Cancellation due to ctx is forwarded
+// as well — ReconnectManager treats context.Canceled as "user-initiated
+// shutdown, do not reconnect". The send is non-blocking so a missing
+// listener cannot stall the close path; the buffer (cap=1) keeps the
+// latest signal and drops earlier ones.
 func (c *Client) Run(ctx context.Context, fn func(ctx context.Context) error) error {
-	return c.tg.Run(ctx, fn)
+	err := c.tg.Run(ctx, fn)
+	c.signalDisconnect(err)
+	return err
 }
+
+// signalDisconnect performs a non-blocking write to the disconnect channel.
+// If a previous error has not yet been read it is dropped in favour of the
+// new one — listeners only ever care about the most recent failure.
+func (c *Client) signalDisconnect(err error) {
+	select {
+	case c.disconnect <- err:
+	default:
+		// Buffer full: drain stale signal so newer one can land.
+		select {
+		case <-c.disconnect:
+		default:
+		}
+		select {
+		case c.disconnect <- err:
+		default:
+		}
+	}
+}
+
+// OnDisconnect returns a receive-only channel that yields the terminal
+// error of the most recent Run call. Multiple consumers must coordinate
+// externally — the channel has a single buffer slot. The channel is never
+// closed; consumers should select on a context.Done() in parallel.
+func (c *Client) OnDisconnect() <-chan error { return c.disconnect }
 
 // IsAuthorized reports whether the persisted session is still valid for use.
 // Must be called from inside Client.Run because gotd needs an active

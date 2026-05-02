@@ -73,3 +73,26 @@ type OutgoingMessageStateChanged struct {
 }
 
 func (OutgoingMessageStateChanged) eventMarker() {}
+
+// StorageMode enumerates the access modes the SQLite-backed repository can
+// surface to the rest of the app. The string form is what gets emitted on
+// the bus and shown in the status bar so it stays human-readable.
+const (
+	// StorageModeReadWrite — repo accepts both reads and writes; nominal mode.
+	StorageModeReadWrite = "rw"
+	// StorageModeReadOnly — writes are rejected (filesystem permission, disk
+	// full, SQLITE_READONLY etc); the UI degrades to read-only and surfaces
+	// the reason via the status bar.
+	StorageModeReadOnly = "read-only"
+)
+
+// StorageStateChanged is emitted by the degradation detector when the
+// repository's write-access mode changes. Mode is one of the StorageMode
+// constants; Reason is a short human-readable explanation that the status
+// bar shows verbatim (e.g. "permission denied", "disk i/o error").
+type StorageStateChanged struct {
+	Mode   string
+	Reason string
+}
+
+func (StorageStateChanged) eventMarker() {}
