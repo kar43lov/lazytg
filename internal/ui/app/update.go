@@ -3,6 +3,10 @@ package app
 import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/pgmac/lazytg/internal/core/events"
+	"github.com/pgmac/lazytg/internal/ui/input"
+	"github.com/pgmac/lazytg/internal/ui/panes/chats"
 )
 
 // Init is the initial Cmd batch. Each sub-pane gets its own Init so they can
@@ -37,6 +41,16 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case helpToggledMsg:
 		a.help.Visible = !a.help.Visible
 		return a, nil
+	case chats.ChatSelectedMsg:
+		return a.handleChatSelected(m)
+	case input.RequestReplyMsg:
+		return a.handleReplyRequest()
+	case events.MessageReceived,
+		events.DialogUpdated,
+		events.OutgoingMessageStateChanged,
+		events.ConnectionStateChanged,
+		events.StorageStateChanged:
+		return a.broadcastBusEvent(msg)
 	}
 
 	if a.help.Visible {
@@ -49,9 +63,141 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd, handled := a.handleGlobalKey(k); handled {
 			return a, cmd
 		}
+		return a.delegateToFocused(msg)
 	}
 
-	return a.delegateToFocused(msg)
+	// Non-key messages are typically pane-internal results from a
+	// previously-spawned tea.Cmd (e.g. chatsLoadedMsg from chats.Init or
+	// messagesLoadedMsg from thread.OpenChat). They must reach the pane
+	// that produced them regardless of which pane currently has focus —
+	// so we broadcast and let each pane's Update filter on its own
+	// payload type. Keypresses keep the focus-only routing because that
+	// is what a single-active-input UX requires.
+	return a.broadcastToPanes(msg)
+}
+
+// broadcastToPanes forwards msg to every sub-pane and merges the
+// returned cmds via tea.Batch. Each pane's Update is responsible for
+// ignoring messages that aren't its own payload type — the cost of one
+// type-switch per pane per non-key message is dwarfed by the cost of an
+// in-flight async load that would otherwise be routed by focus into the
+// wrong pane.
+func (a App) broadcastToPanes(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	updatedChats, cmd := a.chats.Update(msg)
+	a.chats = updatedChats
+	if cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+
+	updatedThread, cmd := a.thread.Update(msg)
+	a.thread = updatedThread
+	if cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+
+	updatedInput, cmd := a.input.Update(msg)
+	a.input = updatedInput
+	if cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+
+	if len(cmds) == 0 {
+		return a, nil
+	}
+	return a, tea.Batch(cmds...)
+}
+
+// handleChatSelected fans the user's chat-pick out to every pane that
+// cares: the thread loads the chat, the input binds itself to the new
+// chat id, and the status bar updates its title. Routing here (rather
+// than in the chats pane) keeps the panes decoupled — chats only knows
+// "user pressed Enter on row X", everyone else listens.
+func (a App) handleChatSelected(msg chats.ChatSelectedMsg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	updatedThread, cmd := a.thread.OpenChat(msg.ChatID)
+	a.thread = updatedThread
+	if cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+
+	updatedInput, cmd := a.input.Update(input.SetChatMsg{ChatID: msg.ChatID})
+	a.input = updatedInput
+	if cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+
+	if title, ok := a.chatTitle(msg.ChatID); ok {
+		a.status.ChatTitle = title
+	}
+
+	return a, tea.Batch(cmds...)
+}
+
+// handleReplyRequest is the app-level resolver for the input pane's
+// RequestReplyMsg → SetReplyMsg dance. We inspect the thread for its
+// most recent message and arm it as the reply target. When the thread
+// is empty (e.g. user pressed Reply before any history loaded) the
+// request is silently dropped.
+func (a App) handleReplyRequest() (tea.Model, tea.Cmd) {
+	msgs := a.thread.Messages()
+	if len(msgs) == 0 {
+		return a, nil
+	}
+	target := msgs[len(msgs)-1]
+	updatedInput, cmd := a.input.Update(input.SetReplyMsg{Msg: &target})
+	a.input = updatedInput
+	return a, cmd
+}
+
+// broadcastBusEvent fans a bus event out to every interested pane. The
+// status bar only reacts to connection / storage transitions; the
+// thread pane filters by chat id internally; the chats pane
+// debounce-reloads on DialogUpdated. Routing here means the
+// program.Send → tea.Msg fan-in (cmd/lazytg/cmd/tui.go) does not need
+// to know which pane owns which event.
+func (a App) broadcastBusEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	switch ev := msg.(type) {
+	case events.ConnectionStateChanged:
+		a.status.ConnState = ev.State
+		return a, nil
+	case events.StorageStateChanged:
+		a.status.StorageMode = ev.Mode
+		return a, nil
+	case events.DialogUpdated:
+		updated, cmd := a.chats.Update(ev)
+		a.chats = updated
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		return a, tea.Batch(cmds...)
+	case events.MessageReceived, events.OutgoingMessageStateChanged:
+		updated, cmd := a.thread.Update(ev)
+		a.thread = updated
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		return a, tea.Batch(cmds...)
+	}
+	return a, nil
+}
+
+// chatTitle looks up the current title for the given chat id by
+// scanning the chats pane's loaded items. Returns ok=false when the
+// list is empty or the id isn't present (the latter happens when the
+// user opens a chat ahead of the chats pane finishing its initial
+// load — the title catches up on the next reload).
+func (a App) chatTitle(id int64) (string, bool) {
+	for _, it := range a.chats.Items() {
+		if it.ID() == id {
+			return it.Name(), true
+		}
+	}
+	return "", false
 }
 
 // handleResize updates the cached dimensions, recomputes per-pane sizes, and

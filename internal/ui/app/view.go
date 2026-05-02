@@ -16,16 +16,28 @@ import (
 // rendering the 2-pane layout into <80x24 produces a confusing tangle of
 // truncated borders, so we just print a centred message and ask the user to
 // resize.
+//
+// Bubble Tea v2 prefers declarative view fields over imperative program
+// options, so AltScreen + MouseMode are set on the returned tea.View
+// rather than passed as tea.WithAltScreen / tea.WithMouseCellMotion at
+// program construction time. The fields are applied every frame, which
+// is fine — bubbletea diffs the request and only emits the relevant
+// terminal escape sequence when the value actually changes.
 func (a App) View() tea.View {
 	if a.tooSmall {
-		return tea.NewView(a.renderTooSmall())
+		view := tea.NewView(a.renderTooSmall())
+		view.AltScreen = true
+		return view
 	}
 
 	body := a.renderBody()
 	if a.help.Visible {
 		body = a.help.View(a.width, maxInt(a.height-1, 1))
 	}
-	return tea.NewView(body)
+	view := tea.NewView(body)
+	view.AltScreen = true
+	view.MouseMode = tea.MouseModeCellMotion
+	return view
 }
 
 // renderTooSmall draws a centred "Terminal too small (min 80x24)" notice on
