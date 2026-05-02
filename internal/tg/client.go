@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"strconv"
 
@@ -20,21 +19,20 @@ const (
 )
 
 // ClientConfig is the dependency-injection bag for tg.Client construction.
-// Everything is mandatory except Logger — keep it explicit so we can spot
-// missing wiring at call sites instead of debugging silent defaults.
+// All fields are mandatory; gotd's own logger is left at its default zap.Nop
+// for Stage 1 — wiring an slog→zap adapter is deferred until we actually need
+// transport-level logs (Stage 2 sync work).
 type ClientConfig struct {
 	APIID        int
 	APIHash      string
 	SessionStore session.Storage
-	Logger       *slog.Logger
 }
 
 // Client is the lazytg-specific wrapper around gotd's *telegram.Client. The
 // wrapper exists so the rest of the code base never imports gotd packages
 // directly — the depguard rules forbid `internal/core` from doing so.
 type Client struct {
-	tg     *telegram.Client
-	logger *slog.Logger
+	tg *telegram.Client
 }
 
 // New constructs a Client from the given ClientConfig. It does not connect to
@@ -46,14 +44,10 @@ func New(cfg ClientConfig) (*Client, error) {
 	if cfg.SessionStore == nil {
 		return nil, errors.New("session storage is required")
 	}
-	logger := cfg.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
 	tgClient := telegram.NewClient(cfg.APIID, cfg.APIHash, telegram.Options{
 		SessionStorage: cfg.SessionStore,
 	})
-	return &Client{tg: tgClient, logger: logger}, nil
+	return &Client{tg: tgClient}, nil
 }
 
 // CredentialsFromEnv reads APIID/APIHash from the standard env vars. Returns

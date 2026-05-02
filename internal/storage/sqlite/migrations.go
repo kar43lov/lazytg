@@ -88,6 +88,11 @@ func RunMigrations(ctx context.Context, db *sql.DB) error {
 
 // applyMigration runs a single migration in a transaction and records its
 // version in schema_migrations atomically with the schema change.
+//
+// The schema_migrations insert uses INSERT OR IGNORE so two processes racing
+// the very first launch (both seeing an empty applied set) do not blow up
+// with a PRIMARY KEY conflict — the migration body itself is already
+// idempotent via "IF NOT EXISTS".
 func applyMigration(ctx context.Context, db *sql.DB, m migration) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -99,7 +104,7 @@ func applyMigration(ctx context.Context, db *sql.DB, m migration) error {
 		return fmt.Errorf("exec sql: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)`,
+		`INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)`,
 		m.version, time.Now().Unix()); err != nil {
 		return fmt.Errorf("record version: %w", err)
 	}
