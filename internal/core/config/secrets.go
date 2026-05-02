@@ -175,18 +175,29 @@ func (a *AgeFileStore) Get(key string) (string, error) {
 
 // Set updates the cache and rewrites the encrypted file atomically (write to
 // temp + rename). The passphrase is solicited lazily on first access.
+//
+// We persist *before* committing the change to a.cache so that a failed write
+// (full disk, revoked permissions, fsync error mid-run) does not leave the
+// in-memory and on-disk views diverged. A subsequent Get in the same process
+// must not see a value that survives a process restart only by luck.
 func (a *AgeFileStore) Set(key, value string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if err := a.ensureLoaded(); err != nil {
 		return err
 	}
-	a.cache[key] = value
-	return a.persist()
+	next := cloneCache(a.cache)
+	next[key] = value
+	if err := a.persistMap(next); err != nil {
+		return err
+	}
+	a.cache = next
+	return nil
 }
 
 // Delete removes a key. Returns nil if the key was already absent so that
-// logout flows are idempotent.
+// logout flows are idempotent. As with Set, the on-disk write happens before
+// the cache is updated, so a persist failure leaves the previous state intact.
 func (a *AgeFileStore) Delete(key string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -196,8 +207,23 @@ func (a *AgeFileStore) Delete(key string) error {
 	if _, ok := a.cache[key]; !ok {
 		return nil
 	}
-	delete(a.cache, key)
-	return a.persist()
+	next := cloneCache(a.cache)
+	delete(next, key)
+	if err := a.persistMap(next); err != nil {
+		return err
+	}
+	a.cache = next
+	return nil
+}
+
+// cloneCache returns a shallow copy of the secrets map. Returned map is
+// guaranteed non-nil so callers can mutate without a nil-check.
+func cloneCache(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in)+1)
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // ensureLoaded prompts for the passphrase (once) and decrypts the file. If
@@ -263,9 +289,11 @@ func (a *AgeFileStore) ensureLoaded() error {
 	return nil
 }
 
-// persist serialises the cache, encrypts with scrypt and writes atomically.
-func (a *AgeFileStore) persist() error {
-	plain, err := json.Marshal(a.cache)
+// persistMap serialises the supplied snapshot, encrypts with scrypt and writes
+// atomically. Callers stage the desired state in a copy of the cache and only
+// commit the copy to a.cache after this returns nil — see Set/Delete.
+func (a *AgeFileStore) persistMap(snapshot map[string]string) error {
+	plain, err := json.Marshal(snapshot)
 	if err != nil {
 		return fmt.Errorf("age file store: marshal: %w", err)
 	}

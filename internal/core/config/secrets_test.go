@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -158,6 +159,66 @@ func TestAgeFileStore_WrongPassphraseAllowsRetry(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("retry should re-prompt, calls=%d want 2", calls)
+	}
+}
+
+// TestAgeFileStore_PersistFailureLeavesCacheIntact regresses a correctness
+// bug where Set/Delete mutated a.cache before calling persist, so a failed
+// disk write left the in-memory view diverged from the on-disk file. We
+// simulate the failure by stripping write permission from the parent
+// directory so writeFileAtomic's CreateTemp fails.
+func TestAgeFileStore_PersistFailureLeavesCacheIntact(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod-based perms test does not apply on Windows")
+	}
+	// Skip when running as root: chmod 0500 on a dir we own does not actually
+	// stop a root-uid process from writing into it (e.g. inside Docker).
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: chmod-based perms test would not actually deny writes")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, secretsFileName)
+	prompter := func() (string, error) { return "correct-horse-battery-staple", nil }
+
+	store, err := NewAgeFileStore(path, prompter)
+	if err != nil {
+		t.Fatalf("NewAgeFileStore: %v", err)
+	}
+	if err := store.Set("k", "original"); err != nil {
+		t.Fatalf("seed Set: %v", err)
+	}
+
+	// Strip write+execute on the parent dir so CreateTemp inside
+	// writeFileAtomic fails. Restore at the end of the test so t.TempDir
+	// cleanup can proceed.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod 0500: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if err := store.Set("k", "shouldNotPersist"); err == nil {
+		t.Fatal("Set should fail when parent dir is read-only")
+	}
+	got, err := store.Get("k")
+	if err != nil {
+		t.Fatalf("Get after failed Set: %v", err)
+	}
+	if got != "original" {
+		t.Fatalf("cache leaked failed write: got %q, want %q", got, "original")
+	}
+
+	// Same check for Delete: a failed persist must keep the entry in cache.
+	if err := store.Delete("k"); err == nil {
+		t.Fatal("Delete should fail when parent dir is read-only")
+	}
+	got, err = store.Get("k")
+	if err != nil {
+		t.Fatalf("Get after failed Delete: %v", err)
+	}
+	if got != "original" {
+		t.Fatalf("cache leaked failed delete: got %q, want %q", got, "original")
 	}
 }
 
