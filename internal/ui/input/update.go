@@ -35,6 +35,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case SetReplyMsg:
 		m.replyTo = typed.Msg
 		return m, nil
+	case OpenEditorMsg:
+		// The chord handler emits OpenEditorMsg as a Cmd so the
+		// program loop has a chance to flush the previous frame
+		// before tea.ExecProcess pauses the program. Spawning the
+		// editor here keeps the editor lifecycle (temp file →
+		// process → EditorClosedMsg) inside the input pane.
+		return m, OpenEditor(typed.CurrentText)
 	case EditorClosedMsg:
 		return m.applyEditorResult(typed)
 	case SendFailedMsg:

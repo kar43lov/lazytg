@@ -25,8 +25,11 @@ type SetReplyMsg struct {
 type RequestReplyMsg struct{}
 
 // OpenEditorMsg is published by the input pane when the user presses
-// keymap.OpenEditor. The app handles it by spawning $EDITOR (Task 10);
-// the editor result comes back as EditorClosedMsg.
+// keymap.OpenEditor and bounces back through the program loop. The
+// pane catches it on the next Update cycle and spawns $EDITOR via
+// OpenEditor() — emitting it as a Cmd first lets the loop flush the
+// pending frame before tea.ExecProcess pauses the program. The
+// editor result returns as EditorClosedMsg.
 type OpenEditorMsg struct {
 	CurrentText string
 }

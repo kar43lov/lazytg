@@ -233,27 +233,27 @@
 
 ### Task 10: $EDITOR delegation (Ctrl-E) + Help overlay (?)
 
-- [ ] Создать `internal/ui/input/editor.go` с функцией `OpenEditor(currentText string) tea.Cmd`. Внутри:
+- [x] Создать `internal/ui/input/editor.go` с функцией `OpenEditor(currentText string) tea.Cmd`. Внутри:
   1. Получить editor: `os.Getenv("EDITOR")`, fallback на `"vi"`
   2. Создать temp-файл `os.UserCacheDir() + "/lazytg/edit-XXXXXX.md"` с правами `0600` через `os.CreateTemp`
   3. Записать `currentText` в файл, закрыть
   4. Вернуть `tea.ExecProcess(exec.Command(editor, tmpPath), func(err error) tea.Msg { ... })` — после выхода editor читает файл, удаляет, эмитит `editorClosedMsg{Text: contents, Err: err}`
-  5. Defer удаление temp-файла даже при ошибке (использовать `defer os.Remove(...)` в callback)
-- [ ] Обновить `internal/ui/input/update.go`: на `editorClosedMsg{Text}` — установить textarea value = Text, focus textarea
-- [ ] Создать `internal/ui/input/editor_test.go`:
-  1. Set `EDITOR=cat` (через `t.Setenv`), вызвать `OpenEditor("hello")` → temp-файл создаётся с правами 0600 (проверить через `os.Stat`), удаляется после execution
-  2. EDITOR=`/bin/sh -c "echo edited > $1"` (трюк через wrapper-script в tempdir) → editorClosedMsg.Text == "edited\n"
-  3. EDITOR не установлен и `vi` недоступен → ошибка с понятным сообщением
-- [ ] Создать `internal/ui/overlay/help.go` с `Help struct{ Visible bool; keymap keymap.Keymap; width, height int }`. Методы `View() string` — рендерит modal-окно по центру: lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2) с таблицей Action | Binding (две колонки). Перечислить из keymap: Send/Newline/Reply/OpenEditor/ToggleHelp/FocusNext/Prev/Scroll/Quit
-- [ ] Метод `Update(msg tea.Msg) (Help, tea.Cmd)`:
+  5. Defer удаление temp-файла даже при ошибке (использовать `defer os.Remove(...)` в callback). **Implementation note:** `OpenEditor` разбит на `prepareEditor` (resolve $EDITOR, mkdir cache, mkstemp 0600, write, build *exec.Cmd) и `editorCallback` (defer-cleanup + read + EditorClosedMsg) — даёт детерминированно-тестируемые компоненты без необходимости запускать tea.Program. `editorCacheDir` и `editorLookPath` — package-level var для тест-инъекции (cache redirected в t.TempDir(), `vi` lookup стабильно фейлится). `tea.ExecProcess` импортируется из `charm.land/bubbletea/v2`. Ошибки prepareEditor short-circuit'ятся в EditorClosedMsg{Err} cmd, чтобы не терять их в program loop. OpenEditorMsg теперь self-handled в input.Update: `case OpenEditorMsg → OpenEditor(typed.CurrentText)`, держит editor lifecycle в пакете input. gosec G204/G304 заглушены `//nolint:gosec` с обоснованием (user-chosen $EDITOR; tmpPath из нашего же CreateTemp)
+- [x] Обновить `internal/ui/input/update.go`: на `editorClosedMsg{Text}` — установить textarea value = Text, focus textarea (уже было сделано в Task 9 через `applyEditorResult`; в Task 10 добавлен handler `OpenEditorMsg → OpenEditor` чтобы замкнуть петлю input → program loop → input)
+- [x] Создать `internal/ui/input/editor_test.go`:
+  1. Set `EDITOR=cat` (через `t.Setenv`), вызвать `OpenEditor("hello")` → temp-файл создаётся с правами 0600 (проверить через `os.Stat`), удаляется после execution. **Note:** проверка decomposed: `TestPrepareEditorCreatesTempWith0600` (perm + содержимое + cmd-args) + `TestEditorCallbackReadsContentsAndCleansUp` (cleanup после успеха) + `TestEditorCallbackPropagatesExecErrorAndStillCleansUp` (cleanup даже при exec-failure) + `TestEditorCallbackErrorWhenFileMissing` (read-error path)
+  2. EDITOR=`/bin/sh -c "echo edited > $1"` (трюк через wrapper-script в tempdir) → editorClosedMsg.Text == "edited\n". **Note:** реализовано как `TestOpenEditorWithWrapperScriptRoundTrip` — пишет shell-скрипт в `t.TempDir()`, прогоняет prepareEditor → cmd.Run() → editorCallback напрямую (минуя tea.ExecProcess который доставляет колбэк только внутри tea.Program); `printf 'edited\n' > "$1"` детерминирован. Skip на Windows
+  3. EDITOR не установлен и `vi` недоступен → ошибка с понятным сообщением. **Note:** `TestPrepareEditorErrorsWhenViMissing` через стуб `editorLookPath`, плюс `TestOpenEditorReturnsErrCmdWhenEditorMissing` проверяет что Cmd возвращает EditorClosedMsg{Err}; добавлены split-arg-тесты (`code -w --foo` → 4-args), whitespace-only EDITOR → fallback to vi
+- [x] Создать `internal/ui/overlay/help.go` с `Help struct{ Visible bool; keymap keymap.Keymap; width, height int }`. Методы `View() string` — рендерит modal-окно по центру: lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2) с таблицей Action | Binding (две колонки). Перечислить из keymap: Send/Newline/Reply/OpenEditor/ToggleHelp/FocusNext/Prev/Scroll/Quit (выполнено в Task 6 — Help уже сделан с rounded border, табличкой action|binding, alphabetical sort, deterministic chord rendering через `key.WithHelp`)
+- [x] Метод `Update(msg tea.Msg) (Help, tea.Cmd)`:
   - `tea.KeyMsg` Esc/q/`?` → `h.Visible = false`
-  - Иначе игнорировать (модальный)
-- [ ] Создать `internal/ui/overlay/help_test.go`:
+  - Иначе игнорировать (модальный) (выполнено в Task 6 — `Update()` swallows key events when Visible, dismiss-keys (esc/q/?) сбрасывают Visible)
+- [x] Создать `internal/ui/overlay/help_test.go`:
   1. Visible=false → View == ""
   2. Visible=true → View содержит "Send" и "enter" (или текущий keybinding)
-  3. KeyMsg Esc → Visible=false
-- [ ] Интегрировать в `internal/ui/app/view.go`: если `app.help.Visible` — наложить help.View() поверх основного layout через lipgloss.Place центрирование
-- [ ] Запустить `go test -race ./internal/ui/input/... ./internal/ui/overlay/...` — зелёное
+  3. KeyMsg Esc → Visible=false (выполнено в Task 6 — 6 табличных тестов: Hidden/Visible/Esc/q/?/non-dismiss-key)
+- [x] Интегрировать в `internal/ui/app/view.go`: если `app.help.Visible` — наложить help.View() поверх основного layout через lipgloss.Place центрирование (выполнено в Task 6 — `view.go::View()` рендерит `a.help.View(a.width, a.height-1)` поверх body когда Visible)
+- [x] Запустить `go test -race ./internal/ui/input/... ./internal/ui/overlay/...` — зелёное
 
 ### Task 11: Wiring + DI миграция в internal/app + e2e teatest + SLA benchmark
 
