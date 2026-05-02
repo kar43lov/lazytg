@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 
 	"github.com/pgmac/lazytg/internal/core/config"
@@ -37,13 +39,20 @@ func LoggerFromContext(ctx context.Context) *slog.Logger {
 // We point the file sink at $XDG_STATE_HOME/lazytg/lazytg.log when the state
 // directory resolves; if it doesn't (e.g. sandboxed test env), we degrade to
 // a stderr-only or discard logger rather than failing the command.
+//
+// stderr is the warning channel: we surface a one-line note when StateDir()
+// fails so the operator sees that file logging is off (otherwise logs
+// silently vanish into io.Discard with --debug=false).
 func buildLogger(level slog.Level, debug bool) *slog.Logger {
 	cfg := obs.LoggerConfig{
 		Level:  level,
 		Format: "json",
 		Debug:  debug,
 	}
-	if stateDir, err := config.StateDir(); err == nil {
+	stateDir, err := config.StateDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lazytg: file logging disabled: %v\n", err)
+	} else {
 		cfg.FilePath = filepath.Join(stateDir, "lazytg.log")
 	}
 	return obs.New(cfg)

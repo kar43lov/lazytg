@@ -71,10 +71,15 @@ func ttyPassphrasePrompter() (string, error) {
 		return "", err
 	}
 	pw, err := term.ReadPassword(int(tty.Fd()))
-	if _, _ = fmt.Fprintln(tty); err != nil {
+	_, _ = fmt.Fprintln(tty)
+	if err != nil {
 		return "", fmt.Errorf("read passphrase: %w", err)
 	}
-	return strings.TrimSpace(string(pw)), nil
+	// term.ReadPassword strips the terminating newline. Do NOT trim further:
+	// passphrases may legitimately contain leading/trailing whitespace and
+	// silently stripping them would make the secrets file undecryptable on
+	// a future run.
+	return string(pw), nil
 }
 
 // stdinPrompter is the CLI implementation of tg.CodePrompter. It reads phone
@@ -120,7 +125,9 @@ func (p *stdinPrompter) Password(_ context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read 2FA password: %w", err)
 	}
-	return strings.TrimSpace(string(pw)), nil
+	// Do NOT trim: Telegram allows whitespace in 2FA passwords, and stripping
+	// it would produce an opaque "wrong password" failure.
+	return string(pw), nil
 }
 
 // readLine prints prompt and reads a single line; returns an error if the

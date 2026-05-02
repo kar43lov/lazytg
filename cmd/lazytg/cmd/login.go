@@ -55,6 +55,17 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Open the DB before running auth. The session is persisted to the
+	// SecretStore *during* auth (gotd writes via SessionStore.Set), so a DB
+	// failure that happens after a successful auth leaves the user in an
+	// inconsistent state where the session exists but `lazytg accounts`
+	// shows nothing. Failing fast on DB-open keeps the two stores in sync.
+	repo, err := sqlite.Open(ctx, dbPath(paths))
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer func() { _ = repo.Close() }()
+
 	if err := tgc.Run(ctx, func(ctx context.Context) error {
 		if err := tgclient.Login(ctx, tgc.Raw(), phone, prompter); err != nil {
 			return fmt.Errorf("login: %w", err)
@@ -63,12 +74,6 @@ func runLogin(cmd *cobra.Command, _ []string) error {
 	}); err != nil {
 		return err
 	}
-
-	repo, err := sqlite.Open(ctx, dbPath(paths))
-	if err != nil {
-		return fmt.Errorf("open database: %w", err)
-	}
-	defer func() { _ = repo.Close() }()
 
 	if err := repo.SaveAccount(ctx, domain.Account{Phone: phone}); err != nil {
 		return fmt.Errorf("save account: %w", err)
