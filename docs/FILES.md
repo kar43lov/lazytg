@@ -3,9 +3,9 @@
 Стадия 3 добавляет в lazytg оба направления передачи файлов:
 
 - **download** через `Ctrl+D` (Stage 3 Task 6)
-- **upload** через `Ctrl+U` (Stage 3 Task 7, отдельная итерация)
+- **upload** через `Ctrl+U` (Stage 3 Task 7)
 
-Документ описывает Stage 3 Task 6 — текущая реализация download-pipeline.
+Оба пути живут в `internal/core/files/` (gotd-free orchestration: `download.go`, `upload.go`, `store.go`, `dedup.go`, `progress.go`) и подключаются к gotd через `internal/tg/files.go` (`Downloader`/`Uploader`/`FilesAdapter`/`MediaFromMessage`). `UploadService` подключается к тому же `security.SendGuard` (10 msg/s, burst 30), что и `coresync.SendService` — отправка медиа считается так же, как отправка текста, по поведенческому fingerprint.
 
 ## Куда сохраняются файлы
 
@@ -94,4 +94,5 @@ LAZYTG_DOWNLOADS=/tmp/lazytg-downloads lazytg
 ## Связи
 
 - `core/sync/live.go` сохраняет `Media` поле из `MessageReceived` событий — media поступает в БД и через live-updates, и через history backfill
-- Search service (Stage 3 Task 3) пока не индексирует media (нет `has:file` фильтра до миграции 0008 на `media_kind` колонку — placeholder в `query_builder.go`)
+- Search-фильтр `has:file` (Task 6 → миграция 0008 + `media_kind` колонка) реально работает: `query_builder.go` эмитит `m.media_kind IS NOT NULL`, документ-сообщения попадают в выдачу, текстовые исключаются
+- `UploadService` уважает `security.SendGuard` (тот же token bucket 10 msg/s, что и для текстовых send): `messages.SendMedia` ждёт токена так же, как `messages.SendMessage` (см. CLAUDE.md ban-risk пункт 7)

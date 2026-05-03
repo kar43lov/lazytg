@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/pgmac/lazytg/internal/app"
 	"github.com/pgmac/lazytg/internal/core/config"
 	"github.com/pgmac/lazytg/internal/core/obs"
 	"github.com/pgmac/lazytg/internal/storage/sqlite"
@@ -64,6 +65,14 @@ func newDebugBundleCmd() *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
+
+			// Run the same permissions audit as the TUI startup so a
+			// debug bundle generated against a tampered repo is
+			// refused at the same point — keeps the CLI subcommands
+			// from drifting below the TUI's security floor.
+			if err := app.CheckPermissions(paths, LoggerFromContext(ctx)); err != nil {
+				return fmt.Errorf("debug-bundle: %w", err)
+			}
 
 			repo, err := sqlite.Open(ctx, dbPath(paths))
 			if err != nil {

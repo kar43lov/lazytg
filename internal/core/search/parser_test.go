@@ -100,6 +100,15 @@ func TestParse(t *testing.T) {
 			want: search.Query{Text: "RFC:7230 spec"},
 		},
 		{
+			// Regression: applyOperator's default branch used to write
+			// to q.Text directly, but Parse overwrote q.Text on its way
+			// out, silently dropping the lowercase-keyed unknown
+			// operator. Now the token is preserved as plain text.
+			name: "unknown lowercase operator preserved as text",
+			in:   "foo:bar baz",
+			want: search.Query{Text: "foo:bar baz"},
+		},
+		{
 			name: "bare dash is not an exclusion",
 			in:   "- minus sign",
 			want: search.Query{Text: "- minus sign"},

@@ -44,6 +44,16 @@ func (t *progressThrottler) reset(fileID int64) {
 	t.states[fileID] = &progressState{}
 }
 
+// release drops the per-fileID state once the download is finished
+// (success or failure). Without it the map grows unbounded across the
+// lifetime of the TUI — a long-running session that downloaded
+// thousands of files would leak one entry per fileID.
+func (t *progressThrottler) release(fileID int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.states, fileID)
+}
+
 // shouldEmit reports whether the (bytes, total) tick should produce a
 // bus event for fileID. The throttler keeps state across calls so a
 // monotonic stream of byte counts produces a small, evenly-spaced set

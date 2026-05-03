@@ -55,6 +55,19 @@ type SendMediaSender interface {
 	SendMedia(ctx context.Context, chatID int64, handle any, caption string, replyTo int) (messageID int64, err error)
 }
 
+// SendRateLimiter is the optional throttle UploadService consults
+// before each SendMedia attempt. It mirrors the contract used by
+// SendService.WithRateLimiter so the wiring layer can reuse the same
+// security.SendGuard for both text and media sends — file uploads
+// count toward the same ban-risk fingerprint, so the 10 msg/sec
+// ceiling must apply to both paths.
+//
+// Nil is allowed — the service skips the wait so unit tests of
+// unrelated behaviour stay free of plumbing.
+type SendRateLimiter interface {
+	Wait(ctx context.Context) error
+}
+
 // UploadService coordinates a single Ctrl-U press end-to-end:
 //
 //  1. Stat the file. Reject anything > UploadHardLimit (2 GiB) up
@@ -79,6 +92,7 @@ type UploadService struct {
 	bus      EventPublisher
 	log      *slog.Logger
 	progress *uploadProgressThrottler
+	limiter  SendRateLimiter
 }
 
 // NewUploadService validates non-nil deps and returns a ready service.
@@ -101,6 +115,14 @@ func NewUploadService(tg TGUploader, sender SendMediaSender, bus EventPublisher,
 		log:      log,
 		progress: newUploadProgressThrottler(),
 	}, nil
+}
+
+// WithRateLimiter installs limiter as the gate consulted before
+// SendMedia. Returns the same *UploadService for chaining at the
+// wiring site. nil clears any previously installed limiter.
+func (s *UploadService) WithRateLimiter(limiter SendRateLimiter) *UploadService {
+	s.limiter = limiter
+	return s
 }
 
 // uploadIDCounter feeds nextUploadID. atomic.Int64 is goroutine-safe
@@ -158,7 +180,10 @@ func (s *UploadService) SendFile(ctx context.Context, chatID int64, path, captio
 		})
 	}
 
+	// reset per-uploadID state for the throttler; release on exit so
+	// the map does not grow unbounded across the TUI's lifetime.
 	s.progress.reset(uploadID)
+	defer s.progress.release(uploadID)
 	cb := func(bytes, total int64) {
 		if !s.progress.shouldEmit(uploadID, bytes, total) {
 			return
@@ -174,6 +199,18 @@ func (s *UploadService) SendFile(ctx context.Context, chatID int64, path, captio
 	if err != nil {
 		s.uploadFailure(uploadID, fmt.Errorf("stream: %w", err))
 		return uploadID, err
+	}
+
+	// Rate-limit guard sits between Upload and SendMedia so the bytes
+	// are already on the server when we wait — only the user-visible
+	// "this counts as a send" RPC is throttled. Mirrors the placement
+	// in coresync.SendService.deliver for text sends so both paths
+	// share the same SendGuard ceiling.
+	if s.limiter != nil {
+		if err := s.limiter.Wait(ctx); err != nil {
+			s.uploadFailure(uploadID, fmt.Errorf("rate-limit wait: %w", err))
+			return uploadID, err
+		}
 	}
 
 	messageID, err := s.sender.SendMedia(ctx, chatID, handle, caption, replyTo)

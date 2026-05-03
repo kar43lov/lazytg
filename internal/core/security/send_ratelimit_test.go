@@ -48,6 +48,50 @@ func TestSendGuard_BurstFitsInsideCapacity(t *testing.T) {
 	}
 }
 
+// TestSendGuard_DefaultRateBlocksAt10msgPerSec is the regression
+// guard for the literal "10 msg/sec" promise in CLAUDE.md. We
+// deliberately do NOT use the DefaultSendRate constant in the
+// numeric assertions — a future PR that quietly bumps the constant
+// must fail this test, not pass it.
+//
+// The test drains the default 30-burst, then asserts the 31st Wait
+// blocks for ~100 ms (the time-to-refill at 10 rps). Tolerances are
+// loose enough for CI runners but tight enough to catch a 100×
+// regression.
+func TestSendGuard_DefaultRateBlocksAt10msgPerSec(t *testing.T) {
+	t.Parallel()
+
+	g, err := NewSendGuard(SendRateLimit{}) // zero-value → defaults
+	if err != nil {
+		t.Fatalf("NewSendGuard: %v", err)
+	}
+
+	// Drain the burst (30 default tokens).
+	for i := 0; i < 30; i++ {
+		if err := g.Wait(context.Background()); err != nil {
+			t.Fatalf("burst Wait[%d]: %v", i, err)
+		}
+	}
+
+	// The 31st Wait must wait at least one refill period at the
+	// documented 10 msg/sec ceiling — i.e. ≥ 80 ms (100 ms minus
+	// timer slop). 250 ms upper bound rules out anything slower
+	// than ~4 msg/sec.
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if err := g.Wait(ctx); err != nil {
+		t.Fatalf("31st Wait should succeed within ctx deadline, got %v", err)
+	}
+	elapsed := time.Since(start)
+	if elapsed < 80*time.Millisecond {
+		t.Fatalf("rate appears > 10 msg/sec: 31st Wait blocked only %v (want ≥80 ms)", elapsed)
+	}
+	if elapsed > 250*time.Millisecond {
+		t.Fatalf("rate appears < 10 msg/sec: 31st Wait blocked %v (want ≤250 ms)", elapsed)
+	}
+}
+
 // TestSendGuard_BlocksAfterBurst exercises the throttle path: 31
 // requests in quick succession on a 10-rps bucket — the 31st must
 // wait at least one refill period (1/10s = 100 ms). We use the
@@ -79,7 +123,11 @@ func TestSendGuard_BlocksAfterBurst(t *testing.T) {
 		t.Fatalf("31st Wait should succeed within 200 ms, got %v", err)
 	}
 	elapsed := time.Since(start)
-	if elapsed < 50*time.Millisecond {
+	// 80 ms gives ~20 ms of timer slop on slow runners while still
+	// rejecting a regression that drops the effective rate above
+	// ~12 msg/sec (the 50 ms threshold the original test used did
+	// not catch a 20-msg/sec failure).
+	if elapsed < 80*time.Millisecond {
 		t.Fatalf("31st Wait should block for at least ~100 ms, observed %v", elapsed)
 	}
 }

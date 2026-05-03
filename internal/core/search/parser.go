@@ -53,9 +53,17 @@ func Parse(input string) (Query, error) {
 			continue
 		}
 		if op, val, ok := splitOperator(tok.value); ok {
-			if err := applyOperator(&q, op, val); err != nil {
+			handled, err := applyOperator(&q, op, val)
+			if err != nil {
 				return q, err
 			}
+			if handled {
+				continue
+			}
+			// Unknown operator: keep the original "key:value" token so the
+			// user's intent (e.g. searching for "RFC:7230") is preserved
+			// even though the colon shape was "operator-like".
+			textTerms = append(textTerms, tok.value)
 			continue
 		}
 		if isExclusion(tok.value) {
@@ -168,60 +176,47 @@ func splitOperator(tok string) (key, value string, ok bool) {
 	return key, tok[idx+1:], true
 }
 
-// applyOperator records a known operator on q. Unknown keys are
-// considered free text and re-routed by the caller (Parse keeps the
-// original token text including the colon for that fallback).
+// applyOperator records a known operator on q and reports whether the
+// token was consumed. handled=false means the key did not match any
+// known operator; the caller treats the original token text as free
+// text instead.
 //
 // The returned error is non-nil only for known keys whose value is
 // invalid (e.g. before:not-a-date or has:everything). Unknown keys
-// signal "leave as plain text" by returning a sentinel that Parse
-// translates into a free-text term — this keeps URLs and timestamps
-// in queries from breaking the parse.
-func applyOperator(q *Query, key, value string) error {
+// return (false, nil) so the caller can append the literal token into
+// the free-text accumulator — this keeps URLs and timestamps in
+// queries from breaking the parse.
+func applyOperator(q *Query, key, value string) (handled bool, err error) {
 	switch key {
 	case "from":
 		q.From = append(q.From, strings.TrimPrefix(value, "@"))
-		return nil
+		return true, nil
 	case "in":
 		q.InChats = append(q.InChats, strings.TrimPrefix(value, "#"))
-		return nil
+		return true, nil
 	case "before":
-		t, err := parseDate(value)
-		if err != nil {
-			return fmt.Errorf("search: before:%s — %w", value, err)
+		t, perr := parseDate(value)
+		if perr != nil {
+			return true, fmt.Errorf("search: before:%s — %w", value, perr)
 		}
 		q.Before = &t
-		return nil
+		return true, nil
 	case "after":
-		t, err := parseDate(value)
-		if err != nil {
-			return fmt.Errorf("search: after:%s — %w", value, err)
+		t, perr := parseDate(value)
+		if perr != nil {
+			return true, fmt.Errorf("search: after:%s — %w", value, perr)
 		}
 		q.After = &t
-		return nil
+		return true, nil
 	case "has":
 		if value != "file" {
-			return fmt.Errorf("search: has:%s — only has:file is supported", value)
+			return true, fmt.Errorf("search: has:%s — only has:file is supported", value)
 		}
 		q.HasFile = true
-		return nil
+		return true, nil
 	default:
-		// Unknown key — treat the whole token as free text by appending
-		// it directly to Text. We keep the colon so the user's intent
-		// (e.g. searching for "RFC:7230") survives parsing.
-		q.Text = appendTerm(q.Text, key+":"+value)
-		return nil
+		return false, nil
 	}
-}
-
-// appendTerm joins a new term onto an existing text accumulator with a
-// single space, handling the empty-prefix case so we don't get a leading
-// space.
-func appendTerm(existing, term string) string {
-	if existing == "" {
-		return term
-	}
-	return existing + " " + term
 }
 
 // isExclusion reports whether tok is a `-foo`-style negation. Bare `-`

@@ -90,23 +90,33 @@ func BuildSQL(q Query) (sqlText, ftsMatch string, args []any, err error) {
 	return " AND " + strings.Join(clauses, " AND "), ftsMatch, params, nil
 }
 
-// buildMatch composes the FTS5 MATCH expression. Plain Text tokens
-// already use FTS5's implicit AND between space-separated terms.
-// Phrases are wrapped in their canonical "..." form. Excluded terms
-// fold into a trailing NOT (a OR b OR c) clause, which FTS5 supports
-// natively.
+// buildMatch composes the FTS5 MATCH expression. Every user-supplied
+// token (text term, phrase, exclusion) is wrapped in FTS5 phrase
+// quotes with embedded double-quotes doubled — this neutralises FTS5
+// grammar tokens (AND/OR/NOT/NEAR, '*', '^', '(', ')', ':') in the
+// raw input so a user typing "name OR delete" searches for the
+// literal trigrams instead of triggering the FTS5 OR operator. Under
+// the trigram tokenizer the quoted form matches the same character
+// n-grams as the unquoted form, so quoting is free in terms of
+// recall.
 //
-// The function returns an error when the resulting expression has no
-// positive operand, since FTS5 cannot run a pure NOT query — Parse
-// already guards against this, but BuildSQL stays defensive in case a
-// future caller hand-constructs a Query.
+// Multiple text terms join with a space (FTS5 implicit AND). Phrases
+// follow the same join rule; the user already separated them. Excluded
+// terms fold into a trailing NOT (a OR b OR c) clause.
+//
+// Returns an error when the resulting expression has no positive
+// operand — FTS5 cannot run a pure NOT query. Parse already guards
+// this, but BuildSQL stays defensive in case a future caller
+// hand-constructs a Query.
 func buildMatch(q Query) (string, error) {
 	var parts []string
 	if q.Text != "" {
-		parts = append(parts, q.Text)
+		for _, term := range strings.Fields(q.Text) {
+			parts = append(parts, ftsQuote(term))
+		}
 	}
 	for _, p := range q.Phrases {
-		parts = append(parts, fmt.Sprintf("%q", p))
+		parts = append(parts, ftsQuote(p))
 	}
 	if len(parts) == 0 {
 		return "", errors.New("search: empty MATCH expression (no Text or Phrases)")
@@ -116,8 +126,20 @@ func buildMatch(q Query) (string, error) {
 	if len(q.Excluded) == 0 {
 		return positive, nil
 	}
-	excluded := strings.Join(q.Excluded, " OR ")
-	return fmt.Sprintf("(%s) NOT (%s)", positive, excluded), nil
+	excluded := make([]string, len(q.Excluded))
+	for i, e := range q.Excluded {
+		excluded[i] = ftsQuote(e)
+	}
+	return fmt.Sprintf("(%s) NOT (%s)", positive, strings.Join(excluded, " OR ")), nil
+}
+
+// ftsQuote wraps s as an FTS5 phrase token. SQLite FTS5 escapes an
+// embedded double-quote by doubling it ("a""b"), unlike Go's %q which
+// uses a backslash. Quoting also turns FTS5 grammar tokens (AND/OR/
+// NOT/NEAR, parentheses, colons, '*', '^') into literal trigrams,
+// which is what we want for user input.
+func ftsQuote(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
 // bindStrings turns a string slice into a comma-separated list of `?`

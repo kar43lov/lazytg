@@ -18,7 +18,7 @@ Think `lazygit` ergonomics, but for Telegram conversations: keyboard-driven, sin
 
 ## Status
 
-**Alpha — work in progress.** This repository is currently in Stage 1 of the [v0.1.0 roadmap](docs/plans/lazytg-v0.1.0.md): foundation only (architecture, storage, auth, CLI, logging, CI). The TUI itself ships in Stage 2.
+**Alpha — work in progress.** Stages 1–3 of the [v0.1.0 roadmap](docs/plans/lazytg-v0.1.0.md) have shipped (foundation, TUI, search/files/security). Stage 4 (release pipeline + alpha/beta cycle) is in progress. The MTProto session attach in `runTUI` is still on the Stage 2 follow-up list — without it the TUI runs on the local SQLite cache only.
 
 Current capabilities:
 
@@ -26,8 +26,30 @@ Current capabilities:
 - `lazytg accounts` — list authenticated accounts (read-only, no Telegram round-trip).
 - `lazytg logout --account <phone>` — drop a stored session.
 - `lazytg version` — print version, commit, build date.
-- `lazytg debug-bundle` — stub in Stage 1; real implementation in Stage 3.
-- SQLite storage layer with FTS5 trigram index (verified for both Cyrillic and Latin text).
+- `lazytg debug-bundle` — produces a redacted tar.gz with version, config, log tail, db stats, goroutine dump (`docs/SECURITY.md` + `bundle_grep_test.go`).
+- `lazytg reindex --all|--chat <id>` — runs the FTS5 backfill for a chat or every chat with progress on stderr.
+- 2-pane Bubble Tea TUI: chats + thread, focus cycling, optimistic send, $EDITOR delegation, live updates, reconnect orchestration.
+- Local search (FTS5 trigram) with operators `from:@user`, `in:#chat`, `before:`/`after:`, `has:file`, `"phrase"`, `-exclusion` (`docs/SEARCH.md`).
+- Search overlay (`/`), command palette (Ctrl+Space), file download (Ctrl+D), file upload (Ctrl+U).
+- DB-size monitor + permissions audit + 10 msg/s send rate-limit guard (covers both text and media sends).
+
+### Keybindings (TUI)
+
+| Binding         | Action                                |
+|-----------------|---------------------------------------|
+| Tab / Shift+Tab | cycle focus between panes             |
+| Enter           | send message                          |
+| Alt+Enter       | newline in input                      |
+| Ctrl+R          | reply to focused message              |
+| Ctrl+E          | open `$EDITOR` with current draft     |
+| `/`             | open search overlay                   |
+| Ctrl+Space      | command palette (chat switcher L1)    |
+| Ctrl+D          | download last media in thread         |
+| Ctrl+U          | attach file (upload)                  |
+| `?`             | toggle help overlay                   |
+| Ctrl+C / Ctrl+Q | quit                                  |
+
+See [docs/SEARCH.md](docs/SEARCH.md) for the search query syntax and [docs/FILES.md](docs/FILES.md) for the download/upload pipeline.
 
 ## Requirements
 
@@ -52,9 +74,9 @@ Once a release is tagged, `go install github.com/pgmac/lazytg/cmd/lazytg@latest`
 
 Pre-built archives for `linux` and `darwin` (`amd64` + `arm64`) are published on the [Releases](https://github.com/pgmac/lazytg/releases) page. SHA256 checksums and cosign keyless signatures are attached to every release.
 
-### Encrypted database (planned for Stage 3)
+### Encrypted database (deferred past v0.1)
 
-A `sqlcipher` build tag is reserved for the CGo-backed encrypted driver and is **not yet wired**. Until Stage 3 lands, the database is unencrypted regardless of build tag — rely on filesystem permissions (`0600`/`0700`) and OS-level disk encryption.
+A `sqlcipher` build tag is reserved for the CGo-backed encrypted driver and is **not yet wired** — CGo SQLCipher integration is deferred past v0.1. The database is unencrypted regardless of build tag — rely on filesystem permissions (`0600` files / `0700` dirs, enforced by the startup permissions audit) and OS-level disk encryption.
 
 ## Quickstart
 
@@ -101,12 +123,12 @@ Logs go to `<state>/lazytg.log` with lumberjack rotation (10 MB × 3 backups × 
 
 3-layer architecture with import-direction enforcement via `depguard`:
 
-- `internal/tg/` — gotd/td wrapper (knows MTProto)
-- `internal/core/` — domain types, storage interfaces, event bus, sync (no gotd, no bubbletea)
-- `internal/ui/` — Bubble Tea models and views (Stage 2; only a `doc.go` placeholder today)
-- `internal/storage/sqlite/` — SQLite repository (modernc.org/sqlite, pure-Go)
-- `internal/app/` — manual DI wiring (Stage 2; only a `doc.go` placeholder today, wiring lives in `cmd/lazytg/cmd/runtime.go` for now)
-- `cmd/lazytg/` — cobra entry point
+- `internal/tg/` — gotd/td wrapper (knows MTProto): client, auth, send, history, updates, polling, files
+- `internal/core/` — domain types, storage interfaces, event bus, sync, search, files, security, observability (no gotd, no bubbletea)
+- `internal/ui/` — Bubble Tea v2 models, panes (chats/thread/search/attach), input editor, palette, status bar, keymap
+- `internal/storage/sqlite/` — SQLite repository (modernc.org/sqlite, pure-Go) with FTS5 trigram index, frecency, dedup tables
+- `internal/app/` — manual DI wiring (`Build` for non-MTProto services, `AttachClient` for MTProto-aware ones, `RunBackground` for long-lived goroutines)
+- `cmd/lazytg/` — cobra entry point: `tui` (default), `login`, `logout`, `accounts`, `version`, `debug-bundle`, `reindex`
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full layout, dependency rules, and stack rationale.
 
@@ -118,9 +140,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full layout, dependency
 - [CHANGELOG.md](CHANGELOG.md) — release notes (Keep a Changelog format)
 - [docs/plans/lazytg-v0.1.0.md](docs/plans/lazytg-v0.1.0.md) — full v0.1.0 roadmap
 
-## Manual smoke test (foundation)
+## Manual smoke test
 
-After Stage 1 is built, the foundation is verified manually as follows (not yet automated — Stage 2 brings the TUI that exercises this end-to-end):
+The full Stage 1–3 manual smoke checklist lives in [docs/MANUAL_SMOKE.md](docs/MANUAL_SMOKE.md). The minimal foundation walk-through:
 
 ```sh
 export LAZYTG_API_ID=...
@@ -129,6 +151,8 @@ export LAZYTG_API_HASH=...
 # enter code from Telegram, then 2FA password if set
 ./bin/lazytg accounts             # account is listed
 ./bin/lazytg accounts             # second run — no re-auth
+./bin/lazytg reindex --all        # FTS5 backfill for every chat (heavy users)
+./bin/lazytg                      # open the TUI
 ```
 
 ## License

@@ -275,6 +275,16 @@ func Build(ctx context.Context, cfg Config) (*App, error) {
 	}, nil
 }
 
+// CheckPermissions runs the canonical Stage 3 audit set
+// (secrets.age, ConfigDir, ConfigDir/.../lazytg.db, StateDir) outside
+// of the full Build. CLI subcommands that open the SQLite repo
+// directly (lazytg reindex, lazytg debug-bundle) call this so the
+// security promise — fail-fast on tampered modes — is consistent
+// across entry points.
+func CheckPermissions(paths config.Paths, log *slog.Logger) error {
+	return runStartupPermissionsAudit(paths, log)
+}
+
 // runStartupPermissionsAudit runs the canonical Stage 3 audit set
 // (secrets.age, ConfigDir, ConfigDir/.../lazytg.db, StateDir) and either
 // returns a wrapped error (fail-class findings — boot must abort) or
@@ -388,7 +398,11 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client) {
 	if up, err := files.NewUploadService(filesAdapter, filesAdapter, a.Bus, a.Log); err != nil {
 		a.Log.Warn("attach: upload service init failed", "err", err)
 	} else {
-		a.UploadSvc = up
+		// Reuse the same SendGuard the text-send path consults so file
+		// uploads count toward the 10 msg/sec ban-risk ceiling. CLAUDE.md
+		// promises the guard "не отключается" — without this the upload
+		// path would silently bypass it.
+		a.UploadSvc = up.WithRateLimiter(a.SendGuard)
 	}
 }
 
@@ -404,6 +418,15 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client) {
 func (a *App) RunBackground(ctx context.Context) <-chan struct{} {
 	done := make(chan struct{})
 	var wg sync.WaitGroup
+
+	// Plumb the app-scoped ctx into SearchSvc so the lazy reindex
+	// trigger uses it instead of inheriting the per-query 5 s overlay
+	// timeout. Doing this here (rather than in Build) keeps the search
+	// service decoupled from the cmd-layer ctx until the background
+	// goroutines actually start.
+	if a.SearchSvc != nil {
+		a.SearchSvc.WithBackgroundContext(ctx)
+	}
 
 	if a.Live != nil {
 		wg.Add(1)

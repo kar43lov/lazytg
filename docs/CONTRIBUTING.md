@@ -30,7 +30,7 @@ lefthook install
 make build
 ```
 
-`make build` produces `bin/lazytg` as a pure-Go binary. The `sqlcipher` build tag is reserved for Stage 3 and is not yet wired — until then the database is unencrypted regardless of build tag.
+`make build` produces `bin/lazytg` as a pure-Go binary. `make bench` runs the FTS5 search p95 SLA gate (`BenchmarkSearch100k` — fails the build if p95 > 100 ms on a 100k-message synthetic corpus); CI runs the same target on Linux. The `sqlcipher` build tag is reserved for the CGo-backed encrypted driver and remains unwired (CGo SQLCipher is deferred past v0.1) — the database is unencrypted regardless of build tag.
 
 ## Running tests
 
@@ -113,6 +113,6 @@ Before requesting review, please confirm:
 
 ## Scope discipline
 
-Stage 1 (current) is **foundation only**: bootstrap, layering, storage, auth, CLI, logging, CI, docs. Please do not ship TUI features, search UI, or files transfer in Stage 1 PRs — those belong to Stages 2 and 3. The full plan is in [`docs/plans/lazytg-v0.1.0.md`](plans/lazytg-v0.1.0.md).
+Stages 1–3 of the v0.1.0 roadmap have shipped (foundation, TUI, search/files/security). Stage 4 (release pipeline + alpha/beta cycle) is in progress. Please keep PRs scoped to current-stage work and to the Stage 2 carry-over wiring (MTProto attach in `runTUI`, `BackfillService.Start`, `--polling` consumer, `reconnectAdapter.Connect`). The full plan is in [`docs/plans/lazytg-v0.1.0.md`](plans/lazytg-v0.1.0.md).
 
 When in doubt about scope, open an issue or a discussion first.

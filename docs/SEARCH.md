@@ -104,7 +104,7 @@ lazytg reindex --chat 12345   # один чат, целиком
 
 Команда работает в stderr (TUI не запускается), поэтому подходит для cron / однократных миграций. Прогресс-events `ReindexProgress` идут в шину и видны в `--debug` логах.
 
-> Команда `lazytg reindex` появится в Task 10 (wiring + final verification). Сейчас (Stage 3 Task 8) backfill доступен только программно через `core/search.ReindexService`.
+> Команда вызывает permissions-audit (`app.CheckPermissions`), открывает репо и запускает `ReindexService.Run`/`RunAll` напрямую — прогресс льётся в stderr, чтобы скрипты могли его перехватывать. p95 search latency на 100k сообщений отслеживается в CI через `make bench` (BenchmarkSearch100k самофейлит при p95 > 100 ms).
 
 **Cancel-safety:** `ReindexService.Run(ctx)` корректно прерывается на `ctx.Done()`. После cancel БД остаётся в консистентном состоянии (`PRAGMA integrity_check` = `ok`); проверено в `internal/core/search/reindex_test.go::TestRunAll_GracefulCancel`.
 

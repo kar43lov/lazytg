@@ -67,6 +67,14 @@ jobs:
       - name: Test
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
+      # Search p95 SLA gate. BenchmarkSearch100k self-fails when p95 > 100 ms,
+      # so the bench is run as a separate CI step rather than relying on a
+      # follow-up `go test` invocation. Linux-only — the bench seeds 100k
+      # rows and is sensitive to runner storage; macOS runners add noise.
+      - name: Search SLA gate
+        if: matrix.os == 'ubuntu-latest'
+        run: make bench
+
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v4

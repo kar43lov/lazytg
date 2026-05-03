@@ -47,16 +47,23 @@ func NewTokenBucket(rate float64, capacity int) (*TokenBucket, error) {
 }
 
 // Wait blocks until a token is available or ctx is cancelled.
+//
+// The timer is allocated via time.NewTimer + Stop on every iteration
+// so a ctx-cancellation does not leave a dangling timer in the runtime
+// heap until it fires (the time.After form keeps the timer pinned for
+// up to ~1 s after each cancelled wait).
 func (b *TokenBucket) Wait(ctx context.Context) error {
 	for {
 		wait, ok := b.take()
 		if ok {
 			return nil
 		}
+		t := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
+			t.Stop()
 			return ctx.Err()
-		case <-time.After(wait):
+		case <-t.C:
 		}
 	}
 }

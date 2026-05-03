@@ -31,9 +31,10 @@ type Hit struct {
 // into a structured Query and Task 4 wires the result through the UI
 // overlay.
 type Service struct {
-	store IndexStore
-	lazy  *LazyTrigger
-	log   *slog.Logger
+	store     IndexStore
+	lazy      *LazyTrigger
+	log       *slog.Logger
+	bgContext context.Context //nolint:containedctx // app-scoped ctx for the lazy reindex pass
 }
 
 // NewService wires the search service. lazy may be nil — callers that
@@ -44,6 +45,20 @@ func NewService(store IndexStore, lazy *LazyTrigger, log *slog.Logger) *Service 
 		log = slog.New(discardHandler{})
 	}
 	return &Service{store: store, lazy: lazy, log: log}
+}
+
+// WithBackgroundContext installs an app-scoped ctx the service uses
+// when kicking off the lazy reindex on the very first search. Without
+// it the request ctx (which expires on overlay close, ~5 s timeout)
+// is propagated into LazyTrigger.EnsureIndexed, which contradicts the
+// trigger's contract ("Pass an app-scoped context, not a
+// request-scoped one") and causes the once-and-only reindex pass to
+// abort halfway through on heavy accounts.
+//
+// Returns the same *Service for chaining at the wiring site.
+func (s *Service) WithBackgroundContext(ctx context.Context) *Service {
+	s.bgContext = ctx
+	return s
 }
 
 // DefaultSearchLimit is the fallback when callers pass limit <= 0. Picked
@@ -167,7 +182,18 @@ func (s *Service) Search(ctx context.Context, raw string, limit int) ([]Hit, err
 		limit = DefaultSearchLimit
 	}
 	if s.lazy != nil {
-		_ = s.lazy.EnsureIndexed(ctx)
+		// EnsureIndexed kicks off a long-running background pass on the
+		// first search. Use the app-scoped ctx (installed via
+		// WithBackgroundContext) so the pass survives the overlay's 5 s
+		// query timeout. Fall back to the request ctx only when wiring
+		// did not provide one — tests and CLI commands without a
+		// long-lived ctx still work, they just don't get a meaningful
+		// background pass beyond the request lifetime.
+		bgCtx := s.bgContext
+		if bgCtx == nil {
+			bgCtx = ctx
+		}
+		_ = s.lazy.EnsureIndexed(bgCtx)
 	}
 
 	q, err := Parse(raw)

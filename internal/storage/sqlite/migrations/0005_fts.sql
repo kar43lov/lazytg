@@ -23,7 +23,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
     tokenize='trigram case_sensitive 0'
 );
 
-CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+-- WHEN clauses skip empty/NULL text rows: service messages (joins,
+-- leaves, system text) carry no body and would otherwise pollute the
+-- FTS index with zero-trigram entries. Indexer.Backfill applies the
+-- same filter, so the live trigger and the bulk reindex stay
+-- consistent.
+CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages
+WHEN new.text IS NOT NULL AND new.text <> ''
+BEGIN
     INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
 END;
 
@@ -31,6 +38,12 @@ CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
     DELETE FROM messages_fts WHERE rowid = old.rowid;
 END;
 
-CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
-    UPDATE messages_fts SET text = new.text WHERE rowid = old.rowid;
+-- The update trigger has to handle the empty→non-empty transition
+-- (insert) and the non-empty→empty transition (delete) explicitly,
+-- because the simple UPDATE form skips rows that were never indexed.
+CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE OF text ON messages BEGIN
+    DELETE FROM messages_fts WHERE rowid = old.rowid;
+    INSERT INTO messages_fts(rowid, text)
+        SELECT new.rowid, new.text
+        WHERE new.text IS NOT NULL AND new.text <> '';
 END;

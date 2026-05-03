@@ -13,7 +13,7 @@ lazytg is a **userbot** in Telegram terms — it logs in with the same MTProto c
 Concretely:
 
 - Use lazytg with a **secondary, throwaway test account first**. Validate the workflows you care about. Only then consider attaching a primary account.
-- The send path will get a hard built-in rate-limit guard (`max 10 messages/sec`) once the send path itself lands in Stage 2. It exists to keep the behavioural fingerprint of lazytg close to a human user's, not as ergonomics. Stage 1 has no send code, so the guard is not present yet.
+- The send path runs through a hard built-in rate-limit guard (`max 10 messages/sec`, burst 30 — `internal/core/security/send_ratelimit.go`). The guard covers both text sends (`coresync.SendService`) and file uploads (`files.UploadService`); `messages.SendMedia` waits on the same token bucket as `messages.SendMessage`. Not user-tunable.
 - lazytg avoids "machine-like" patterns: no message scraping at high rate, no automated mass actions, no message editing loops. New features that introduce such patterns will not be accepted upstream.
 - Telegram's official policy on `api_id` / `api_hash` is documented at <https://core.telegram.org/api/obtaining_api_id>. Read it.
 
@@ -28,9 +28,9 @@ If your account is restricted, lazytg cannot help you get it back. That outcome 
 | MTProto session keys        | Local malware running as the user; device theft        | Stored in OS keyring (Keychain / Secret Service / Credential Manager). On headless boxes without D-Bus, fall back to `age`-encrypted file gated by a master passphrase prompted at startup. |
 | `api_hash` env var          | Logs, debug bundles, crash reports                     | Stripped by `RedactingHandler` in `internal/core/obs/redact.go`. Hex strings of length 32+ are masked as `<api_hash>`.                                      |
 | Phone numbers               | Logs, debug bundles                                    | Phone-shaped strings (a leading `+` followed by 10–15 digits) are masked as `+***` by the same redactor. Bare numeric runs are left intact so int64 IDs and Unix timestamps survive.                          |
-| Message bodies              | Logs, debug bundles                                    | Logger never receives message text by default. The `debug-bundle` command (Stage 3) is verified by a grep test to never include message content.            |
-| Local SQLite DB             | Device theft                                           | Filesystem permissions only (`0600` files, `0700` dirs). The `age` secrets file is fail-fast at startup if its mode widens. The DB itself is unencrypted; CGo SQLCipher is planned for Stage 3 (build tag reserved but not yet wired).            |
-| `$EDITOR` invocation        | Hostile env vars influencing the editor               | Stage 2 will filter the env handed to `$EDITOR` down to `PATH`, `HOME`, `TERM`, `LANG`, `EDITOR` only.                                                      |
+| Message bodies              | Logs, debug bundles                                    | Logger never receives message text by default. The `debug-bundle` command is verified by `internal/core/obs/bundle_grep_test.go` (CI gate) — api_hash hex, session base64 blobs, phone numbers, and message text fixtures are checked against every tar entry. |
+| Local SQLite DB             | Device theft                                           | Filesystem permissions enforced by the startup permissions audit (`internal/core/security/permissions.go`): `0600` for `secrets.age`/`lazytg.db` (fail-fast), `0700` for parent dirs (warn-class). The DB itself is unencrypted; CGo SQLCipher is deferred past v0.1 (build tag reserved but not yet wired).            |
+| `$EDITOR` invocation        | Hostile env vars influencing the editor               | Env-filter down to `PATH`/`HOME`/`TERM`/`LANG`/`EDITOR` is on the v0.2 list — currently the editor inherits the full env.                                   |
 
 ### What we do **not** defend
 
@@ -44,8 +44,10 @@ If your account is restricted, lazytg cannot help you get it back. That outcome 
 ## Filesystem hygiene
 
 - `$XDG_CONFIG_HOME/lazytg/` (and the macOS equivalent) and the data/state/cache dirs are *created* with mode `0700` by `internal/core/config/paths.go`.
-- The `age`-encrypted secrets file is fail-fast: if it exists with a mode wider than `0600` (`mode & 0077 != 0`) the process refuses to read it.
-- Re-validating directory modes on every run is planned for Stage 3 hardening; today only the secrets file is fail-fast.
+- The startup permissions audit (`internal/core/security/permissions.go`) re-validates `secrets.age`, `lazytg.db`, and the parent dirs on every TUI start (`app.Build`) and on every CLI subcommand that opens the repo (`lazytg reindex`, `lazytg debug-bundle`). Findings:
+    - `secrets.age` / `lazytg.db` mode wider than `0600` → fail-fast (process aborts).
+    - `Config` / `State` dir mode wider than `0700` → warn-class log line, boot proceeds.
+    - Missing files on first run → informational, boot proceeds (the audit knows no DB exists yet).
 
 ## Logging redaction
 
@@ -59,11 +61,11 @@ Tests live in `internal/core/obs/redact_test.go`. New patterns we discover shoul
 
 ## debug-bundle policy
 
-The `lazytg debug-bundle` command (full implementation lands in Stage 3) collects logs and configuration to help triage bugs. It is constrained by policy:
+The `lazytg debug-bundle` command produces a redacted tar.gz with the following entries: `version.txt`, `config.toml` (api_hash and phone fields scrubbed), `logs.txt` (trailing N lines, redactor applied), `db_stats.txt` (table row counts only, no message text), `goroutines.txt`. The bundle file itself is written `0600`.
 
-- **Never include**: session blobs, `api_hash`, raw message text, contact lists, peer access hashes.
-- **May include**: redacted log tail, lazytg version + commit + build date, OS/arch, env vars *whitelisted* (`TERM`, `LANG`, `XDG_*`), schema migration version, build tags.
-- Stage 3 will add a grep test in CI that verifies no fixture session/api_hash/text leaks into a generated bundle. Until then the redactor (`internal/core/obs/redact_test.go`) carries the regression coverage for the underlying patterns.
+- **Never include**: session blobs, `api_hash`, raw message text, contact lists, peer access hashes, the SQLite DB file itself.
+- **Verified in CI**: `internal/core/obs/bundle_grep_test.go` seeds api_hash hex / base64 session blob / phone / message-text fixtures into the config + logs + repo and asserts that none of those literal byte sequences appear in any tar entry. A regression that adds an unredacted code path fails this test.
+- The grep test backs up the structural invariant — `bundle.go` only ever opens the version, config, log, db-stats, and goroutine inputs; it does NOT walk session/secrets directories.
 
 ## Disclosure policy
 

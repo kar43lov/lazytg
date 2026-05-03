@@ -229,6 +229,17 @@ func (s *SendService) deliver(ctx context.Context, localID string, chatID int64,
 			return
 		}
 		if d, ok := AsFloodWait(err); ok {
+			// Defensive floor: a server (or buggy mock) returning
+			// FLOOD_WAIT with retry_after <= 0 would otherwise feed
+			// s.sleep(ctx, 0) which returns immediately, and the loop
+			// would spin at the SendGuard ceiling (10 msg/sec) without
+			// ever incrementing `attempt`. We clamp non-positive
+			// durations to 1 s while honouring any positive value the
+			// server provided — including the millisecond-scale values
+			// tests inject through scriptedSender.
+			if d <= 0 {
+				d = time.Second
+			}
 			s.log.Warn("send: flood wait",
 				"chat_id", chatID, "local_id", localID, "retry_after", d)
 			if !s.sleep(ctx, d) {

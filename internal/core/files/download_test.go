@@ -228,7 +228,7 @@ func TestDownloadService_DedupHitButFileMissing(t *testing.T) {
 }
 
 func TestDownloadService_Failure(t *testing.T) {
-	svc, dl, bus, _, _ := setupService(t, nil)
+	svc, dl, bus, store, _ := setupService(t, nil)
 	dl.err = errors.New("boom")
 
 	_, err := svc.Download(t.Context(), 1, "Bob", domain.MediaInfo{
@@ -244,10 +244,23 @@ func TestDownloadService_Failure(t *testing.T) {
 	if _, ok := evts[len(evts)-1].(events.FileDownloadFailed); !ok {
 		t.Fatalf("last event = %T, want Failed", evts[len(evts)-1])
 	}
-	// .partial must be cleaned up on failure.
-	matches, _ := filepath.Glob(filepath.Join(t.TempDir(), "*.partial"))
-	if len(matches) != 0 {
-		t.Fatalf(".partial leaked on failure: %v", matches)
+	// .partial must be cleaned up on failure. Earlier this glob looked
+	// at a fresh t.TempDir() instead of the actual store root, which
+	// always returned zero matches and made the assertion vacuous.
+	var leaks []string
+	if err := filepath.Walk(store.Root(), func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.HasSuffix(path, ".partial") {
+			leaks = append(leaks, path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk store root: %v", err)
+	}
+	if len(leaks) != 0 {
+		t.Fatalf(".partial leaked on failure: %v", leaks)
 	}
 }
 

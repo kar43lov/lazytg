@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/pgmac/lazytg/internal/app"
 	"github.com/pgmac/lazytg/internal/core/events"
 	"github.com/pgmac/lazytg/internal/core/search"
 	"github.com/pgmac/lazytg/internal/storage/sqlite"
@@ -56,13 +57,21 @@ func newReindexCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), reindexProgressTimeout)
 			defer cancel()
 
+			logger := LoggerFromContext(ctx)
+			// Same fail-fast permissions audit the TUI runs through
+			// app.Build — CLI subcommands that open the repo directly
+			// must honour the same security floor (0600 on lazytg.db /
+			// secrets.age, 0700 on parent dirs).
+			if err := app.CheckPermissions(paths, logger); err != nil {
+				return fmt.Errorf("reindex: %w", err)
+			}
+
 			repo, err := sqlite.Open(ctx, dbPath(paths))
 			if err != nil {
 				return fmt.Errorf("reindex: open repo: %w", err)
 			}
 			defer func() { _ = repo.Close() }()
 
-			logger := LoggerFromContext(ctx)
 			indexer := search.NewIndexer(repo, logger)
 			progressBus := newReindexProgressSink(cmd.ErrOrStderr())
 			reindex := search.NewReindexService(indexer, repo, progressBus, logger, search.DefaultPerChatLimit)

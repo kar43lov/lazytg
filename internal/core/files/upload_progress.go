@@ -31,6 +31,15 @@ func (t *uploadProgressThrottler) reset(uploadID int64) {
 	t.states[uploadID] = &uploadProgressState{}
 }
 
+// release drops the per-uploadID state once SendFile has emitted its
+// terminal Completed/Failed event. Mirrors progressThrottler.release;
+// without it the map grows unbounded across the lifetime of the TUI.
+func (t *uploadProgressThrottler) release(uploadID int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.states, uploadID)
+}
+
 // shouldEmit reports whether the (bytes, total) tick should produce a
 // bus event for uploadID. Identical thresholds to the download path
 // (1 MiB OR 5%, whichever first).

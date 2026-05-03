@@ -1,10 +1,11 @@
-.PHONY: build test lint clean tidy help
+.PHONY: build test bench lint clean tidy help
 
 # Default target
 help:
 	@echo "Available targets:"
 	@echo "  build  - build lazytg binary into bin/"
 	@echo "  test   - run all tests with race detector"
+	@echo "  bench  - run the FTS5 search p95 SLA gate (BenchmarkSearch100k)"
 	@echo "  lint   - run golangci-lint"
 	@echo "  clean  - remove build artefacts"
 	@echo "  tidy   - run go mod tidy"
@@ -14,6 +15,13 @@ build:
 
 test:
 	go test -race ./...
+
+# bench runs the search SLA gate. The bench fails the build if p95 > 100 ms
+# on the 100k-message synthetic corpus. -benchtime=1x produces the single
+# 100-sample window the bench's assertions expect; -run=^$ skips the test
+# functions so we measure only BenchmarkSearch100k. CI mirrors this target.
+bench:
+	go test -bench=BenchmarkSearch100k -benchtime=1x -run=^$$ ./internal/core/search/
 
 lint:
 	golangci-lint run

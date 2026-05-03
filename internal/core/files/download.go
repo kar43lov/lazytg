@@ -133,7 +133,10 @@ func (s *DownloadService) Download(ctx context.Context, chatID int64, chatTitle 
 
 	// progressThrottler is single-flight per FileID; reset state so a
 	// second Download call after a previous failure starts from 0%.
+	// release on every exit so the per-FileID map does not grow
+	// unbounded across the TUI's lifetime.
 	s.progress.reset(info.FileID)
+	defer s.progress.release(info.FileID)
 
 	cb := func(bytes, total int64) {
 		if !s.progress.shouldEmit(info.FileID, bytes, total) {

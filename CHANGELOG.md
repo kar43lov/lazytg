@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Stage 3 search: SQLite FTS5 trigram index with parser supporting `from:@user`, `in:#chat`, `before:`/`after:` (UTC), `has:file`, `"phrase"`, `-exclusion`. Lazy index of last 5000 messages/chat (`internal/core/search/{index,reindex,lazy,service,query_builder,parser}.go`); full reindex via the new `lazytg reindex --all|--chat <id>` CLI. p95 < 100 ms on 100k messages, gated by `BenchmarkSearch100k` in CI (`make bench` step on Linux).
+- Stage 3 search overlay: opens with `/`, ↑/↓ + Enter jumps to chat, Esc cancels (`internal/ui/panes/search`). Free-text input is FTS5-quoted so grammar tokens (`OR`, `*`, `(`, `^`, `column:`) become literal trigrams.
+- Command palette L1 (Ctrl+Space, also Ctrl+@): top-50 chat switcher ranked by frecency with NFKD/lowercase/diacritic normalisation ("Алёна" === "Алена"); persisted via migration `0006_frecency.sql` and `internal/ui/palette/`.
+- File download via Ctrl+D: gotd Downloader → tmp → 0600 rename; events `FileDownload{Started,Progress,Completed,Failed}`. Dedup table `downloaded_files` (migration `0007_files.sql`), root via `LAZYTG_DOWNLOADS`, default `~/Downloads/lazytg/<chat>/<filename>`.
+- File upload via Ctrl+U: attach overlay (path picker + caption), events `FileUpload{Started,Progress,Warning,Completed,Failed}`. Routes through MTProto `messages.SendMedia`. Send rate-limit guard (10 msg/s) is consulted on the upload path too — file uploads share the text-send ban-risk ceiling.
+- DB-size monitor: status-bar warning `⚠ DB N.N GB` when `lazytg.db` exceeds 1 GiB (configurable via `obs.DBSizeConfig`).
+- Send rate-limit guard: 10 msg/s, burst 30 (`internal/core/security/send_ratelimit.go`); not user-tunable, ban-risk mitigation. Wired into both `coresync.SendService` (text) and `files.UploadService` (media).
+- Startup permissions audit (`internal/core/security/permissions.go`): fail-fast on `secrets.age`/`lazytg.db` not 0600 or `Config`/`State` dirs not 0700 (warn-class). Exposed as `app.CheckPermissions` so `lazytg reindex` and `lazytg debug-bundle` enforce the same floor.
+- Full debug-bundle (replaces Stage 1 stub): tar.gz with `version.txt`, `config.toml`, redacted log tail, `db_stats.txt`, `goroutines.txt`; bundle file itself written 0600. `bundle_grep_test.go` asserts api_hash/session-blob/phone/message-text never leak.
+- Migrations 0005_fts.sql, 0006_frecency.sql, 0007_files.sql, 0008_messages_media.sql.
+- Domain types extended with `MediaInfo` and `Message.Media`.
+- New events: `ReindexProgress`, `FileDownload*`, `FileUpload*`, `StorageStateChanged{Reason: ReasonDBSizeWarning}`, `SearchJumpRequested`.
+- `make bench` target running BenchmarkSearch100k as a CI gate.
+- docs/SEARCH.md, docs/FILES.md.
 - Stage 2 TUI: 2-pane Bubble Tea v2 (chats + thread) with status bar, modal help overlay (`?`), focus cycling (Tab/Shift+Tab), small-terminal fallback (<80×24).
 - `lazytg` (no subcommand) opens the TUI as the default entry point; `lazytg tui` is a hidden alias.
 - History sync via gotd `messages.GetHistory` with batch upsert (`Repo.SaveMessages`) and 200-message pagination on scroll-up.
@@ -47,10 +61,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- The `sqlcipher` build tag and its CI matrix axis. The CGo SQLCipher driver lands in Stage 3 — until then a stub silently using the unencrypted `modernc.org/sqlite` driver would have been a security misrepresentation.
+- The `sqlcipher` build tag and its CI matrix axis. CGo SQLCipher integration is deferred past v0.1 — until then a stub silently using the unencrypted `modernc.org/sqlite` driver would have been a security misrepresentation.
 
 ### Fixed
 
+- Search parser: a lowercase `key:value` token whose key did not match any known operator (e.g. `food:burger`) was silently dropped on its way out of `Parse`. The token now survives as plain free text — preserves URL-style and unknown-operator inputs verbatim.
+- Search query builder: phrases containing a literal `"` produced `\"`-escaped MATCH expressions that FTS5 cannot parse. Switched to FTS5's doubled-quote escape (`""`).
+- FTS5 live-write trigger now skips empty/NULL `messages.text` rows, matching `Indexer.Backfill`'s filter so service messages do not pollute the index.
+- `TokenBucket.Wait` no longer leaks short-lived timers on ctx cancellation; switched from `time.After` to `time.NewTimer` + `Stop`.
+- Send retry loop clamps FloodWait `retry_after` to a 1 s floor so a server (or buggy mock) returning 0 cannot spin the loop at the SendGuard ceiling.
+- `progressThrottler` and `uploadProgressThrottler` now drop their per-id state on each transfer's terminal event — long-running TUI sessions no longer leak one map entry per completed file.
+- `TestDownloadService_Failure` glob now walks the actual store root instead of a fresh `t.TempDir()` — earlier the assertion was vacuous.
 - Optimistic-UI flicker race: `applyOutgoingState{Pending}` is now a no-op so the bus event cannot insert an empty `[⏳]` row before `SendDispatchedMsg` (carrying the message body) lands.
 - `SendFailedMsg` no longer clobbers a fresher draft or retargeted reply pointer when the user moved on while the failed send was in flight — the failure is dropped and surfaced as a warn log.
 - Configurable `ScrollUp`/`ScrollDown` chords (default `ctrl+b`/`ctrl+f`) now actually scroll the thread viewport when the thread or chats pane is focused; previously the chord was advertised in `keymap.toml` and the help overlay but no code consumed it.
