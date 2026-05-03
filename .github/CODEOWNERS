@@ -1,0 +1,36 @@
+# CODEOWNERS for lazytg
+# Reviewers are auto-requested by GitHub for matching paths.
+# Solo project — @pgmac is the default owner; security-sensitive paths
+# are listed explicitly so future co-maintainers do not silently land
+# changes there without an explicit nod.
+
+# Default — every file
+*                                @pgmac
+
+# MTProto / gotd integration: ban-risk surface, send-path, session handling
+/internal/tg/                    @pgmac
+
+# Domain core security primitives: permission audit, send rate-limit
+/internal/core/security/         @pgmac
+
+# Logging redaction + debug-bundle (CI grep-test guards privacy)
+/internal/core/obs/              @pgmac
+
+# Session storage + secrets fallback
+/internal/core/config/           @pgmac
+
+# Storage migrations — rolling DB schema requires care
+/internal/storage/sqlite/migrations/ @pgmac
+
+# Release plumbing: signing, cross-build, brew tap, packaging
+/.goreleaser.yaml                @pgmac
+/.github/workflows/              @pgmac
+
+# Security docs & policy
+/SECURITY.md                     @pgmac
+/docs/SECURITY.md                @pgmac
+
+# Issue / PR templates and CODEOWNERS itself
+/.github/ISSUE_TEMPLATE/         @pgmac
+/.github/PULL_REQUEST_TEMPLATE.md @pgmac
+/.github/CODEOWNERS              @pgmac

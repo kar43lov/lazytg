@@ -329,52 +329,23 @@
 
 ### Task 6: Issue/PR templates + Security policy — доработка
 
-- [ ] Открыть `.github/ISSUE_TEMPLATE/bug_report.yml`. Убедиться что есть:
+- [x] Открыть `.github/ISSUE_TEMPLATE/bug_report.yml`. Убедиться что есть:
   - Поле для версии (`lazytg version`)
   - Поле для OS/arch
   - Поле для шагов воспроизведения
   - **Поле для debug-bundle:** прямое указание что нужно прикрепить (с инструкцией как собрать через `lazytg debug-bundle`)
   - **Чекбокс «I confirm debug-bundle does not contain my session/api_hash»** (legal protection)
   - Ссылка на SECURITY.md в подсказке: «Не сообщайте security issues публично — используйте GitHub Security Advisories»
-- [ ] Открыть `.github/ISSUE_TEMPLATE/feature_request.yml`. Убедиться что есть:
+- [x] Открыть `.github/ISSUE_TEMPLATE/feature_request.yml`. Убедиться что есть:
   - Описание проблемы (которую решает feature)
   - Предполагаемое решение
   - Альтернативы (как сейчас обходится)
   - **Чекбокс «I checked the v0.2/v0.3 roadmap in CLAUDE.md»** (избежать дублей по уже запланированным фичам)
-- [ ] Создать `.github/ISSUE_TEMPLATE/config.yml` с links для перенаправления:
-  ```yaml
-  blank_issues_enabled: false
-  contact_links:
-    - name: Security vulnerability
-      url: https://github.com/pgmac/lazytg/security/advisories/new
-      about: Report security issues privately via GitHub Security Advisories
-    - name: Question / discussion
-      url: https://github.com/pgmac/lazytg/discussions
-      about: Use GitHub Discussions for usage questions
-  ```
-- [ ] Открыть `.github/PULL_REQUEST_TEMPLATE.md`. Убедиться что есть чек-лист:
-  - [ ] Tests added (если применимо — в core ≥80%, ui ≥60%)
-  - [ ] Docs updated (если изменён behaviour)
-  - [ ] CHANGELOG.md entry добавлен в Unreleased section (или будет auto-generated через git-cliff)
-  - [ ] Conventional commits format соблюдён (`feat:`/`fix:`/etc — проверяется CI)
-  - [ ] depguard rules не нарушены (CI проверит)
-  - [ ] Coverage gates не упали
-- [ ] Открыть существующий `SECURITY.md` (в корне) и `docs/SECURITY.md` — убедиться что:
-  - Disclosure policy: 90 дней, через GitHub Security Advisories (private)
-  - Threat model: что защищаем (session keys, contacts metadata на диске), от кого (local malware с user-доступом, утечка устройства), чего НЕ защищаем (root malware, Telegram сервер)
-  - Ban-risk warning: подробное объяснение Telegram observation policy для unofficial clients, рекомендации (тестовый аккаунт, rate-limit guard включён, не использовать для massive operations)
-  - Contact: GitHub Security Advisories (НЕ email — privacy)
-- [ ] Создать `.github/CODEOWNERS`:
-  ```
-  # Default owner — все файлы
-  *       @pgmac
-  # Security-sensitive — extra review требуется
-  /internal/tg/         @pgmac
-  /internal/core/security/ @pgmac
-  /docs/SECURITY.md     @pgmac
-  /SECURITY.md          @pgmac
-  ```
-- [ ] Запустить `go build ./...` и `go test -race ./...` — изменения в .github/ не затрагивают код, но регресс-проверка обязательна
+- [x] Создать `.github/ISSUE_TEMPLATE/config.yml` с links для перенаправления (security advisory + discussions + ban-risk policy reminder)
+- [x] Открыть `.github/PULL_REQUEST_TEMPLATE.md`. Убедиться что есть чек-лист (Tests, Docs, CHANGELOG/conventional-commits, depguard, coverage gates ≥80%/≥60%) — обновлён, явно отмечена двойная гарантия CHANGELOG (manual или git-cliff) + conventional-commits via lefthook + CI semantic-pr-title
+- [x] Открыть существующий `SECURITY.md` (в корне) и `docs/SECURITY.md` — убедиться что disclosure 90д через GitHub Security Advisories, threat model (защищаем session/api_hash/phone/messages/DB/$EDITOR; НЕ защищаем Telegram-сервера, root-malware, side-channels, secret chats), ban-risk warning с тестовым аккаунтом + rate-limit guard, контакт через GitHub Security Advisories — всё корректно, дополнения не требуются
+- [x] Создать `.github/CODEOWNERS` (default `@pgmac` + явные паттерны для tg/security/obs/config/migrations + release plumbing + security docs + .github)
+- [x] Запустить `go build ./...` и `go test -race ./...` — изменения в .github/ не затрагивают код, но регресс-проверка обязательна (build OK, все пакеты включая test/perf зелёные, golangci-lint 0 issues, все 11 YAML файлов проходят yaml.v3 парсер)
 
 ### Task 7: Beta smoke checklist + draft анонса
 

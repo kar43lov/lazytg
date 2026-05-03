@@ -23,12 +23,14 @@ PR title MUST follow Conventional Commits, e.g.:
 
 ## Checklist
 
-- [ ] PR title follows Conventional Commits
-- [ ] `make test` passes locally
+- [ ] PR title follows Conventional Commits (`feat:` / `fix:` / `perf:` / `security:` / `docs:` / `refactor:` / `test:` / `chore:` / `build:` / `ci:`) — CI enforces this via `amannn/action-semantic-pull-request` and a fallback grep
+- [ ] All commits in this branch follow Conventional Commits (commit-msg `commitlint` hook via `lefthook` covers this locally)
+- [ ] `make test` passes locally (`go test -race ./...`)
 - [ ] `make lint` passes locally (zero warnings)
 - [ ] `depguard` rules still pass (no `internal/core/...` → `gotd/td` or `bubbletea`; no `internal/ui/...` → `gotd/td`; no `internal/storage/...` → `internal/ui` or `internal/tg`)
 - [ ] New behaviour has tests (unit and/or integration)
-- [ ] `CHANGELOG.md` updated under `## [Unreleased]` if user-visible behaviour changed
+- [ ] Coverage gates not regressed (`core` ≥80%, `ui` ≥60% — CI enforces)
+- [ ] `CHANGELOG.md` is **either** updated under `## [Unreleased]` for user-visible behaviour changes **or** the commit follows Conventional Commits so `git-cliff` can pick it up at release time
 - [ ] `docs/ARCHITECTURE.md` updated if package layout or stack choices changed
 - [ ] `docs/SECURITY.md` reviewed if auth, secrets, send, or logging paths changed
 - [ ] No new CGo dependency without a `//go:build <tag>` gate and justification

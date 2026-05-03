@@ -6,9 +6,13 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please check [`docs/plans/lazytg-v0.1.0.md`](https://github.com/pgmac/lazytg/blob/main/docs/plans/lazytg-v0.1.0.md)
-        and the **non-goals** section of [`CLAUDE.md`](https://github.com/pgmac/lazytg/blob/main/CLAUDE.md)
-        before opening a feature request — many ideas have already been considered and explicitly rejected.
+        Please check [`docs/plans/lazytg-v0.1.0.md`](https://github.com/pgmac/lazytg/blob/main/docs/plans/lazytg-v0.1.0.md),
+        the **v0.2 / v0.3+ roadmap** and **non-goals** sections of
+        [`CLAUDE.md`](https://github.com/pgmac/lazytg/blob/main/CLAUDE.md)
+        before opening a feature request. Many ideas (vim-mode polish, command-palette L2,
+        inline media, Starlark hooks, AI layer) are already on a later roadmap; many others
+        (3-pane layout, Ctrl-P bind, `$EDITOR` as default input, voice/video, plugin API in v0.1,
+        web UI) are explicitly rejected.
   - type: textarea
     id: problem
     attributes:
@@ -44,7 +48,9 @@ body:
     attributes:
       label: Confirmations
       options:
-        - label: I have read the v0.1.0 roadmap and the explicit non-goals
+        - label: I have read the v0.1.0 roadmap and the explicit non-goals in CLAUDE.md
+          required: true
+        - label: I checked the v0.2 / v0.3+ roadmap sections in CLAUDE.md and this is not already planned for a later release
           required: true
         - label: I have searched existing issues and discussions for duplicates
           required: true
