@@ -20,6 +20,27 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Pre-release detection. The actual prerelease behavior (skip brew upload,
+      # mark GitHub Release as prerelease) is handled inside .goreleaser.yaml via
+      # `release.prerelease: auto` and `brews[].skip_upload: '{{ if .Prerelease }}true{{ end }}'`.
+      # This step exists for CI log visibility and to expose outputs that follow-up
+      # workflows could consume.
+      - name: Detect prerelease
+        id: prerel
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [[ "$TAG" =~ -(alpha|beta|rc)\. ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+            echo "skip_brew=true" >> $GITHUB_OUTPUT
+            echo "skip_nfpm_publish=true" >> $GITHUB_OUTPUT
+            echo "::notice title=Prerelease detected::Tag $TAG is a prerelease (alpha/beta/rc); brew formula will not be updated."
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+            echo "skip_brew=false" >> $GITHUB_OUTPUT
+            echo "skip_nfpm_publish=false" >> $GITHUB_OUTPUT
+            echo "::notice title=Stable release::Tag $TAG is a stable release; brew + nfpm will publish."
+          fi
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -37,3 +58,10 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # HOMEBREW_TAP_GITHUB_TOKEN may be unset on first release; goreleaser only
+          # evaluates brews[].repository.token at upload time. For prerelease tags
+          # `skip_upload: true` short-circuits the upload entirely, so an empty value
+          # is acceptable. For stable tags this MUST be a PAT with contents:write
+          # on pgmac/homebrew-lazytg (see docs/CONTRIBUTING.md → Release pipeline).
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          LAZYTG_IS_PRERELEASE: ${{ steps.prerel.outputs.prerelease }}

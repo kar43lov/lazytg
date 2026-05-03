@@ -111,6 +111,50 @@ Before requesting review, please confirm:
 - [ ] No CGo dependency introduced without a `//go:build <tag>` gate and a justification in the PR description.
 - [ ] No new feature lives outside the v0.1.0 roadmap unless it has been agreed in an issue first.
 
+## Release pipeline
+
+Releases are produced by GoReleaser via `.github/workflows/release.yml`, which fires on any `v*` tag pushed to the repository. The pipeline distinguishes pre-release tags from stable releases:
+
+| Tag shape                | GitHub Release | Brew formula update | `.deb` / `.rpm` assets | Use it for                                    |
+|--------------------------|----------------|---------------------|------------------------|-----------------------------------------------|
+| `v0.1.0-alpha.N`         | prerelease     | **skipped**         | attached as assets     | Internal smoke; not for outside testers       |
+| `v0.1.0-beta.N`          | prerelease     | **skipped**         | attached as assets     | External beta testers (≥ 3, see `docs/BETA_CHECKLIST.md`) |
+| `v0.1.0-rc.N`            | prerelease     | **skipped**         | attached as assets     | Final candidate before stable                 |
+| `v0.1.0` (no suffix)     | stable         | **published**       | attached as assets     | Public release                                |
+
+Detection is automatic — `release.prerelease: auto` in `.goreleaser.yaml` derives the prerelease flag from the SemVer suffix, and `brews[].skip_upload: '{{ if .Prerelease }}true{{ end }}'` short-circuits the homebrew tap update for any non-stable tag. The workflow's "Detect prerelease" step is informational only; it surfaces a `::notice` line in the CI log so it is obvious from the run summary whether brew is going to be touched.
+
+### Cutting a pre-release tag
+
+Two paths are supported:
+
+1. **`Create prerelease tag` workflow (recommended).** In the GitHub UI go to *Actions → Create prerelease tag → Run workflow*, pick `alpha`, `beta`, or `rc`, optionally override the base version. The workflow computes the next available `v<base>-<kind>.N`, pushes the annotated tag, and `release.yml` runs from there.
+2. **Manual.** From a clean checkout of `main`:
+
+   ```sh
+   git tag -a v0.1.0-beta.2 -m "v0.1.0-beta.2"
+   git push origin v0.1.0-beta.2
+   ```
+
+Either way, only `release.yml` ever publishes to GitHub Releases — local `goreleaser release --snapshot` (used in `.github/workflows/snapshot.yml`) skips publish/sign by design.
+
+### Cutting a stable release
+
+Stable tags (`vMAJOR.MINOR.PATCH` without suffix) are intentionally **manual only** — there is no `Create stable tag` workflow. The maintainer must explicitly opt in:
+
+```sh
+git tag -a v0.1.0 -m "v0.1.0"
+git push origin v0.1.0
+```
+
+Pre-conditions before tagging stable (see `docs/RELEASE_PROCESS.md` once it exists):
+
+- `main` is green on CI (lint + test matrix + search SLA gate).
+- Coverage gates passed: `internal/core` ≥ 80 %, `internal/ui` ≥ 60 %.
+- `CHANGELOG.md` Unreleased section has been promoted to the new version (auto-generated via `git-cliff` from Stage 4 onward).
+- The `HOMEBREW_TAP_GITHUB_TOKEN` repo secret is configured and points at a PAT with `contents:write` on `pgmac/homebrew-lazytg` — without it, the brew step in `release.yml` will fail.
+- (Stage 4) ≥ 3 external testers have completed `docs/BETA_CHECKLIST.md` for the latest `vX.Y.Z-beta.*`.
+
 ## Scope discipline
 
 Stages 1–3 of the v0.1.0 roadmap have shipped (foundation, TUI, search/files/security). Stage 4 (release pipeline + alpha/beta cycle) is in progress. Please keep PRs scoped to current-stage work and to the Stage 2 carry-over wiring (MTProto attach in `runTUI`, `BackfillService.Start`, `--polling` consumer, `reconnectAdapter.Connect`). The full plan is in [`docs/plans/lazytg-v0.1.0.md`](plans/lazytg-v0.1.0.md).

@@ -1,0 +1,95 @@
+name: Create prerelease tag
+
+# Convenience workflow for cutting a `v*-alpha.N` / `v*-beta.N` / `v*-rc.N` tag
+# without computing the next number by hand. Once the tag is pushed, release.yml
+# triggers automatically and produces a GitHub prerelease (brew/nfpm publish are
+# skipped via .goreleaser.yaml templates — see docs/CONTRIBUTING.md).
+#
+# Stable releases (`vMAJOR.MINOR.PATCH` without suffix) are intentionally NOT
+# created here — they remain a manual `git tag -a v0.1.0 -m ...` step so that
+# the maintainer explicitly opts into publishing brew + nfpm.
+
+on:
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: 'Pre-release kind'
+        required: true
+        type: choice
+        options:
+          - alpha
+          - beta
+          - rc
+      base_version:
+        description: 'Base version (e.g. v0.1.0). Leave empty to derive from the latest stable tag.'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  create-tag:
+    name: Compute and push prerelease tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute next prerelease tag
+        id: tag
+        run: |
+          set -euo pipefail
+          KIND="${{ inputs.kind }}"
+          BASE="${{ inputs.base_version }}"
+
+          if [[ -z "$BASE" ]]; then
+            LATEST_STABLE=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | grep -v '-' | sort -V | tail -n1 || true)
+            if [[ -z "$LATEST_STABLE" ]]; then
+              # No stable tag yet — default to v0.1.0 (matches Stage 4 acceptance).
+              BASE="v0.1.0"
+            else
+              MAJOR=$(echo "$LATEST_STABLE" | sed -E 's/^v([0-9]+)\..*/\1/')
+              MINOR=$(echo "$LATEST_STABLE" | sed -E 's/^v[0-9]+\.([0-9]+)\..*/\1/')
+              BASE="v${MAJOR}.$((MINOR + 1)).0"
+            fi
+          fi
+
+          if [[ ! "$BASE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error title=Invalid base version::base_version must match v<major>.<minor>.<patch>, got '$BASE'"
+            exit 1
+          fi
+
+          PATTERN="${BASE}-${KIND}.*"
+          LAST=$(git tag -l "$PATTERN" | sort -V | tail -n1 || true)
+          if [[ -z "$LAST" ]]; then
+            NEXT_N=1
+          else
+            LAST_N=$(echo "$LAST" | sed -E "s/^${BASE}-${KIND}\.([0-9]+)$/\1/")
+            NEXT_N=$((LAST_N + 1))
+          fi
+
+          NEW_TAG="${BASE}-${KIND}.${NEXT_N}"
+          if git rev-parse -q --verify "refs/tags/${NEW_TAG}" >/dev/null; then
+            echo "::error title=Tag already exists::${NEW_TAG} already exists locally; refusing to overwrite"
+            exit 1
+          fi
+
+          echo "tag=${NEW_TAG}" >> $GITHUB_OUTPUT
+          echo "base=${BASE}" >> $GITHUB_OUTPUT
+          echo "::notice title=Computed prerelease tag::${NEW_TAG} (base=${BASE}, kind=${KIND})"
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create and push annotated tag
+        run: |
+          NEW_TAG="${{ steps.tag.outputs.tag }}"
+          git tag -a "$NEW_TAG" -m "$NEW_TAG"
+          git push origin "$NEW_TAG"
+          echo "::notice title=Tag pushed::${NEW_TAG} pushed to origin; release.yml will trigger automatically."

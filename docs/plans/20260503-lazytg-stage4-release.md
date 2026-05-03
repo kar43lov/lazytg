@@ -134,7 +134,7 @@
 
 ### Task 2: Pre-release pipeline (alpha/beta/rc gates)
 
-- [ ] Открыть `.github/workflows/release.yml`. Добавить job-level условную логику по тегу через template:
+- [x] Открыть `.github/workflows/release.yml`. Добавить job-level условную логику по тегу через template:
   - Triggered: `on.push.tags: ['v*']`
   - Job `goreleaser`: всегда запускается
   - Внутри goreleaser-action добавить ENV `GORELEASER_PRERELEASE` который вычисляется из тега (через bash step):
@@ -151,11 +151,11 @@
           echo "prerelease=false" >> $GITHUB_OUTPUT
         fi
     ```
-- [ ] В `.goreleaser.yaml` отделить prerelease behavior:
+- [x] В `.goreleaser.yaml` отделить prerelease behavior:
   - `release.prerelease: auto` (goreleaser сам определяет по тегу — semver pre-release suffix)
   - `brews[].skip_upload: '{{ if .Prerelease }}true{{ end }}'` — формулу не обновляем для alpha/beta/rc
   - Аналогично для `nfpms` если есть upload — для alpha/beta скипаем (но локально артефакты собираются и попадают в GitHub Release как assets)
-- [ ] Создать новый workflow `.github/workflows/prerelease.yml` для удобного запуска вручную через workflow_dispatch:
+- [x] Создать новый workflow `.github/workflows/prerelease.yml` для удобного запуска вручную через workflow_dispatch:
   ```yaml
   on:
     workflow_dispatch:
@@ -167,13 +167,13 @@
           options: [alpha, beta, rc]
   ```
   Job: вычисляет следующий prerelease tag (например, читает существующие теги через `git tag -l 'v*-alpha.*' | sort -V | tail -1` и инкрементит), создаёт annotated tag, пушит → триггерит release.yml
-- [ ] Документировать pre-release flow в `docs/CONTRIBUTING.md`:
+- [x] Документировать pre-release flow в `docs/CONTRIBUTING.md`:
   - alpha → внутреннее тестирование, brew не обновляется
   - beta → external testers (≥3 человека), brew не обновляется, beta-checklist обязателен
   - rc → release candidate, последний сабж до stable, brew не обновляется
   - stable → `vMAJOR.MINOR.PATCH` без суффикса, brew + nfpm publish, anонс в README
-- [ ] Запустить `act` локально или dry-run через `gh workflow view` если есть `gh` (опционально — проверить YAML-валидность через `actionlint`)
-- [ ] Проверить `go build ./...` — workflow-изменения не должны влиять на код, но регресс-проверка обязательна
+- [x] Запустить `act` локально или dry-run через `gh workflow view` если есть `gh` (опционально — проверить YAML-валидность через `actionlint`) — actionlint не установлен, YAML провалидирован через gopkg.in/yaml.v3 (все 4 workflows + .goreleaser.yaml парсятся корректно), `goreleaser check` зелёный
+- [x] Проверить `go build ./...` — workflow-изменения не должны влиять на код, но регресс-проверка обязательна
 
 ### Task 3: Changelog automation — git-cliff + commitlint
 
