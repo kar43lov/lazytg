@@ -114,6 +114,12 @@ type Model struct {
 	StorageMode  string
 	FloodWait    time.Duration
 
+	// DBSizeMB, when > 0, renders an inline "⚠ DB N.N GB" warning chip
+	// next to the storage cell. The chip stays visible until the
+	// monitor publishes a cleared event (DBSizeMB=0). 0 means "no
+	// warning" — the file may still be large, just under the threshold.
+	DBSizeMB int
+
 	// downloads tracks active file downloads keyed by FileID. The map
 	// is copied on every Upsert/Remove so the value-semantics promise
 	// of every other Model setter holds — callers never observe a
@@ -219,7 +225,21 @@ func (m Model) renderRight() string {
 	if storage == "" {
 		storage = events.StorageModeReadWrite
 	}
-	return unread + " | " + cell + " | " + storage
+	out := unread + " | " + cell + " | " + storage
+	if m.DBSizeMB > 0 {
+		out += " | " + dbSizeStyle.Render(formatDBSizeCell(m.DBSizeMB))
+	}
+	return out
+}
+
+// formatDBSizeCell renders the DB-size warning chip. We switch to GB
+// once we cross 1024 MB so the bar reads "⚠ DB 1.4 GB" instead of
+// "⚠ DB 1430 MB" — humans parse the GB form faster.
+func formatDBSizeCell(mb int) string {
+	if mb >= 1024 {
+		return fmt.Sprintf("⚠ DB %.1f GB", float64(mb)/1024)
+	}
+	return fmt.Sprintf("⚠ DB %d MB", mb)
 }
 
 // UpsertDownload inserts or updates the in-progress download row keyed
@@ -478,4 +498,8 @@ var (
 	offlineStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("1")) // ANSI red
 	connectingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")) // ANSI yellow
 	floodwaitStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("3")) // ANSI yellow
+	// dbSizeStyle uses the same yellow as floodwait/connecting so the
+	// "warn" semantic is consistent across the bar — the user reads
+	// yellow as "look at me but nothing is broken yet".
+	dbSizeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 )

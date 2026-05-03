@@ -267,7 +267,17 @@ func (a App) broadcastBusEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.status.ConnState = ev.State
 		return a, nil
 	case events.StorageStateChanged:
-		a.status.StorageMode = ev.Mode
+		// DBSizeMonitor and DegradationDetector both produce this
+		// event, but they touch independent state in the status bar:
+		// the size monitor flips the "⚠ DB N GB" chip via DBSizeMB;
+		// the degradation detector flips StorageMode (rw / read-only).
+		// Routing by Reason keeps a size-warning event from clobbering
+		// a current read-only state and vice versa.
+		if ev.Reason == events.ReasonDBSizeWarning {
+			a.status.DBSizeMB = ev.DBSizeMB
+		} else {
+			a.status.StorageMode = ev.Mode
+		}
 		return a, nil
 	case events.DialogUpdated:
 		updated, cmd := a.chats.Update(ev)

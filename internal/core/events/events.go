@@ -95,13 +95,34 @@ const (
 	StorageModeReadOnly = "read-only"
 )
 
+// Reasons emitted on StorageStateChanged.Reason. The detector uses
+// degradation-shaped strings ("permission denied", "disk i/o error", …)
+// while the dbsize monitor uses ReasonDBSizeWarning so the UI can
+// distinguish "the file is unwriteable" from "the file is just very
+// large" without parsing free-form text.
+const (
+	// ReasonDBSizeWarning marks an event emitted by obs.DBSizeMonitor
+	// when the SQLite file crosses the configured size threshold (1 GB
+	// by default). Mode stays at StorageModeReadWrite — the DB still
+	// works, the warning is purely informational.
+	ReasonDBSizeWarning = "db_size_warning"
+)
+
 // StorageStateChanged is emitted by the degradation detector when the
-// repository's write-access mode changes. Mode is one of the StorageMode
-// constants; Reason is a short human-readable explanation that the status
-// bar shows verbatim (e.g. "permission denied", "disk i/o error").
+// repository's write-access mode changes, and by the obs.DBSizeMonitor
+// when the SQLite file grows past its warning threshold. Mode is one of
+// the StorageMode constants; Reason is a short human-readable explanation
+// that the status bar shows verbatim (e.g. "permission denied", "disk
+// i/o error", "db_size_warning").
+//
+// DBSizeMB is the current size of the SQLite file rounded to whole
+// megabytes; it is 0 for events emitted by paths that do not measure the
+// file (i.e. the degradation detector). Subscribers must treat 0 as "not
+// applicable", not "0 MB".
 type StorageStateChanged struct {
-	Mode   string
-	Reason string
+	Mode     string
+	Reason   string
+	DBSizeMB int
 }
 
 func (StorageStateChanged) eventMarker() {}

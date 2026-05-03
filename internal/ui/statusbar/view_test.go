@@ -239,6 +239,39 @@ func TestStatusbarMultipleDownloadsPickStable(t *testing.T) {
 	}
 }
 
+func TestStatusbarDBSizeWarning(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		mb   int
+		want string
+	}{
+		{"zero hides chip", 0, ""},                     // chip absent
+		{"under 1 GB shown as MB", 600, "⚠ DB 600 MB"}, // no rounding to GB yet
+		{"exactly 1 GB", 1024, "⚠ DB 1.0 GB"},
+		{"1.4 GB", 1500, "⚠ DB 1.5 GB"}, // 1500/1024 = 1.4648 → 1.5
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := New()
+			m.AccountAlias = "@u"
+			m.ChatTitle = "chat"
+			m.DBSizeMB = tc.mb
+			out := m.View(120)
+			if tc.want == "" {
+				if strings.Contains(out, "⚠ DB") {
+					t.Fatalf("expected no DB chip when DBSizeMB=0, got %q", out)
+				}
+				return
+			}
+			if !strings.Contains(out, tc.want) {
+				t.Fatalf("DB chip mismatch: got %q, want substring %q", out, tc.want)
+			}
+		})
+	}
+}
+
 func TestStatusbarDefaultsBlankFields(t *testing.T) {
 	t.Parallel()
 

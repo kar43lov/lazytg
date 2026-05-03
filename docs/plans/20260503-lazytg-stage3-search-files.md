@@ -195,44 +195,16 @@ Pitch продукта «Instant search across your entire Telegram history» с
 
 ### Task 8: DB size monitoring + полный debug-bundle + grep-test
 
-- [ ] Создать `internal/core/obs/dbsize.go` с `DBSizeMonitor{repo storage.Repo; bus *events.Bus; threshold int64; interval time.Duration; log *slog.Logger}`. Конструктор `New(repo, bus, log)` с defaults: threshold=1GB, interval=60s. Метод `Run(ctx)` — каждые `interval` стат БД-файла (через `os.Stat` + path из repo), если размер > threshold — эмитить `StorageStateChanged{Mode: "rw", Reason: "db_size_warning", DBSizeMB: int}` (расширить Reason полями для ясности)
-- [ ] Расширить event `StorageStateChanged` в events/events.go: добавить поле `DBSizeMB int` (опциональное, 0 если N/A)
-- [ ] Добавить метод `repo.DBPath() string` для получения текущего файла БД
-- [ ] Обновить `internal/ui/statusbar/model.go`: при получении `StorageStateChanged{Reason: "db_size_warning", DBSizeMB > 1024}` показать индикатор `⚠ DB 1.4 GB` рядом с storage mode
-- [ ] Создать `docs/SEARCH.md`:
-  - Описание query syntax (операторы from/in/before/after/has, phrases, exclusions)
-  - DB size guidance: «trigram tokenizer даёт overhead 3-5× от текста сообщений. На 100k сообщений ожидайте ~50-200 MB FTS-индекса. На 1M — ~500MB-1.5GB. Default cap: последние 5000 сообщений на чат. Для глубокой истории — `lazytg reindex --all`.»
-  - SLA: p95 <100ms на 100k сообщений (бенчмарком гарантировано в CI)
-  - Limitations: нет stemming для русского (трёхграммный токенизатор работает language-agnostic, но "сообщение" ≠ "сообщения" в exact-match — нужно искать оба или использовать prefix-search)
-- [ ] Расширить `internal/core/obs/bundle.go` (полная реализация — заменить stub из Stage 1):
-  ```go
-  type Bundle struct{ Logger *slog.Logger; Cfg ConfigSource; Version VersionInfo; Repo storage.Repo; LogPath string }
-  func (b *Bundle) Create(ctx, outPath string) (string, error)
-  ```
-  Tar.gz содержимое:
-  - `version.txt` — version + commit + date + Go version + OS/arch
-  - `config.toml` — config с **redaction** (через redact.go обработать значения)
-  - `logs.txt` — последние 1000 строк из `LogPath` (lumberjack rotated logs)
-  - `db_stats.txt` — `db_size_bytes`, `messages_count`, `chats_count`, `accounts_count`, `schema_version`, `fts_index_size_bytes`
-  - `goroutines.txt` — `runtime.Stack(buf, true)` для дебага
-  - **НЕ ВКЛЮЧАЕТ:** session-files (`*.session`, `secrets.age`), api_hash (env), phone, текст сообщений, имена чатов
-- [ ] Реализовать команду `cmd/lazytg/cmd/debug.go` (заменить stub): `debug-bundle [--out <path>]`. Default out = `lazytg-bundle-<timestamp>.tar.gz` в cwd. После создания печатает путь
-- [ ] **Grep-тест безопасности.** Создать `internal/core/obs/bundle_grep_test.go`:
-  1. Setup: создать БД с 5 messages (тексты: "secret api_hash test", "session content", "+79991234567"), config с api_hash="abc123def", session-файл с содержимым "session-bytes-here"
-  2. Создать bundle через `Bundle.Create`
-  3. Распаковать tar.gz в tmp dir
-  4. Для каждого файла в bundle: прочитать содержимое, ассертить что НЕ содержит:
-     - `api_hash="abc123def"` (значение)
-     - `session-bytes-here`
-     - `+79991234567` (тестовый телефон в сообщении)
-     - Текст "secret api_hash test"
-     - Текст "session content"
-  5. **Если найдено что-то из списка → t.Fatalf**
-- [ ] Создать `internal/core/obs/dbsize_test.go`:
-  1. Маленькая БД (<1GB) → события не эмитятся
-  2. Симулировать большую БД (mock os.Stat) → событие `StorageStateChanged{Reason: "db_size_warning"}` эмитится
-  3. Threshold configurable
-- [ ] Запустить `go test -race ./internal/core/obs/... ./cmd/lazytg/cmd/...` — зелёное
+- [x] Создан `internal/core/obs/dbsize.go` с `DBSizeMonitor{repo RepoSizeSource; bus *events.Bus; log *slog.Logger; threshold int64; interval time.Duration; sleep, stat seams}`. Конструктор `NewDBSizeMonitor(repo, bus, log, cfg)` принимает `DBSizeConfig{Threshold, Interval}` со zero-value defaults: threshold=1 GiB (`DefaultDBSizeThreshold`), interval=60 s (`DefaultDBSizeInterval`). `Run(ctx)` — immediate first-tick затем sleep loop. Состояние "выше порога" латчится в локальной `*bool warned`, переход below→above публикует событие, above→below — clearing event. Узкий `RepoSizeSource{DBPath() string}` interface вместо прямой зависимости от storage. Test seams `sleep` и `stat` позволяют тестам не аллокировать гигабайтные файлы.
+- [x] Расширен event `StorageStateChanged` в `internal/core/events/events.go` — добавлено поле `DBSizeMB int` (0 = "не применимо" для путей не измеряющих файл) и константа `ReasonDBSizeWarning = "db_size_warning"` для маршрутизации в UI.
+- [x] Добавлены `Repo.DBPath() string` и helper `filePath(path) string` в `internal/storage/sqlite/repo.go`. DBPath() возвращает on-disk путь либо "" для in-memory / file: URI вариантов. Конструктор `Open` сохраняет путь через `filePath(path)`.
+- [x] `internal/ui/statusbar/model.go` расширен полем `DBSizeMB int` + `formatDBSizeCell(mb)` (показывает MB до 1024, далее GB с одним знаком после запятой) + `dbSizeStyle` (yellow ANSI 3, тот же что floodwait/connecting — "warn" семантика). `renderRight()` дописывает chip к существующей строке `unread | conn | storage`. `internal/ui/app/update.go::broadcastBusEvent` маршрутизирует `StorageStateChanged` по `Reason`: `ReasonDBSizeWarning` обновляет `DBSizeMB`, любой другой — `StorageMode`. Это разводит два producer'a (`obs.DBSizeMonitor` и `coresync.DegradationDetector`) на independent state.
+- [x] Создан `docs/SEARCH.md` — query syntax (`from:@user in:#chat before/after:DATE has:file "phrase" -word`), таблица операторов с поведением, ёмкость БД (10k → ~50 MB / 100k → ~250 MB / 1M → ~2-3 GB), DB size warning >1 GB, SLA p95<100ms (44.2 ms на M4), tokenizer trigram + min-length 3, lazy index 5000/чат, `lazytg reindex` (запланирован к Task 10), ограничения, ссылки на FILES/SECURITY/ARCHITECTURE.md.
+- [x] Расширен `internal/core/obs/bundle.go` (полная реализация — stub удалён, command переписан в Task 8). `Bundle{Logger, Cfg ConfigSource, Version VersionInfo, Store BundleStore, LogPath, LogTailLines}` + `Create(ctx, outPath)`. Tar.gz содержимое: `version.txt` (build + Go + OS/arch), `config.toml` (через `Redact`, fallback "does not exist" placeholder), `logs.txt` (tail последних `LogTailLines` (default 1000) строк через ring-buffer + `Redact` per-line, scanner buffer 1 MiB для пагологически длинных JSON-записей), `db_stats.txt` (db_path, db_size_bytes, schema_version, COUNT(*) для accounts/chats/messages/messages_fts/peers/outgoing/downloaded_files — table list whitelisted а не sqlite_master, чтобы не подмести ненароком user-tagged content), `goroutines.txt` (1 MiB ceiling `runtime.Stack`). НЕ включает session-files, api_hash env, phone, текст сообщений. Tar headers пишут Mode=0o600. `cleanup`-флаг через defer удаляет partial-файл при ошибке (no debris в cwd).
+- [x] Команда `cmd/lazytg/cmd/debug.go` переписана: `debug-bundle [--out path]`. Default out = `lazytg-bundle-<UTC-timestamp>.tar.gz` в cwd. Открывает SQLite repo, конструирует Bundle с logger из cmd context, configPathSource (filepath.Join(paths.Config, "lazytg.toml")), VersionInfo (build-time vars), LogPath (filepath.Join(paths.State, "lazytg.log") — XDG state dir). Печатает абсолютный путь после успеха.
+- [x] **Grep-тест безопасности** `internal/core/obs/bundle_grep_test.go` (внешний package `obs_test` чтобы импортировать sqlite). 4 теста: `TestBundle_GrepNoSecrets` (5 forbidden substrings: api_hash hex, session base64, phone, два message-text — `t.Fatalf` с windowed snippet если найдено + проверка mode=0600 + проверка наличия всех 5 entries); `TestBundle_MissingPaths_DegradesGracefully` (нет config + нет log → "does not exist" placeholder в bundle); `TestBundle_LogTailLimitsLines` (5000 lines в log → bundle содержит ≤ 50 lines включая последнюю — guards ring-buffer correctness); `TestBundle_RemovesPartialOnFailure` (выходной dir не существует → ошибка + нет partial-файла).
+- [x] `internal/core/obs/dbsize_test.go` — 8 тестов: BelowThresholdEmitsNothing, AboveThresholdEmitsWarning (Mode=rw подтверждает что warning informational а не блокирующий), OnlyEmitsOnTransition (idempotent на трёх ticks выше порога), TransitionBackEmitsClearedEvent (DBSizeMB=0 sentinel + Reason остаётся ReasonDBSizeWarning так чтобы маршрутизация в UI оставалась корректной), ThresholdConfigurable (50 MiB порог), MissingFileIsTolerated (`os.ErrNotExist` не флаппит state), NilRepoExitsCleanly (Run возвращает ctx.Err), RunIntegratesWithRealLoop (interval=5ms + threshold=1 byte → реальный goroutine emit warning через Subscribe), `TestBytesToMB_RoundsUp` (округление вверх для не-нулевых значений). Statusbar test `TestStatusbarDBSizeWarning` — 4 кейса от 0/600 MB/1024 MB/1500 MB.
+- [x] Финальная валидация: `go build ./...`, `go test -race ./...` (24 пакета зелёные), `golangci-lint run` (0 issues после фиксов: removed unused io import, переименован `cap` константа в `stackBufCap` чтобы не shadow builtin, добавлены `//nolint:gosec` на 3 file ops с operator-controlled paths). Test `TestDebugBundle_StubPrintsMarker` обновлён на `TestDebugBundle_WritesBundleToOutPath` — проверяет реальную запись tar.gz по `--out`.
 
 ### Task 9: Security minimal — permissions + send rate-limit guard
 

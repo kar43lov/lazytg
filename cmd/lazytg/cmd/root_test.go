@@ -55,7 +55,10 @@ func TestRoot_PersistentFlagsRegistered(t *testing.T) {
 func TestRoot_ParsesAccountFlag(t *testing.T) {
 	setupCmdTest(t)
 	root := newRootCmd()
-	root.SetArgs([]string{"--account", "+79991112233", "debug-bundle"})
+	// --out routes the bundle into a tmp dir so this flag-parsing
+	// test does not leave a tarball in the package's cwd.
+	out := t.TempDir() + "/bundle.tar.gz"
+	root.SetArgs([]string{"--account", "+79991112233", "debug-bundle", "--out", out})
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})
 
@@ -70,7 +73,10 @@ func TestRoot_ParsesAccountFlag(t *testing.T) {
 func TestRoot_RejectsInvalidLogLevel(t *testing.T) {
 	setupCmdTest(t)
 	root := newRootCmd()
-	root.SetArgs([]string{"--log-level", "loud", "debug-bundle"})
+	// --out keeps the test hermetic even though the command should
+	// fail before the bundle is written.
+	out := t.TempDir() + "/bundle.tar.gz"
+	root.SetArgs([]string{"--log-level", "loud", "debug-bundle", "--out", out})
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})
 
@@ -83,19 +89,25 @@ func TestRoot_RejectsInvalidLogLevel(t *testing.T) {
 	}
 }
 
-func TestDebugBundle_StubPrintsMarker(t *testing.T) {
+func TestDebugBundle_WritesBundleToOutPath(t *testing.T) {
 	setupCmdTest(t)
+	dir := t.TempDir()
+	outPath := dir + "/bundle.tar.gz"
+
 	root := newRootCmd()
 	out := &bytes.Buffer{}
-	root.SetArgs([]string{"debug-bundle"})
+	root.SetArgs([]string{"debug-bundle", "--out", outPath})
 	root.SetOut(out)
 	root.SetErr(&bytes.Buffer{})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(out.String(), "debug-bundle stub") {
-		t.Fatalf("expected stub marker in stdout, got %q", out.String())
+	if !strings.Contains(out.String(), outPath) {
+		t.Fatalf("expected bundle path in stdout, got %q", out.String())
+	}
+	if _, err := os.Stat(outPath); err != nil {
+		t.Fatalf("bundle file not written: %v", err)
 	}
 }
 

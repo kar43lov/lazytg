@@ -32,6 +32,12 @@ var ErrReadOnly = errors.New("repo: read-only mode")
 type Repo struct {
 	db       *sql.DB
 	readOnly atomic.Bool
+
+	// dbPath is the on-disk path passed to Open — used by DBSizeMonitor
+	// (which os.Stats the file directly) and by debug-bundle (which
+	// summarises file size in db_stats.txt). Empty for in-memory or
+	// file:-URI databases that do not map to a single file.
+	dbPath string
 }
 
 // Open opens (or creates) the SQLite database at path, applies the WAL/foreign
@@ -68,8 +74,27 @@ func Open(ctx context.Context, path string) (*Repo, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)
 	}
-	return &Repo{db: db}, nil
+	return &Repo{db: db, dbPath: filePath(path)}, nil
 }
+
+// filePath narrows the path argument to the single on-disk file backing
+// the repo. Empty when the input does not map to a regular file
+// (":memory:" databases, file: URIs that may carry mode=ro / cache=
+// query strings). Callers that os.Stat the result must treat the empty
+// string as "not applicable".
+func filePath(path string) string {
+	if path == ":memory:" || strings.HasPrefix(path, "file:") {
+		return ""
+	}
+	return path
+}
+
+// DBPath returns the on-disk path of the SQLite file backing this repo,
+// or an empty string when the repo was opened from an in-memory or file:
+// URI source. Used by the DB-size monitor (which os.Stats the file in a
+// loop) and by the debug-bundle producer (which records file size in
+// db_stats.txt).
+func (r *Repo) DBPath() string { return r.dbPath }
 
 // buildDSN encodes path-level pragmas so every pooled connection inherits
 // them. modernc.org/sqlite parses the _pragma query parameter and runs each
