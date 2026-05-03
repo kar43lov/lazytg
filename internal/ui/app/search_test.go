@@ -8,12 +8,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
-	"github.com/pgmac/lazytg/internal/core/search"
-	"github.com/pgmac/lazytg/internal/ui/keymap"
-	"github.com/pgmac/lazytg/internal/ui/panes/chats"
-	uisearch "github.com/pgmac/lazytg/internal/ui/panes/search"
-	"github.com/pgmac/lazytg/internal/ui/panes/thread"
+	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/search"
+	"github.com/kar43lov/lazytg/internal/ui/keymap"
+	"github.com/kar43lov/lazytg/internal/ui/panes/chats"
+	uisearch "github.com/kar43lov/lazytg/internal/ui/panes/search"
+	"github.com/kar43lov/lazytg/internal/ui/panes/thread"
 )
 
 // TestSearchKeyOpensOverlayWhenThreadFocused verifies the "/" chord

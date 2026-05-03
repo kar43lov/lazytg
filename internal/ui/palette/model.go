@@ -9,7 +9,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/domain"
 )
 
 // loadTimeout caps how long the synchronous Open() candidate-list

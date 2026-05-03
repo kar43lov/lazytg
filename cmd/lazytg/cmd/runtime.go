@@ -13,8 +13,8 @@ import (
 	"github.com/gotd/td/tg"
 	"golang.org/x/term"
 
-	"github.com/pgmac/lazytg/internal/core/config"
-	tgclient "github.com/pgmac/lazytg/internal/tg"
+	"github.com/kar43lov/lazytg/internal/core/config"
+	tgclient "github.com/kar43lov/lazytg/internal/tg"
 )
 
 // dbFileName is the filename of the local SQLite database inside DataDir().

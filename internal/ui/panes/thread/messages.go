@@ -1,6 +1,6 @@
 package thread
 
-import "github.com/pgmac/lazytg/internal/core/domain"
+import "github.com/kar43lov/lazytg/internal/core/domain"
 
 // messagesLoadedMsg is the result of an OpenChat fetch. messages are in
 // ascending date order (oldest first) ready to be appended to the

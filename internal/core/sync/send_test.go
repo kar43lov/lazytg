@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/events"
 )
 
 // inMemoryOutgoing is a thread-safe in-memory OutgoingStore. It records

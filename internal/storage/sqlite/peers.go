@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/domain"
 )
 
 // ErrPeerNotFound is returned by PeerRepo.Get when no row matches the

@@ -6,7 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/pgmac/lazytg/internal/core/search"
+	"github.com/kar43lov/lazytg/internal/core/search"
 )
 
 // snippetBoldOpen / snippetBoldClose are the markers FTS5 wraps every

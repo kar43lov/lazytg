@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pgmac/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/events"
 )
 
 // TestApplyDispatchedInsertsPendingRow verifies that the optimistic-UI

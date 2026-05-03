@@ -8,10 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/pgmac/lazytg/internal/app"
-	"github.com/pgmac/lazytg/internal/core/events"
-	"github.com/pgmac/lazytg/internal/core/search"
-	"github.com/pgmac/lazytg/internal/storage/sqlite"
+	"github.com/kar43lov/lazytg/internal/app"
+	"github.com/kar43lov/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/search"
+	"github.com/kar43lov/lazytg/internal/storage/sqlite"
 )
 
 // reindexProgressTimeout caps how long a single reindex pass can run.

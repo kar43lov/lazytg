@@ -8,10 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/pgmac/lazytg/internal/app"
-	"github.com/pgmac/lazytg/internal/core/config"
-	"github.com/pgmac/lazytg/internal/core/obs"
-	"github.com/pgmac/lazytg/internal/storage/sqlite"
+	"github.com/kar43lov/lazytg/internal/app"
+	"github.com/kar43lov/lazytg/internal/core/config"
+	"github.com/kar43lov/lazytg/internal/core/obs"
+	"github.com/kar43lov/lazytg/internal/storage/sqlite"
 )
 
 // configFileName is the canonical lazytg TOML location inside

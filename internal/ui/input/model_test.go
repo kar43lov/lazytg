@@ -11,9 +11,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
-	"github.com/pgmac/lazytg/internal/core/events"
-	"github.com/pgmac/lazytg/internal/ui/keymap"
+	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/ui/keymap"
 )
 
 // fakeSender records SendText calls and lets tests pre-arm the result.

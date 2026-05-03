@@ -61,14 +61,14 @@ publishes a detached signature `checksums.txt.sig` and the OIDC certificate
 `checksums.txt.pem` next to it.
 
 ```sh
-curl -fsSLO "https://github.com/pgmac/lazytg/releases/download/v0.1.0/checksums.txt"
-curl -fsSLO "https://github.com/pgmac/lazytg/releases/download/v0.1.0/checksums.txt.sig"
-curl -fsSLO "https://github.com/pgmac/lazytg/releases/download/v0.1.0/checksums.txt.pem"
+curl -fsSLO "https://github.com/kar43lov/lazytg/releases/download/v0.1.0/checksums.txt"
+curl -fsSLO "https://github.com/kar43lov/lazytg/releases/download/v0.1.0/checksums.txt.sig"
+curl -fsSLO "https://github.com/kar43lov/lazytg/releases/download/v0.1.0/checksums.txt.pem"
 
 cosign verify-blob \
   --certificate "checksums.txt.pem" \
   --signature   "checksums.txt.sig" \
-  --certificate-identity-regexp "https://github.com/pgmac/lazytg/.github/workflows/release.yml@refs/tags/v.*" \
+  --certificate-identity-regexp "https://github.com/kar43lov/lazytg/.github/workflows/release.yml@refs/tags/v.*" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   checksums.txt
 # expected: Verified OK
@@ -89,14 +89,14 @@ checksum integrity and provenance.
 ARCH=amd64
 OS=linux
 VERSION=0.1.0
-BASE="https://github.com/pgmac/lazytg/releases/download/v${VERSION}"
+BASE="https://github.com/kar43lov/lazytg/releases/download/v${VERSION}"
 
 curl -fsSLO "${BASE}/lazytg_${VERSION}_${OS}_${ARCH}.tar.gz"
 curl -fsSLO "${BASE}/lazytg_${VERSION}_${OS}_${ARCH}.tar.gz.sigstore.json"
 
 cosign verify-blob \
   --bundle "lazytg_${VERSION}_${OS}_${ARCH}.tar.gz.sigstore.json" \
-  --certificate-identity-regexp "https://github.com/pgmac/lazytg/.github/workflows/release.yml@refs/tags/v.*" \
+  --certificate-identity-regexp "https://github.com/kar43lov/lazytg/.github/workflows/release.yml@refs/tags/v.*" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   "lazytg_${VERSION}_${OS}_${ARCH}.tar.gz"
 # expected: Verified OK
@@ -110,7 +110,7 @@ A successful verification states the following, end-to-end:
 - The signing key was bound (via the Sigstore Fulcio CA) to a
   short-lived GitHub Actions OIDC identity at issuance time.
 - That identity was specifically the workflow `release.yml` running in
-  this repository (`pgmac/lazytg`) under a `v*` tag.
+  this repository (`kar43lov/lazytg`) under a `v*` tag.
 
 What it does **not** prove:
 
@@ -147,7 +147,7 @@ gating), open an issue describing the workflow you want to enable.
 | `cosign` says…                                      | What it means                                                                          | What to do                                                                                                       |
 |-----------------------------------------------------|----------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------|
 | `Error: no matching signatures`                     | The signature does not match this artifact's hash                                       | The archive was modified after signing. Re-download from GitHub Releases and try again; if it still fails, file a security advisory. |
-| `Error: certificate identity does not match`         | The workflow that signed this run is not `pgmac/lazytg/.github/workflows/release.yml`  | Either the artifact came from a fork, or the regex above is stale. Confirm the URL points at the canonical repo.   |
+| `Error: certificate identity does not match`         | The workflow that signed this run is not `kar43lov/lazytg/.github/workflows/release.yml`  | Either the artifact came from a fork, or the regex above is stale. Confirm the URL points at the canonical repo.   |
 | `Error: ... transparency log entry not found`        | The signature's Rekor entry has aged out (Sigstore-side outage)                         | Try again later; this rarely happens. Validate via Step 1 (checksum + checksum-signature) in the meantime.        |
 | `Verified OK` but archive contents look wrong       | Archive integrity is good but you grabbed the wrong platform/arch                       | Re-check the filename — should match `lazytg_${VERSION}_${OS}_${ARCH}.tar.gz` for your platform.                  |
 

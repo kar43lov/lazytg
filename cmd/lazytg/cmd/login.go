@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
-	"github.com/pgmac/lazytg/internal/storage/sqlite"
-	tgclient "github.com/pgmac/lazytg/internal/tg"
+	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/storage/sqlite"
+	tgclient "github.com/kar43lov/lazytg/internal/tg"
 )
 
 func newLoginCmd() *cobra.Command {

@@ -9,7 +9,7 @@
 // per-pane handlers) lives in the app package — see app/update.go.
 package search
 
-import "github.com/pgmac/lazytg/internal/core/search"
+import "github.com/kar43lov/lazytg/internal/core/search"
 
 // OpenedMsg is emitted by the app when the user activates the Search
 // keymap binding. The overlay reacts by focusing the textinput and

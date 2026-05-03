@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/pgmac/lazytg/internal/core/config"
-	"github.com/pgmac/lazytg/internal/core/obs"
+	"github.com/kar43lov/lazytg/internal/core/config"
+	"github.com/kar43lov/lazytg/internal/core/obs"
 )
 
 // loggerKey is the context key used to attach the per-invocation slog.Logger.

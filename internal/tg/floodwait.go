@@ -8,7 +8,7 @@ import (
 
 	"github.com/gotd/td/tgerr"
 
-	coresync "github.com/pgmac/lazytg/internal/core/sync"
+	coresync "github.com/kar43lov/lazytg/internal/core/sync"
 )
 
 // DefaultFloodWaitMaxRetries caps how many FLOOD_WAIT cycles a single RPC

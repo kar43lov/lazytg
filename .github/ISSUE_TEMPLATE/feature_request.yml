@@ -6,9 +6,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please check [`docs/plans/lazytg-v0.1.0.md`](https://github.com/pgmac/lazytg/blob/main/docs/plans/lazytg-v0.1.0.md),
+        Please check [`docs/plans/lazytg-v0.1.0.md`](https://github.com/kar43lov/lazytg/blob/main/docs/plans/lazytg-v0.1.0.md),
         the **v0.2 / v0.3+ roadmap** and **non-goals** sections of
-        [`CLAUDE.md`](https://github.com/pgmac/lazytg/blob/main/CLAUDE.md)
+        [`CLAUDE.md`](https://github.com/kar43lov/lazytg/blob/main/CLAUDE.md)
         before opening a feature request. Many ideas (vim-mode polish, command-palette L2,
         inline media, Starlark hooks, AI layer) are already on a later roadmap; many others
         (3-pane layout, Ctrl-P bind, `$EDITOR` as default input, voice/video, plugin API in v0.1,

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
-	"github.com/pgmac/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/events"
 )
 
 // latencyStore records the wall-clock duration between event publish and

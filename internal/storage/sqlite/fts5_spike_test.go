@@ -10,7 +10,7 @@ import (
 
 	// Drag in the storage package so that the SQLite driver registration
 	// runs (driver_modernc.go / driver_sqlcipher.go).
-	_ "github.com/pgmac/lazytg/internal/storage/sqlite"
+	_ "github.com/kar43lov/lazytg/internal/storage/sqlite"
 )
 
 // TestFTS5TrigramSpike is a RISK-BLOCKER: it verifies that the modernc.org/sqlite

@@ -21,7 +21,7 @@
 - 📥📤 **Files.** `Ctrl+D` — download с прогрессом. `Ctrl+U` — upload с file picker. Permissions автоматически `0600`.
 - 🛡️ **Ban-risk-aware.** Send rate-limit guard 10 msg/sec (снижает поведенческий след). `lazytg debug-bundle` без секретов (доказано grep-тестом). Permission check 0600/0700 fail-fast при старте.
 - ✅ **Cosign-verified binaries.** Все артефакты подписаны через keyless OIDC из GitHub Actions. Sigstore bundles рядом с tar.gz. `cosign verify-blob` команда в [VERIFY.md](VERIFY.md).
-- 📦 **Distribution:** Homebrew tap (`pgmac/homebrew-lazytg`), `.deb`, `.rpm`, raw tar.gz для linux+darwin × amd64+arm64.
+- 📦 **Distribution:** Homebrew tap (`kar43lov/homebrew-lazytg`), `.deb`, `.rpm`, raw tar.gz для linux+darwin × amd64+arm64.
 - 🪶 **Memory-budgeted.** idle <50MB, active <150MB (CI gate в `test/perf/memory_test.go`). Без surprise-leaks в долгих ssh-сессиях.
 
 ---
@@ -38,7 +38,7 @@
 
 ## Links
 
-- **GitHub repo:** https://github.com/pgmac/lazytg
+- **GitHub repo:** https://github.com/kar43lov/lazytg
 - **Demo:** <demo-link> (asciinema-cast или gif — генерируется по [DEMO.md](DEMO.md))
 - **Install:** [docs/INSTALL.md](INSTALL.md)
 - **Verify signatures:** [docs/VERIFY.md](VERIFY.md)
@@ -64,7 +64,7 @@
 >
 > Roadmap is honest: v0.1.0 is read+reply+files+search. Vim-mode, inline media, AI-layer — explicitly v0.2+ to avoid feature creep.
 >
-> https://github.com/pgmac/lazytg
+> https://github.com/kar43lov/lazytg
 
 ### r/commandline
 
@@ -86,7 +86,7 @@
 >
 > ⚠️ Telegram puts unofficial clients under observation. Use a test account first.
 >
-> https://github.com/pgmac/lazytg
+> https://github.com/kar43lov/lazytg
 
 ### lobste.rs
 
@@ -104,7 +104,7 @@
 >
 > Coverage: core 81.3%, ui 79.2%, depguard CI gate, search SLA gated in CI (p95 <100ms benchmark fails build).
 >
-> https://github.com/pgmac/lazytg
+> https://github.com/kar43lov/lazytg
 
 ### r/golang
 
@@ -121,4 +121,4 @@
 >
 > Coverage core 81.3%, ui 79.2%. lefthook for pre-commit (gofmt, go vet, go test -short). git-cliff + commitlint for changelog.
 >
-> https://github.com/pgmac/lazytg
+> https://github.com/kar43lov/lazytg

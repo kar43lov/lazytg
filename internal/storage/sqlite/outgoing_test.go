@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
-	"github.com/pgmac/lazytg/internal/core/events"
-	"github.com/pgmac/lazytg/internal/storage/sqlite"
+	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/storage/sqlite"
 )
 
 func TestOutgoing_SaveGet_RoundTrip(t *testing.T) {

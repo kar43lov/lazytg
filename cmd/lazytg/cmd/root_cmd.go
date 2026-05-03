@@ -3,7 +3,7 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/pgmac/lazytg/internal/core/obs"
+	"github.com/kar43lov/lazytg/internal/core/obs"
 )
 
 // newRootCmd builds the lazytg root command with persistent flags. A factory

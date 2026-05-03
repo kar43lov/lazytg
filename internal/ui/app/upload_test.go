@@ -8,10 +8,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/pgmac/lazytg/internal/core/events"
-	"github.com/pgmac/lazytg/internal/ui/keymap"
-	"github.com/pgmac/lazytg/internal/ui/panes/attach"
-	"github.com/pgmac/lazytg/internal/ui/panes/thread"
+	"github.com/kar43lov/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/ui/keymap"
+	"github.com/kar43lov/lazytg/internal/ui/panes/attach"
+	"github.com/kar43lov/lazytg/internal/ui/panes/thread"
 )
 
 // fakeUploader records every SendFile call so tests can assert on the

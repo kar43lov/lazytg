@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/storage/sqlite"
+	"github.com/kar43lov/lazytg/internal/storage/sqlite"
 )
 
 // freshDB opens a brand-new SQLite file but does not run migrations. Used by

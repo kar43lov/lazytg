@@ -7,14 +7,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 
-	"github.com/pgmac/lazytg/internal/app"
-	"github.com/pgmac/lazytg/internal/core/events"
-	uiapp "github.com/pgmac/lazytg/internal/ui/app"
-	"github.com/pgmac/lazytg/internal/ui/input"
-	"github.com/pgmac/lazytg/internal/ui/palette"
-	"github.com/pgmac/lazytg/internal/ui/panes/chats"
-	uisearch "github.com/pgmac/lazytg/internal/ui/panes/search"
-	"github.com/pgmac/lazytg/internal/ui/panes/thread"
+	"github.com/kar43lov/lazytg/internal/app"
+	"github.com/kar43lov/lazytg/internal/core/events"
+	uiapp "github.com/kar43lov/lazytg/internal/ui/app"
+	"github.com/kar43lov/lazytg/internal/ui/input"
+	"github.com/kar43lov/lazytg/internal/ui/palette"
+	"github.com/kar43lov/lazytg/internal/ui/panes/chats"
+	uisearch "github.com/kar43lov/lazytg/internal/ui/panes/search"
+	"github.com/kar43lov/lazytg/internal/ui/panes/thread"
 )
 
 // newTuiCmd builds the default "no subcommand" entry point. Running

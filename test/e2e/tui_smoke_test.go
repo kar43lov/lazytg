@@ -18,13 +18,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
-	"github.com/pgmac/lazytg/internal/core/events"
-	uiapp "github.com/pgmac/lazytg/internal/ui/app"
-	"github.com/pgmac/lazytg/internal/ui/input"
-	"github.com/pgmac/lazytg/internal/ui/keymap"
-	"github.com/pgmac/lazytg/internal/ui/panes/chats"
-	"github.com/pgmac/lazytg/internal/ui/panes/thread"
+	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/events"
+	uiapp "github.com/kar43lov/lazytg/internal/ui/app"
+	"github.com/kar43lov/lazytg/internal/ui/input"
+	"github.com/kar43lov/lazytg/internal/ui/keymap"
+	"github.com/kar43lov/lazytg/internal/ui/panes/chats"
+	"github.com/kar43lov/lazytg/internal/ui/panes/thread"
 )
 
 // fakeChatsRepo satisfies chats.Repository with a fixed dialog list.

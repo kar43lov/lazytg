@@ -6,7 +6,7 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/pgmac/lazytg/internal/ui/keymap"
+	"github.com/kar43lov/lazytg/internal/ui/keymap"
 )
 
 // keyChord fakes a non-printable / modifier-bearing key event matching

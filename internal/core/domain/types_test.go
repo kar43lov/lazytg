@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/domain"
 )
 
 func TestNormalizePhone(t *testing.T) {

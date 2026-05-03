@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/search"
+	"github.com/kar43lov/lazytg/internal/core/search"
 )
 
 // TestParse covers the documented grammar in a single table-driven test so

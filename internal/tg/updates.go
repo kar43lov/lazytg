@@ -11,7 +11,7 @@ import (
 	"github.com/gotd/td/telegram/updates"
 	"github.com/gotd/td/tg"
 
-	"github.com/pgmac/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/events"
 )
 
 // UpdatesDispatcher fans MTProto updates out to the in-process event bus.

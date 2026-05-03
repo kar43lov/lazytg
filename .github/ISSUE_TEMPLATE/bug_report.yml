@@ -10,7 +10,7 @@ body:
 
         **Do not paste session strings, `api_hash`, or message content.** Run `lazytg debug-bundle` and attach the redacted output instead — it bundles version + config (scrubbed) + logs (scrubbed) + DB stats + goroutines into a single tar.gz under your CWD. The CI grep-test guarantees no session blob / api_hash / phone / message-text fixture appears in the bundle.
 
-        **Suspect a security issue?** Do **not** file a public report. Use [GitHub Security Advisories](https://github.com/pgmac/lazytg/security/advisories/new). See [`docs/SECURITY.md`](https://github.com/pgmac/lazytg/blob/main/docs/SECURITY.md) for the disclosure policy.
+        **Suspect a security issue?** Do **not** file a public report. Use [GitHub Security Advisories](https://github.com/kar43lov/lazytg/security/advisories/new). See [`docs/SECURITY.md`](https://github.com/kar43lov/lazytg/blob/main/docs/SECURITY.md) for the disclosure policy.
   - type: input
     id: version
     attributes:

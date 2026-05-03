@@ -1,6 +1,6 @@
 package input
 
-import "github.com/pgmac/lazytg/internal/core/domain"
+import "github.com/kar43lov/lazytg/internal/core/domain"
 
 // SetChatMsg is delivered by the app when the user opens a chat. It binds
 // the input model to a specific chat id so subsequent Send calls know

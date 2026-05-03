@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/domain"
 )
 
 // previewMaxRunes is the upper bound on Description() output. 60 runes

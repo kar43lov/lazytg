@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
-	"github.com/pgmac/lazytg/internal/core/search"
+	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/search"
 )
 
 // TestService_JumpContext_CentredWindow verifies the ±N window is

@@ -6,7 +6,7 @@
 
 После Stage 4 должно работать:
 - `git tag v0.1.0-alpha.1 && git push --tags` → GitHub Release с 4+ подписанными бинарями (linux/darwin × amd64/arm64), checksums, sigstore-bundles, .deb, .rpm, brew formula auto-обновлена в tap-репо.
-- `brew install pgmac/lazytg/lazytg` ставит lazytg на macOS.
+- `brew install kar43lov/lazytg/lazytg` ставит lazytg на macOS.
 - `cosign verify-blob --bundle <bundle>.json --certificate-identity ... <binary>` подтверждает подпись.
 - Conventional commits enforced через commitlint в pre-commit hook (никаких "fix stuff" коммитов в main).
 - CHANGELOG.md auto-генерируется через git-cliff с категориями feat/fix/perf/security/breaking.
@@ -16,7 +16,7 @@
 
 **Acceptance criteria v0.1.0 (из главного плана):**
 - GitHub Release с подписанными бинарями (4 артефакта: linux-{amd64,arm64}, darwin-{amd64,arm64} + checksums + sigstore bundles).
-- `brew install pgmac/lazytg/lazytg` работает.
+- `brew install kar43lov/lazytg/lazytg` работает.
 - `.deb` и `.rpm` доступны.
 - ≥3 тестера заполнили формализованный smoke-чеклист.
 - CI зелёный, e2e smoke в CI проходит.
@@ -86,7 +86,7 @@
     - id: default
       package_name: lazytg
       vendor: lazytg contributors
-      homepage: https://github.com/pgmac/lazytg
+      homepage: https://github.com/kar43lov/lazytg
       maintainer: pgmac <noreply@github.com>
       description: |
         Local-first Telegram TUI client with FTS5 search.
@@ -112,7 +112,7 @@
         name: homebrew-lazytg
         token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
       directory: Formula
-      homepage: https://github.com/pgmac/lazytg
+      homepage: https://github.com/kar43lov/lazytg
       description: Local-first Telegram TUI client with FTS5 search
       license: MIT
       install: |
@@ -122,13 +122,13 @@
       caveats: |
         Telegram automatically puts unofficial clients under observation.
         Use lazytg with a test account first. See:
-        https://github.com/pgmac/lazytg/blob/main/docs/SECURITY.md
+        https://github.com/kar43lov/lazytg/blob/main/docs/SECURITY.md
 
         Set LAZYTG_API_ID and LAZYTG_API_HASH env vars before first run.
         Get them at https://my.telegram.org/apps
   ```
 - [x] Расширить секцию `signs` чтобы подписывать **сами бинарники**, не только checksums. Использовать `signs.artifacts: archive` для подписи tar.gz архивов через cosign sign-blob (sigstore bundle per-archive). Сохранить старую подпись checksums как backup
-- [x] Документировать в README.md секцию «Setup before first release» что нужно: (1) создать репо `pgmac/homebrew-lazytg` вручную с пустым `Formula/` каталогом; (2) сгенерировать PAT с `contents:write` на этот репо и добавить в org/repo secrets как `HOMEBREW_TAP_GITHUB_TOKEN`; (3) первый push тега `v0.1.0` (не alpha/beta) запушит формулу автоматически
+- [x] Документировать в README.md секцию «Setup before first release» что нужно: (1) создать репо `kar43lov/homebrew-lazytg` вручную с пустым `Formula/` каталогом; (2) сгенерировать PAT с `contents:write` на этот репо и добавить в org/repo secrets как `HOMEBREW_TAP_GITHUB_TOKEN`; (3) первый push тега `v0.1.0` (не alpha/beta) запушит формулу автоматически
 - [x] Запустить локально `goreleaser check` (валидация конфига без сборки) и `goreleaser release --snapshot --clean --skip=publish --skip=sign --skip=brew --skip=announce` (быстрый snapshot без сети) — артефакты в `dist/` должны включать pure-Go архивы для linux/darwin × amd64/arm64. **Sqlcipher вариант скипнуть в snapshot если CGo тулчейн недоступен** (документировать)
 - [x] Если snapshot падает — диагностировать и зафиксировать (наиболее вероятно — отсутствие cgo для sqlcipher на ARM linux; если так — убрать `linux/arm64` из sqlcipher build entry). Запустить `go build ./...` и `go test -race ./...` после изменений `.goreleaser.yaml` (любые ldflags могли поломать version pkg)
 
@@ -277,11 +277,11 @@
 ### Task 5: Финальная пользовательская документация
 
 - [x] Создать `docs/INSTALL.md`. Секции:
-  - **Recommended (macOS):** `brew install pgmac/lazytg/lazytg` (после публикации tap)
-  - **Linux .deb:** `wget https://github.com/pgmac/lazytg/releases/latest/download/lazytg_<version>_linux_amd64.deb && sudo dpkg -i lazytg_*.deb`
+  - **Recommended (macOS):** `brew install kar43lov/lazytg/lazytg` (после публикации tap)
+  - **Linux .deb:** `wget https://github.com/kar43lov/lazytg/releases/latest/download/lazytg_<version>_linux_amd64.deb && sudo dpkg -i lazytg_*.deb`
   - **Linux .rpm:** `sudo dnf install https://github.com/.../lazytg_<version>_linux_amd64.rpm`
   - **Manual binary:** скачать tar.gz из GitHub Release, проверить через `cosign verify-blob` (ссылка на VERIFY.md), распаковать, `sudo install lazytg /usr/local/bin/`
-  - **From source:** `go install github.com/pgmac/lazytg/cmd/lazytg@v0.1.0` (требует Go 1.22+)
+  - **From source:** `go install github.com/kar43lov/lazytg/cmd/lazytg@v0.1.0` (требует Go 1.22+)
   - **SQLCipher build (encrypted DB):** только manual download `lazytg-sqlcipher_*` или `go install -tags sqlcipher`. Документировать что нужен `libsqlcipher` в системе
   - **Setup:** получить API_ID/API_HASH в https://my.telegram.org/apps, экспортировать `LAZYTG_API_ID`, `LAZYTG_API_HASH`, запустить `lazytg login --account +<phone>`
 - [x] Создать `docs/CONFIGURATION.md`. Секции:
@@ -304,7 +304,7 @@
     ```sh
     cosign verify-blob \
       --bundle lazytg_<version>_<os>_<arch>.tar.gz.sigstore.json \
-      --certificate-identity-regexp "https://github.com/pgmac/lazytg/.github/workflows/release.yml@refs/tags/v.*" \
+      --certificate-identity-regexp "https://github.com/kar43lov/lazytg/.github/workflows/release.yml@refs/tags/v.*" \
       --certificate-oidc-issuer https://token.actions.githubusercontent.com \
       lazytg_<version>_<os>_<arch>.tar.gz
     ```
@@ -393,12 +393,12 @@
   - `.github/`: ISSUE_TEMPLATE/{bug_report,feature_request,config}.yml, PULL_REQUEST_TEMPLATE.md, CODEOWNERS, dependabot.yml, workflows/{ci,release,snapshot,prerelease}.yml — все на месте
 - [x] **Verification 5 — links integrity:**
   - markdown-ссылки в README.md/CLAUDE.md (с исключением code-block + image placeholder `docs/demo.gif`) валидны — проверено Python-скриптом
-  - `github.com/pgmac/lazytg` ссылки консистентны во всех документах + `.goreleaser.yaml`
+  - `github.com/kar43lov/lazytg` ссылки консистентны во всех документах + `.goreleaser.yaml`
 - [x] **Verification 6 — CHANGELOG актуален:**
   - Unreleased section дополнен Stage 4 entries: release engineering (goreleaser sqlcipher/nfpm/brew/sigstore), pre-release pipeline (alpha/beta/rc gating + manual workflow_dispatch), changelog automation (git-cliff + commitlint + lefthook + CI semantic-pr-title), memory budget benchmark + PERFORMANCE.md, документация (5 user-facing docs + RELEASE_ANNOUNCE/PROCESS/BETA_CHECKLIST), GitHub plumbing hardening (issue/PR templates + CODEOWNERS)
   - git-cliff не установлен локально — preview-генерация отложена на момент release tagging maintainer'ом (документировано в README "Regenerating CHANGELOG" + CONTRIBUTING)
 - [x] **Manual smoke (документировать, не автоматизировать):** все четыре пункта документированы для maintainer'а:
-  1. Создание репо `pgmac/homebrew-lazytg` с пустым `Formula/` каталогом — README "Setup before first release"
+  1. Создание репо `kar43lov/homebrew-lazytg` с пустым `Formula/` каталогом — README "Setup before first release"
   2. Генерация PAT + `HOMEBREW_TAP_GITHUB_TOKEN` secret — README "Setup before first release"
   3. Demo asciinema-cast → gif — `docs/DEMO.md` со сценарием
   4. Локальный smoke по `docs/MANUAL_SMOKE.md` — 16-пунктный чеклист уже существует (Stage 2/3 артефакт)

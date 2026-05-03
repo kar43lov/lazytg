@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/events"
 )
 
 // fakeRepo implements RepoSizeSource by returning a fixed path. The

@@ -45,7 +45,7 @@ jobs:
         uses: sigstore/cosign-installer@v3
 
       - name: Guard HOMEBREW_TAP_GITHUB_TOKEN for stable tags
-        # Stable tags (no -alpha/beta/rc suffix) push to pgmac/homebrew-lazytg.
+        # Stable tags (no -alpha/beta/rc suffix) push to kar43lov/homebrew-lazytg.
         # An empty PAT means goreleaser publishes archives but fails on brew
         # upload — a half-shipped release with red CI. Fail-fast here with a
         # clear remediation pointer so the maintainer can configure the secret
@@ -63,7 +63,7 @@ jobs:
             exit 0
           fi
           if [[ -z "$HOMEBREW_TAP_GITHUB_TOKEN" ]]; then
-            echo "::error title=HOMEBREW_TAP_GITHUB_TOKEN missing::Stable tag $TAG requires a PAT with contents:write on pgmac/homebrew-lazytg. Configure the secret and re-run via 'gh workflow run release.yml --ref $TAG'. See docs/RELEASE_PROCESS.md."
+            echo "::error title=HOMEBREW_TAP_GITHUB_TOKEN missing::Stable tag $TAG requires a PAT with contents:write on kar43lov/homebrew-lazytg. Configure the secret and re-run via 'gh workflow run release.yml --ref $TAG'. See docs/RELEASE_PROCESS.md."
             exit 1
           fi
           echo "Stable tag $TAG — HOMEBREW_TAP_GITHUB_TOKEN present."
@@ -80,7 +80,7 @@ jobs:
           # evaluates brews[].repository.token at upload time. For prerelease tags
           # `skip_upload: true` short-circuits the upload entirely, so an empty value
           # is acceptable. For stable tags this MUST be a PAT with contents:write
-          # on pgmac/homebrew-lazytg (see docs/CONTRIBUTING.md → Release pipeline).
+          # on kar43lov/homebrew-lazytg (see docs/CONTRIBUTING.md → Release pipeline).
           # Prerelease detection (alpha/beta/rc tag suffix) is handled inside
           # .goreleaser.yaml via `release.prerelease: auto` and
           # `brews[].skip_upload: '{{ if .Prerelease }}true{{ end }}'`.

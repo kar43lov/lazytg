@@ -10,8 +10,8 @@ import (
 
 	"go.uber.org/goleak"
 
-	"github.com/pgmac/lazytg/internal/app"
-	"github.com/pgmac/lazytg/internal/core/config"
+	"github.com/kar43lov/lazytg/internal/app"
+	"github.com/kar43lov/lazytg/internal/core/config"
 )
 
 // TestApp_NoGoroutineLeaks runs the wire.Build → RunBackground →

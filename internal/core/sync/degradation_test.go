@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/events"
 )
 
 // fakeDegradationStore is a minimal in-memory DegradationStore. The probe

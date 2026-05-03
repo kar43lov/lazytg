@@ -10,9 +10,9 @@
 
 ## Подготовка (один раз перед первым release)
 
-1. Создать репо `pgmac/homebrew-lazytg` на GitHub (пустой, с одним каталогом `Formula/`).
+1. Создать репо `kar43lov/homebrew-lazytg` на GitHub (пустой, с одним каталогом `Formula/`).
 2. Сгенерировать Personal Access Token с scope `contents:write` на этот репо. Можно классический PAT или fine-grained.
-3. Добавить токен в org/repo secrets текущего репозитория `pgmac/lazytg` под именем `HOMEBREW_TAP_GITHUB_TOKEN`. Это используется goreleaser-action.
+3. Добавить токен в org/repo secrets текущего репозитория `kar43lov/lazytg` под именем `HOMEBREW_TAP_GITHUB_TOKEN`. Это используется goreleaser-action.
 4. Установить локально (для генерации changelog и snapshot-тестов):
    ```sh
    brew install git-cliff cosign goreleaser
@@ -135,13 +135,13 @@
 
 3. CI запустит release.yml. На этот раз `release.prerelease: auto` определит, что суффикса нет → `prerelease=false`:
    - GitHub Release создаётся как stable (не prerelease)
-   - **brew formula обновляется** в `pgmac/homebrew-lazytg/Formula/lazytg.rb`
+   - **brew formula обновляется** в `kar43lov/homebrew-lazytg/Formula/lazytg.rb`
    - **.deb / .rpm** доступны в Release assets (publishing в публичные APT/DNF репозитории — отложено на v0.2)
 
 4. Проверить:
    ```sh
    brew update
-   brew install pgmac/lazytg/lazytg
+   brew install kar43lov/lazytg/lazytg
    lazytg version  # должно показать v0.1.0
    ```
 
@@ -179,7 +179,7 @@ GitHub Releases можно пометить как deprecated, но **удаля
 | Симптом | Диагностика | Решение |
 |---------|-------------|---------|
 | `goreleaser` падает на cosign sign | Проверить что `id-token: write` permission в release.yml | Добавить `permissions: id-token: write, contents: write` в job |
-| Brew formula не обновилась | Проверить `HOMEBREW_TAP_GITHUB_TOKEN` secret + scope `contents:write` на `pgmac/homebrew-lazytg` | Перегенерировать PAT, обновить secret |
+| Brew formula не обновилась | Проверить `HOMEBREW_TAP_GITHUB_TOKEN` secret + scope `contents:write` на `kar43lov/homebrew-lazytg` | Перегенерировать PAT, обновить secret |
 | `nfpms` не генерирует .deb | Проверить что `builds: [lazytg]` (только pure-Go ID) | В `.goreleaser.yaml` секция `nfpms[].ids` должна содержать `lazytg` |
 | Тег от prerelease.yml не запустил release.yml | GitHub блокирует recursive workflow dispatch для тегов от GITHUB_TOKEN | `gh workflow run release.yml --ref <tag>` (workflow_dispatch добавлен) |
 | GitHub Release создан, но без assets | goreleaser завершился до upload — смотреть логи job | Перезапустить workflow вручную через `gh workflow run release.yml --ref <tag>` |

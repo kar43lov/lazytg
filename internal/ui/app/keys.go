@@ -3,8 +3,8 @@ package app
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/pgmac/lazytg/internal/ui/palette"
-	uisearch "github.com/pgmac/lazytg/internal/ui/panes/search"
+	"github.com/kar43lov/lazytg/internal/ui/palette"
+	uisearch "github.com/kar43lov/lazytg/internal/ui/panes/search"
 )
 
 // focusCycledMsg is the tea.Msg emitted by cmdNextFocus / cmdPrevFocus when

@@ -6,7 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/domain"
 )
 
 // replyPreviewMax caps how many runes of the parent message are echoed

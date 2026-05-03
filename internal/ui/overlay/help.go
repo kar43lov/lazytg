@@ -15,7 +15,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/pgmac/lazytg/internal/ui/keymap"
+	"github.com/kar43lov/lazytg/internal/ui/keymap"
 )
 
 // Help is the immutable view-state of the help overlay.

@@ -10,8 +10,8 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
-	coresync "github.com/pgmac/lazytg/internal/core/sync"
+	"github.com/kar43lov/lazytg/internal/core/domain"
+	coresync "github.com/kar43lov/lazytg/internal/core/sync"
 )
 
 // stubSendMessage is the symmetric counterpart to stubGetHistory in

@@ -7,7 +7,7 @@ import (
 
 	"github.com/gotd/td/tg"
 
-	"github.com/pgmac/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/events"
 )
 
 // receiveOne drains a single event from ch with a generous timeout. The

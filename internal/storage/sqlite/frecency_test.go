@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/domain"
 )
 
 // TestFrecency_EmptyRepo confirms TopFrecency on an untouched table

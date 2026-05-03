@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
-	"github.com/pgmac/lazytg/internal/storage/sqlite"
+	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/storage/sqlite"
 )
 
 // TestRepo_ReadOnlyFlagGatesWrites verifies that toggling SetReadOnly(true)

@@ -337,8 +337,8 @@ internal/
 - **Файлы:** `.github/workflows/release.yml` (sign jobs), `docs/VERIFY.md`
 
 **4.3. Homebrew tap**
-- Отдельный репо `pgmac/homebrew-lazytg`, GoReleaser auto-PR при тегировании
-- Formula: `brew install pgmac/lazytg/lazytg` (pure default)
+- Отдельный репо `kar43lov/homebrew-lazytg`, GoReleaser auto-PR при тегировании
+- Formula: `brew install kar43lov/lazytg/lazytg` (pure default)
 - **Файлы:** `.goreleaser.yaml` brew section
 
 **4.4. Linux packages (.deb, .rpm)**
@@ -386,7 +386,7 @@ internal/
 ### Acceptance criteria v0.1.0
 
 - GitHub Release с **подписанными бинарями** (4 артефакта: linux-{amd64,arm64}, darwin-{amd64,arm64} + checksums + sigstore bundles)
-- `brew install pgmac/lazytg/lazytg` работает
+- `brew install kar43lov/lazytg/lazytg` работает
 - `.deb` и `.rpm` доступны
 - **≥3 тестера заполнили формализованный smoke-чеклист**
 - CI зелёный, e2e smoke в CI проходит

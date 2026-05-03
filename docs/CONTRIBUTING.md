@@ -15,7 +15,7 @@ Thanks for considering a contribution. lazytg is in alpha — APIs, package layo
 ### Bootstrap
 
 ```sh
-git clone https://github.com/pgmac/lazytg.git
+git clone https://github.com/kar43lov/lazytg.git
 cd lazytg
 go mod download
 
@@ -186,7 +186,7 @@ Pre-conditions before tagging stable (see [`docs/RELEASE_PROCESS.md`](RELEASE_PR
 - `main` is green on CI (lint + test matrix + search SLA gate).
 - Coverage gates passed: `internal/core` ≥ 80 %, `internal/ui` ≥ 60 %.
 - `CHANGELOG.md` Unreleased section has been promoted to the new version (auto-generated via `git-cliff` from Stage 4 onward).
-- The `HOMEBREW_TAP_GITHUB_TOKEN` repo secret is configured and points at a PAT with `contents:write` on `pgmac/homebrew-lazytg` — without it, the brew step in `release.yml` will fail.
+- The `HOMEBREW_TAP_GITHUB_TOKEN` repo secret is configured and points at a PAT with `contents:write` on `kar43lov/homebrew-lazytg` — without it, the brew step in `release.yml` will fail.
 - (Stage 4) ≥ 3 external testers have completed `docs/BETA_CHECKLIST.md` for the latest `vX.Y.Z-beta.*`.
 
 ## Scope discipline

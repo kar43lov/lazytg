@@ -20,9 +20,9 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/pgmac/lazytg/cmd/lazytg/cmd.version={{.Version}}
-      - -X github.com/pgmac/lazytg/cmd/lazytg/cmd.commit={{.Commit}}
-      - -X github.com/pgmac/lazytg/cmd/lazytg/cmd.date={{.Date}}
+      - -X github.com/kar43lov/lazytg/cmd/lazytg/cmd.version={{.Version}}
+      - -X github.com/kar43lov/lazytg/cmd/lazytg/cmd.commit={{.Commit}}
+      - -X github.com/kar43lov/lazytg/cmd/lazytg/cmd.date={{.Date}}
     flags:
       - -trimpath
 
@@ -60,8 +60,8 @@ nfpms:
   - id: default
     package_name: lazytg
     vendor: lazytg contributors
-    homepage: https://github.com/pgmac/lazytg
-    maintainer: pgmac <noreply@github.com>
+    homepage: https://github.com/kar43lov/lazytg
+    maintainer: kar43lov <noreply@github.com>
     description: |
       Local-first Telegram TUI client with FTS5 search.
       Telegram automatically puts unofficial clients under observation.
@@ -84,11 +84,11 @@ brews:
     ids:
       - default
     repository:
-      owner: pgmac
+      owner: kar43lov
       name: homebrew-lazytg
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Formula
-    homepage: https://github.com/pgmac/lazytg
+    homepage: https://github.com/kar43lov/lazytg
     description: Local-first Telegram TUI client with FTS5 search
     license: MIT
     skip_upload: '{{ if .Prerelease }}true{{ end }}'
@@ -99,7 +99,7 @@ brews:
     caveats: |
       Telegram automatically puts unofficial clients under observation.
       Use lazytg with a test account first. See:
-      https://github.com/pgmac/lazytg/blob/main/docs/SECURITY.md
+      https://github.com/kar43lov/lazytg/blob/main/docs/SECURITY.md
 
       Set LAZYTG_API_ID and LAZYTG_API_HASH env vars before first run.
       Get them at https://my.telegram.org/apps
@@ -138,13 +138,13 @@ release:
   draft: false
   name_template: "lazytg {{ .Version }}"
   github:
-    owner: pgmac
+    owner: kar43lov
     name: lazytg
   header: |
     ## lazytg {{ .Version }}
 
-    > ⚠️ Telegram automatically puts unofficial clients under observation. Use lazytg with a test account first. See [SECURITY.md](https://github.com/pgmac/lazytg/blob/main/docs/SECURITY.md).
+    > ⚠️ Telegram automatically puts unofficial clients under observation. Use lazytg with a test account first. See [SECURITY.md](https://github.com/kar43lov/lazytg/blob/main/docs/SECURITY.md).
 
     Pure-Go build, single static binary. Database is unencrypted by default — rely on filesystem permissions (the startup permissions audit enforces `0600`/`0700`) and OS-level disk encryption. SQLCipher (CGo, opt-in) is deferred past v0.1.
   footer: |
-    **Full Changelog**: https://github.com/pgmac/lazytg/compare/{{ .PreviousTag }}...{{ .Tag }}
+    **Full Changelog**: https://github.com/kar43lov/lazytg/compare/{{ .PreviousTag }}...{{ .Tag }}

@@ -3,7 +3,7 @@ package thread
 import (
 	"charm.land/lipgloss/v2"
 
-	"github.com/pgmac/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/events"
 )
 
 // OutgoingMessage is the projection of an in-flight outgoing message

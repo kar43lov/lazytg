@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
-	"github.com/pgmac/lazytg/internal/core/obs"
-	"github.com/pgmac/lazytg/internal/storage/sqlite"
+	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/obs"
+	"github.com/kar43lov/lazytg/internal/storage/sqlite"
 )
 
 // stubConfig satisfies obs.ConfigSource by returning a fixed path.

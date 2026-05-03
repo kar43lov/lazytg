@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/events"
 )
 
 // fakeReconnectClient is a controllable ReconnectClient. It exposes the

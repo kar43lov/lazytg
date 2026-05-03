@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
-	"github.com/pgmac/lazytg/internal/core/events"
-	"github.com/pgmac/lazytg/internal/core/search"
-	"github.com/pgmac/lazytg/internal/storage/sqlite"
+	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/search"
+	"github.com/kar43lov/lazytg/internal/storage/sqlite"
 )
 
 // TestReindex_RunAll_ProgressEvents exercises the happy path: three chats,

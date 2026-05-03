@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/domain"
 )
 
 // Hit is a single search result. Snippet is the FTS5-rendered fragment with

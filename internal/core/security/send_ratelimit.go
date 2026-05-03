@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	coresync "github.com/pgmac/lazytg/internal/core/sync"
+	coresync "github.com/kar43lov/lazytg/internal/core/sync"
 )
 
 // Default send-rate guard parameters. The 10 msg/sec rate is the

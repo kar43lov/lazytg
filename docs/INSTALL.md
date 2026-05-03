@@ -34,11 +34,11 @@ The Homebrew formula is auto-updated by GoReleaser on every **stable** tag
 GitHub Releases but **do not** update the tap.
 
 ```sh
-brew install pgmac/lazytg/lazytg
+brew install kar43lov/lazytg/lazytg
 brew upgrade lazytg               # later
 ```
 
-The tap repo is `pgmac/homebrew-lazytg`. The formula installs a single
+The tap repo is `kar43lov/homebrew-lazytg`. The formula installs a single
 `lazytg` binary under the active Homebrew prefix.
 
 ---
@@ -49,7 +49,7 @@ The tap repo is `pgmac/homebrew-lazytg`. The formula installs a single
 # pick the right arch — amd64 is most common, arm64 for Raspberry Pi 4+ / Ampere
 ARCH=amd64
 VERSION=0.1.0
-curl -fsSLO "https://github.com/pgmac/lazytg/releases/download/v${VERSION}/lazytg_${VERSION}_linux_${ARCH}.deb"
+curl -fsSLO "https://github.com/kar43lov/lazytg/releases/download/v${VERSION}/lazytg_${VERSION}_linux_${ARCH}.deb"
 sudo dpkg -i "lazytg_${VERSION}_linux_${ARCH}.deb"
 ```
 
@@ -63,7 +63,7 @@ The package places the binary at `/usr/bin/lazytg` and copies `LICENSE` +
 ```sh
 ARCH=amd64
 VERSION=0.1.0
-sudo dnf install "https://github.com/pgmac/lazytg/releases/download/v${VERSION}/lazytg_${VERSION}_linux_${ARCH}.rpm"
+sudo dnf install "https://github.com/kar43lov/lazytg/releases/download/v${VERSION}/lazytg_${VERSION}_linux_${ARCH}.rpm"
 # or, on zypper distros:
 # sudo zypper install <same URL>
 ```
@@ -81,7 +81,7 @@ or when no package manager covers your distro.
 ARCH=amd64                              # or arm64
 OS=linux                                # or darwin
 VERSION=0.1.0
-BASE="https://github.com/pgmac/lazytg/releases/download/v${VERSION}"
+BASE="https://github.com/kar43lov/lazytg/releases/download/v${VERSION}"
 
 curl -fsSLO "${BASE}/lazytg_${VERSION}_${OS}_${ARCH}.tar.gz"
 curl -fsSLO "${BASE}/lazytg_${VERSION}_${OS}_${ARCH}.tar.gz.sigstore.json"
@@ -90,7 +90,7 @@ curl -fsSLO "${BASE}/checksums.txt"
 # 1. Verify the cosign signature — see VERIFY.md for details
 cosign verify-blob \
   --bundle "lazytg_${VERSION}_${OS}_${ARCH}.tar.gz.sigstore.json" \
-  --certificate-identity-regexp "https://github.com/pgmac/lazytg/.github/workflows/release.yml@refs/tags/v.*" \
+  --certificate-identity-regexp "https://github.com/kar43lov/lazytg/.github/workflows/release.yml@refs/tags/v.*" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   "lazytg_${VERSION}_${OS}_${ARCH}.tar.gz"
 
@@ -114,7 +114,7 @@ not produced by this repo's `release.yml`.
 Requires Go ≥ 1.25 (the `go.mod` toolchain pin).
 
 ```sh
-go install github.com/pgmac/lazytg/cmd/lazytg@v0.1.0
+go install github.com/kar43lov/lazytg/cmd/lazytg@v0.1.0
 ```
 
 The binary lands in `$(go env GOBIN)` (defaults to `$GOPATH/bin` ≈
@@ -129,7 +129,7 @@ proxy checksum (`go.sum`) instead.
 ## Build from source
 
 ```sh
-git clone https://github.com/pgmac/lazytg.git
+git clone https://github.com/kar43lov/lazytg.git
 cd lazytg
 make build              # → bin/lazytg
 ./bin/lazytg version

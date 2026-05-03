@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
-	"github.com/pgmac/lazytg/internal/core/events"
-	coresync "github.com/pgmac/lazytg/internal/core/sync"
+	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/events"
+	coresync "github.com/kar43lov/lazytg/internal/core/sync"
 )
 
 // inMemoryStore is a minimal LiveStore that records each Save's

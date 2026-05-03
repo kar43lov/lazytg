@@ -9,7 +9,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/pgmac/lazytg/internal/core/search"
+	"github.com/kar43lov/lazytg/internal/core/search"
 )
 
 // DefaultDebounce is the textinput → service.Search delay. 150ms is

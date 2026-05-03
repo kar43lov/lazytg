@@ -2,7 +2,7 @@
 
 Please report security vulnerabilities **privately** via GitHub Security Advisories on this repository:
 
-<https://github.com/pgmac/lazytg/security/advisories/new>
+<https://github.com/kar43lov/lazytg/security/advisories/new>
 
 Do not open public issues for security bugs.
 

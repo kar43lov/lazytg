@@ -7,8 +7,8 @@ import (
 
 	"github.com/gotd/td/telegram/updates"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
-	"github.com/pgmac/lazytg/internal/storage/sqlite"
+	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/storage/sqlite"
 )
 
 func openStateRepo(t *testing.T, accountID int64) (*sqlite.StateRepo, *sqlite.Repo, context.Context) {

@@ -15,7 +15,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/pgmac/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/events"
 )
 
 // Connection-state strings rendered in the bar. They map 1:1 onto

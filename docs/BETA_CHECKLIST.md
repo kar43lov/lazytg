@@ -31,7 +31,7 @@
 ### 1. Install
 
 - [ ] Установка прошла одним из путей:
-  - `brew install pgmac/lazytg/lazytg` (macOS), либо
+  - `brew install kar43lov/lazytg/lazytg` (macOS), либо
   - `sudo dpkg -i lazytg_*_linux_amd64.deb`, либо
   - `sudo dnf install lazytg_*_linux_amd64.rpm`, либо
   - manual binary из tar.gz + проверка через `cosign verify-blob` (см. [VERIFY.md](VERIFY.md))
@@ -99,7 +99,7 @@
 
 ## Что делать с этим чек-листом
 
-1. Скопируйте раздел в новый GitHub issue: https://github.com/pgmac/lazytg/issues/new
+1. Скопируйте раздел в новый GitHub issue: https://github.com/kar43lov/lazytg/issues/new
 2. Лейбл: `beta-feedback`
 3. Заголовок: `Beta smoke <OS> <arch> — <вердикт>` (например, `Beta smoke macOS arm64 — pass with notes`)
 4. Если есть FAIL — приложите `lazytg debug-bundle` (gzip tarball без секретов, см. [TROUBLESHOOTING.md](TROUBLESHOOTING.md#collecting-a-debug-bundle))

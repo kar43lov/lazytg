@@ -7,7 +7,7 @@ package events
 import (
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/domain"
 )
 
 // Event is the marker interface implemented by every event type in this package.

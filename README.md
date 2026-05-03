@@ -4,9 +4,9 @@
 
 > ⚠️ **Ban-risk warning:** Telegram automatically puts unofficial clients under observation. Use lazytg with a test account first. See [docs/SECURITY.md](docs/SECURITY.md) for details.
 
-[![CI](https://github.com/pgmac/lazytg/actions/workflows/ci.yml/badge.svg)](https://github.com/pgmac/lazytg/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/pgmac/lazytg)](https://goreportcard.com/report/github.com/pgmac/lazytg)
-[![codecov](https://codecov.io/gh/pgmac/lazytg/branch/main/graph/badge.svg)](https://codecov.io/gh/pgmac/lazytg)
+[![CI](https://github.com/kar43lov/lazytg/actions/workflows/ci.yml/badge.svg)](https://github.com/kar43lov/lazytg/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/kar43lov/lazytg)](https://goreportcard.com/report/github.com/kar43lov/lazytg)
+[![codecov](https://codecov.io/gh/kar43lov/lazytg/branch/main/graph/badge.svg)](https://codecov.io/gh/kar43lov/lazytg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 <!-- Demo GIF placeholder. Recording recipe: docs/DEMO.md. The line below
@@ -85,7 +85,7 @@ See [docs/SEARCH.md](docs/SEARCH.md) for the search query syntax and [docs/FILES
 
 ```sh
 # 1. install
-brew install pgmac/lazytg/lazytg
+brew install kar43lov/lazytg/lazytg
 
 # 2. point lazytg at your Telegram API credentials
 #    (get them from https://my.telegram.org/apps — never share api_hash)
@@ -108,16 +108,16 @@ are documented in [docs/INSTALL.md](docs/INSTALL.md).
 ### From source
 
 ```sh
-git clone https://github.com/pgmac/lazytg.git
+git clone https://github.com/kar43lov/lazytg.git
 cd lazytg
 make build          # → bin/lazytg
 ```
 
-Once a release is tagged, `go install github.com/pgmac/lazytg/cmd/lazytg@latest` will also work.
+Once a release is tagged, `go install github.com/kar43lov/lazytg/cmd/lazytg@latest` will also work.
 
 ### Pre-built binaries
 
-Pre-built archives for `linux` and `darwin` (`amd64` + `arm64`) are published on the [Releases](https://github.com/pgmac/lazytg/releases) page. SHA256 checksums and cosign keyless signatures are attached to every release. See [docs/VERIFY.md](docs/VERIFY.md) for the verification recipe.
+Pre-built archives for `linux` and `darwin` (`amd64` + `arm64`) are published on the [Releases](https://github.com/kar43lov/lazytg/releases) page. SHA256 checksums and cosign keyless signatures are attached to every release. See [docs/VERIFY.md](docs/VERIFY.md) for the verification recipe.
 
 ### Encrypted database (deferred past v0.1)
 
@@ -221,9 +221,9 @@ export LAZYTG_API_HASH=...
 
 The release pipeline assumes a few external resources exist before the first stable tag is pushed:
 
-1. **Homebrew tap repository.** Create `pgmac/homebrew-lazytg` on GitHub manually, with an empty `Formula/` directory. GoReleaser commits the generated `Formula/lazytg.rb` here on every stable release.
-2. **PAT for tap pushes.** Generate a Personal Access Token (fine-grained) with `contents: write` on the `pgmac/homebrew-lazytg` repo. Add it to this repo's secrets as `HOMEBREW_TAP_GITHUB_TOKEN`. The token is **not needed** until the first stable tag — alpha/beta/rc skip the brew upload.
-3. **First publish.** The first `git tag v0.1.0 && git push --tags` (without `-alpha`/`-beta`/`-rc` suffix) pushes the formula automatically. From that point on `brew install pgmac/lazytg/lazytg` works.
+1. **Homebrew tap repository.** Create `kar43lov/homebrew-lazytg` on GitHub manually, with an empty `Formula/` directory. GoReleaser commits the generated `Formula/lazytg.rb` here on every stable release.
+2. **PAT for tap pushes.** Generate a Personal Access Token (fine-grained) with `contents: write` on the `kar43lov/homebrew-lazytg` repo. Add it to this repo's secrets as `HOMEBREW_TAP_GITHUB_TOKEN`. The token is **not needed** until the first stable tag — alpha/beta/rc skip the brew upload.
+3. **First publish.** The first `git tag v0.1.0 && git push --tags` (without `-alpha`/`-beta`/`-rc` suffix) pushes the formula automatically. From that point on `brew install kar43lov/lazytg/lazytg` works.
 
 ### SQLCipher (encrypted DB) build variant
 

@@ -47,9 +47,9 @@ linters:
           files:
             - "**/internal/storage/**"
           deny:
-            - pkg: "github.com/pgmac/lazytg/internal/ui"
+            - pkg: "github.com/kar43lov/lazytg/internal/ui"
               desc: "internal/storage must not depend on UI"
-            - pkg: "github.com/pgmac/lazytg/internal/tg"
+            - pkg: "github.com/kar43lov/lazytg/internal/tg"
               desc: "internal/storage must not depend on Telegram layer"
 
     revive:

@@ -10,7 +10,7 @@ import (
 
 	"github.com/gotd/td/tgerr"
 
-	coresync "github.com/pgmac/lazytg/internal/core/sync"
+	coresync "github.com/kar43lov/lazytg/internal/core/sync"
 )
 
 func TestFloodWaiter_PassesThroughSuccess(t *testing.T) {

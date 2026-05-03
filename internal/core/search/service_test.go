@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
-	"github.com/pgmac/lazytg/internal/core/search"
+	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/search"
 )
 
 // TestService_Search_BasicMatch covers the happy path — the FTS5 trigram

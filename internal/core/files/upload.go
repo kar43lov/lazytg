@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 
-	"github.com/pgmac/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/events"
 )
 
 // UploadSoftLimit is the size threshold (50 MiB) above which UploadService

@@ -68,7 +68,7 @@ Configured in [`.golangci.yml`](../.golangci.yml):
 
 - Files under `internal/core/**` may not import `github.com/gotd/td` or `github.com/charmbracelet/bubbletea`.
 - Files under `internal/ui/**` may not import `github.com/gotd/td`.
-- Files under `internal/storage/**` may not import `github.com/pgmac/lazytg/internal/ui` or `github.com/pgmac/lazytg/internal/tg`.
+- Files under `internal/storage/**` may not import `github.com/kar43lov/lazytg/internal/ui` or `github.com/kar43lov/lazytg/internal/tg`.
 
 Smoke test for the rule: temporarily add an import of `github.com/gotd/td/telegram` from any file under `internal/core/` and run `golangci-lint run` — it must fail.
 

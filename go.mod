@@ -1,4 +1,4 @@
-module github.com/pgmac/lazytg
+module github.com/kar43lov/lazytg
 
 go 1.25.0
 

@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/app"
-	"github.com/pgmac/lazytg/internal/core/config"
-	"github.com/pgmac/lazytg/internal/core/domain"
-	"github.com/pgmac/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/app"
+	"github.com/kar43lov/lazytg/internal/core/config"
+	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/events"
 )
 
 // Memory budgets policed by the Stage 4 acceptance gate. The numbers

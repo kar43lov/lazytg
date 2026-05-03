@@ -3,7 +3,7 @@ package thread
 import (
 	"context"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/domain"
 )
 
 // Repository is the slice of the storage layer the thread pane reads

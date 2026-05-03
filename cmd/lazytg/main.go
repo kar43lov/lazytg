@@ -4,7 +4,7 @@ package main
 import (
 	"os"
 
-	"github.com/pgmac/lazytg/cmd/lazytg/cmd"
+	"github.com/kar43lov/lazytg/cmd/lazytg/cmd"
 )
 
 func main() {

@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/pgmac/lazytg/security/advisories/new
+    url: https://github.com/kar43lov/lazytg/security/advisories/new
     about: Report security issues privately via GitHub Security Advisories. See docs/SECURITY.md for the threat model and disclosure policy.
   - name: Question / discussion
-    url: https://github.com/pgmac/lazytg/discussions
+    url: https://github.com/kar43lov/lazytg/discussions
     about: Use GitHub Discussions for usage questions and open-ended conversations.
   - name: Ban-risk warning
-    url: https://github.com/pgmac/lazytg/blob/main/docs/SECURITY.md
+    url: https://github.com/kar43lov/lazytg/blob/main/docs/SECURITY.md
     about: Telegram automatically puts unofficial clients under observation. Please read before filing account-restriction reports.

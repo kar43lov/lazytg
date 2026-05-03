@@ -7,7 +7,7 @@ import (
 
 	"github.com/gotd/td/session"
 
-	"github.com/pgmac/lazytg/internal/core/config"
+	"github.com/kar43lov/lazytg/internal/core/config"
 )
 
 // fakeSecretStore is a tiny in-memory implementation of config.SecretStore so

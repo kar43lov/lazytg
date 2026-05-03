@@ -125,7 +125,7 @@ internal/
 - **Cross-build:** linux+darwin × amd64+arm64. Windows amd64 → v0.2 (отдельная боль с TUI).
 - **Pure-Go только.** `-tags sqlcipher` зарезервирован, отложен past v0.1 — сборка под этим тегом намеренно ломается на этапе компиляции (см. `internal/storage/sqlite/driver_sqlcipher.go`). Реальный CGo-драйвер — в следующем релизе.
 - **Cosign keyless** через GitHub OIDC (sigstore bundle в release). macOS notarization → v0.2 ($99/год Apple ID).
-- **Distribution:** Homebrew tap (`pgmac/homebrew-lazytg`), `.deb` + `.rpm` через nfpm.
+- **Distribution:** Homebrew tap (`kar43lov/homebrew-lazytg`), `.deb` + `.rpm` через nfpm.
 - **Pre-release pipeline:** `v0.1.0-alpha.N` → `beta.N` → `rc.N` → `v0.1.0`. Brew/scoop НЕ обновляются для alpha/beta.
 - **Changelog:** `git-cliff` + commitlint, conventional commits enforced.
 
@@ -160,6 +160,7 @@ v0.1.0 готов к тегированию: код-функционал Stages 
 - $EDITOR sandbox env-filter
 - Multi-account UI switcher
 - Windows билды
+- Goreleaser `brews:` → `homebrew_casks:` миграция (deprecated в выводе `goreleaser check`, не блокер v0.1.0)
 
 ### v0.3+
 - Inline media preview (Kitty/iTerm/sixel через `BourgeoisBear/rasterm`)

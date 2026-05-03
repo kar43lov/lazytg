@@ -7,16 +7,16 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/pgmac/lazytg/internal/core/domain"
-	"github.com/pgmac/lazytg/internal/core/events"
-	"github.com/pgmac/lazytg/internal/core/search"
-	"github.com/pgmac/lazytg/internal/ui/input"
-	"github.com/pgmac/lazytg/internal/ui/palette"
-	"github.com/pgmac/lazytg/internal/ui/panes/attach"
-	"github.com/pgmac/lazytg/internal/ui/panes/chats"
-	uisearch "github.com/pgmac/lazytg/internal/ui/panes/search"
-	"github.com/pgmac/lazytg/internal/ui/panes/thread"
-	"github.com/pgmac/lazytg/internal/ui/statusbar"
+	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/search"
+	"github.com/kar43lov/lazytg/internal/ui/input"
+	"github.com/kar43lov/lazytg/internal/ui/palette"
+	"github.com/kar43lov/lazytg/internal/ui/panes/attach"
+	"github.com/kar43lov/lazytg/internal/ui/panes/chats"
+	uisearch "github.com/kar43lov/lazytg/internal/ui/panes/search"
+	"github.com/kar43lov/lazytg/internal/ui/panes/thread"
+	"github.com/kar43lov/lazytg/internal/ui/statusbar"
 )
 
 // downloadTimeout caps how long a Ctrl-D triggered fetch can run

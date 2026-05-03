@@ -46,7 +46,7 @@
 
 ### Task 1: Bootstrap репозитория + tooling
 
-- [x] Создать `/Users/pgmac/Data/prjcts/lazytg/go.mod` командой `go mod init github.com/pgmac/lazytg` (Go 1.22+)
+- [x] Создать `/Users/pgmac/Data/prjcts/lazytg/go.mod` командой `go mod init github.com/kar43lov/lazytg` (Go 1.22+)
 - [x] Создать `.gitignore` с правилами для Go: `*.exe`, `bin/`, `dist/`, `coverage.out`, `.env*`, `*.test`, `vendor/`
 - [x] Создать `.editorconfig` со стандартными правилами Go (tab indent, LF, trim trailing)
 - [x] Создать `Makefile` с целями: `build` (`go build -o bin/lazytg ./cmd/lazytg`), `test` (`go test -race ./...`), `lint` (`golangci-lint run`), `clean` (`rm -rf bin/ dist/ coverage.out`), `tidy` (`go mod tidy`)

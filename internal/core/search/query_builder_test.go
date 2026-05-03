@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pgmac/lazytg/internal/core/search"
+	"github.com/kar43lov/lazytg/internal/core/search"
 )
 
 // TestBuildSQL covers each Query field's contribution to the generated
