@@ -22,8 +22,10 @@ permissions:
 # Serialize releases to avoid two simultaneous tag-publishes racing on the
 # Homebrew tap (Formula/lazytg.rb) and on Rekor signature registration.
 # cancel-in-progress: false — never abort a release mid-publish, queue instead.
+# `github.ref_name` strips the `refs/tags/` prefix that `on: push: tags` uses,
+# so push and workflow_dispatch on the same tag share the same group.
 concurrency:
-  group: release-${{ inputs.ref || github.ref }}
+  group: release-${{ inputs.ref || github.ref_name }}
   cancel-in-progress: false
 
 jobs:

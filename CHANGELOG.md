@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reconnect manager with exponential backoff (1s → 60s, ±10% jitter, infinite retries by default, `context.Canceled` interpreted as user shutdown). `tg.Client.OnDisconnect()` exposes the disconnect signal as a buffered channel.
 - Read-only DB degradation: `DegradationDetector` probes via `BEGIN IMMEDIATE + ROLLBACK` on a dedicated `*sql.Conn` every 30s; `Repo.IsReadOnly()` flag gates writes with `ErrReadOnly`. `StorageStateChanged` event surfaces in the status bar.
 - $EDITOR delegation via `Ctrl-E` (`internal/ui/input/editor.go`) — temp file `0600` in user cache, defer-cleanup even on exec failure, fallback to `vi` if `$EDITOR` unset.
-- Configurable keymap via TOML at `<config>/lazytg/keymap.toml`; conflict detection at startup (with stable error formatting).
+- Configurable keymap via TOML at `<config>/keymap.toml`; conflict detection at startup (with stable error formatting).
 - Input pane: textarea with emacs/readline bindings, in-memory history ring (100 entries, Ctrl-P/N navigation), reply state (Ctrl-R), multi-line via Alt+Enter, `$EDITOR` roundtrip.
 - New SQLite migrations: `0002_channel_state.sql`, `0003_peers_extended.sql`, `0004_outgoing.sql`.
 - `internal/app/wire.go` — DI composition (`App.Build` for non-MTProto services + `App.AttachClient` for the gotd-aware ones).

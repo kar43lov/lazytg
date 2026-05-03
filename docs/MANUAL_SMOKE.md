@@ -107,11 +107,10 @@
 - [ ] Если вы были scrolled-up — позиция чтения не меняется (sticky scroll работает)
 - [ ] Если вы были на bottom — viewport скроллится к новому сообщению
 
-### 13. Polling fallback
+### 13. Polling fallback (N/A в v0.1)
 
-- [ ] Запустите с `--polling` флагом: `./bin/lazytg --polling`
-- [ ] В лог-файле должны быть строки `polling: tick` каждые 3 секунды
-- [ ] Сообщения по-прежнему приходят (через polling вместо updates.Manager)
+`--polling` флаг зарезервирован, но в v0.1 — no-op (см. CHANGELOG `Known gaps`).
+Шаг пропускается до wire-up в follow-up релизе.
 
 ### 14. Reconnect
 

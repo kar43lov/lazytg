@@ -5,7 +5,7 @@ This document describes the runtime topology, package layout, and import-directi
 ## Goals
 
 1. **Local-first.** All persistent state (messages, peers, FTS index) lives in a single SQLite file under `$XDG_DATA_HOME/lazytg/` (or the macOS equivalent). lazytg works offline against the cache.
-2. **Pure-Go default.** No CGo in the default build, so cross-compilation for `linux` and `darwin` × `amd64` and `arm64` is a single `go build`. CGo for SQLCipher is reserved for Stage 3 behind a build tag — not yet wired.
+2. **Pure-Go default.** No CGo in the default build, so cross-compilation for `linux` and `darwin` × `amd64` and `arm64` is a single `go build`. CGo for SQLCipher is deferred past v0.1 behind a build tag — `-tags sqlcipher` deliberately fails to compile until the real driver lands.
 3. **Strict layering.** UI does not talk to MTProto, MTProto does not talk to the UI, storage talks to neither. Enforced by `depguard` — see below.
 4. **Minimum behavioural footprint vs Telegram.** The auth/send/sync code lives in one place (`internal/tg/`) and is the only layer that issues real RPC. It is small enough to audit for ban-risk indicators end-to-end.
 
@@ -82,7 +82,7 @@ These choices come out of the v0.1.0 brainstorm + dialectic; the trade-offs are 
 | MTProto             | `github.com/gotd/td`                              | TDLib over CGo (kills pure-Go cross-build, doesn't help ban-risk); Bot API (insufficient, can't read user history).                 |
 | TUI                 | `charmbracelet/bubbletea` v2 + `lipgloss` + `bubbles` (stage 2) | `gocui`, `tview` — small ecosystems, GitLab is migrating away from `tview` to bubbletea; bubbletea has 10k+ apps in production.     |
 | SQLite              | `modernc.org/sqlite` (pure Go)                    | `mattn/go-sqlite3` — needs CGo, breaks easy cross-compilation. modernc gives ~75% of CGo performance and supports FTS5 + trigram.    |
-| Encrypted DB (planned) | `mutecomm/go-sqlcipher` via build tag `sqlcipher`, **not yet wired** (Stage 3) | Encrypting by default — adds a CGo toolchain requirement for every contributor and complicates releases. Opt-in is the right default. |
+| Encrypted DB (planned) | `mutecomm/go-sqlcipher` via build tag `sqlcipher`, **deferred past v0.1** (the tag intentionally fails to compile until the real driver lands) | Encrypting by default — adds a CGo toolchain requirement for every contributor and complicates releases. Opt-in is the right default. |
 | Secrets             | `zalando/go-keyring` (with `filippo.io/age` fallback) | `99designs/keyring` — less active, more complex API.                                                                                |
 | CLI                 | `spf13/cobra`                                     | `urfave/cli` — cobra is the de facto standard, plays nice with viper if we ever need it.                                            |
 | Logging             | `log/slog` (stdlib) + `gopkg.in/natefinch/lumberjack.v2` | `zap`, `zerolog` — slog is now stdlib and has structured handlers; lumberjack only handles rotation.                                |
@@ -101,7 +101,7 @@ These choices come out of the v0.1.0 brainstorm + dialectic; the trade-offs are 
 ## Live updates (Stage 2 detail)
 
 - gotd's `updates.Manager` with a `StateStorage` implementation backed by SQLite (≈50 lines).
-- A `--polling` flag exists as a fallback if the updates manager produces gap problems in the field.
+- A `--polling` flag is reserved on the CLI as a future fallback if the updates manager produces gap problems in the field; in v0.1 it is a no-op (see CHANGELOG `Known gaps`).
 
 ## Security (see [SECURITY.md](SECURITY.md))
 

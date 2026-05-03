@@ -1,7 +1,7 @@
 # Release announcement — draft
 
 > ⚠️ **Этот документ — draft для maintainer'а.** Не публикуем автоматически.
-> Используется на финальной фазе release-процесса (см. [RELEASE_PROCESS.md](RELEASE_PROCESS.md), шаг 9).
+> Используется на финальной фазе release-процесса (см. [RELEASE_PROCESS.md](RELEASE_PROCESS.md), Этап D — Stable, шаг 5).
 > Перед публикацией — заменить плейсхолдеры (`<version>`, `<demo-link>`, цифры из последнего benchmark прогона), вычитать tone-of-voice, убедиться в честности (alpha quality, ban-risk).
 
 ---
@@ -99,7 +99,7 @@
 > - Three-layer separation enforced via depguard: `core` knows nothing about gotd or bubbletea, `ui` knows nothing about gotd, `storage` knows nothing about either.
 > - Pure-Go SQLite (modernc.org/sqlite) — no CGo. SQLCipher (encrypted DB) reserved past v0.1; the build tag deliberately fails to compile until the real driver lands.
 > - FTS5 trigram tokenizer (built-in to SQLite ≥3.34) — language-agnostic, works for cyrillic without ICU. Lazy index: last 5000 messages per chat by default.
-> - Live-updates via gotd's updates.Manager backed by SQLite StateStorage (~50 LOC). Polling fallback via `--polling` if gaps cause issues.
+> - Live-updates via gotd's updates.Manager backed by SQLite StateStorage (~50 LOC).
 > - Cosign keyless OIDC for releases — no private keys to manage. Sigstore bundles per-archive.
 >
 > Coverage: core 81.3%, ui 79.2%, depguard CI gate, search SLA gated in CI (p95 <100ms benchmark fails build).

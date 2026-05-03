@@ -181,7 +181,7 @@ git tag -a v0.1.0 -m "v0.1.0"
 git push origin v0.1.0
 ```
 
-Pre-conditions before tagging stable (see `docs/RELEASE_PROCESS.md` once it exists):
+Pre-conditions before tagging stable (see [`docs/RELEASE_PROCESS.md`](RELEASE_PROCESS.md)):
 
 - `main` is green on CI (lint + test matrix + search SLA gate).
 - Coverage gates passed: `internal/core` ≥ 80 %, `internal/ui` ≥ 60 %.
