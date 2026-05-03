@@ -43,7 +43,7 @@ body:
     attributes:
       label: Build mode
       description: |
-        sqlcipher build is reserved for Stage 3 — `-tags sqlcipher` currently panics on init.
+        Pure-Go is the only shipped build for v0.1. The `sqlcipher` build tag is reserved for a future CGo driver and currently fails to compile on purpose (see internal/storage/sqlite/driver_sqlcipher.go).
       options:
         - Default (pure Go, modernc/sqlite)
     validations:

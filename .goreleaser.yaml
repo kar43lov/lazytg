@@ -26,52 +26,10 @@ builds:
     flags:
       - -trimpath
 
-  # SQLCipher build — encrypted SQLite via CGo. Cross-compile с CGo требует тулчейна,
-  # поэтому ограничиваемся нативными целями: darwin (amd64/arm64) и linux/amd64.
-  # Для сборки требуется system libsqlcipher (Homebrew: `brew install sqlcipher`,
-  # Debian/Ubuntu: `apt install libsqlcipher-dev`). Документировано в release notes.
-  #
-  # `disable` позволяет пропустить этот build локально при отсутствии CGo тулчейна
-  # через `SKIP_SQLCIPHER=true goreleaser release --snapshot ...`.
-  # CI (release.yml) запускается с правильной матрицей и не выставляет SKIP_SQLCIPHER.
-  - id: lazytg-sqlcipher
-    main: ./cmd/lazytg
-    binary: lazytg
-    skip: '{{ if eq .Env.SKIP_SQLCIPHER "true" }}true{{ end }}'
-    env:
-      - CGO_ENABLED=1
-    goos:
-      - linux
-      - darwin
-    goarch:
-      - amd64
-      - arm64
-    ignore:
-      - goos: linux
-        goarch: arm64
-    tags:
-      - sqlcipher
-    ldflags:
-      - -s -w
-      - -X github.com/pgmac/lazytg/cmd/lazytg/cmd.version={{.Version}}
-      - -X github.com/pgmac/lazytg/cmd/lazytg/cmd.commit={{.Commit}}
-      - -X github.com/pgmac/lazytg/cmd/lazytg/cmd.date={{.Date}}
-    flags:
-      - -trimpath
-
 archives:
   - id: default
     ids: [lazytg]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    formats: [tar.gz]
-    files:
-      - LICENSE
-      - README.md
-      - CHANGELOG.md
-
-  - id: sqlcipher
-    ids: [lazytg-sqlcipher]
-    name_template: "{{ .ProjectName }}-sqlcipher_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
     files:
       - LICENSE
@@ -185,9 +143,6 @@ release:
 
     > ⚠️ Telegram automatically puts unofficial clients under observation. Use lazytg with a test account first. See [SECURITY.md](https://github.com/pgmac/lazytg/blob/main/docs/SECURITY.md).
 
-    ### Build variants
-
-    - **`lazytg_*` (default)** — pure-Go build. Database is unencrypted; rely on filesystem permissions and OS-level disk encryption.
-    - **`lazytg-sqlcipher_*`** — SQLCipher build with encrypted database. **Requires system `libsqlcipher`** (`brew install sqlcipher` / `apt install libsqlcipher-dev`). Available for darwin (amd64/arm64) and linux/amd64 only.
+    Pure-Go build, single static binary. Database is unencrypted by default — rely on filesystem permissions (the startup permissions audit enforces `0600`/`0700`) and OS-level disk encryption. SQLCipher (CGo, opt-in) is deferred past v0.1.
   footer: |
     **Full Changelog**: https://github.com/pgmac/lazytg/compare/{{ .PreviousTag }}...{{ .Tag }}

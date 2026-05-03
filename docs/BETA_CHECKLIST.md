@@ -102,6 +102,6 @@
 1. Скопируйте раздел в новый GitHub issue: https://github.com/pgmac/lazytg/issues/new
 2. Лейбл: `beta-feedback`
 3. Заголовок: `Beta smoke <OS> <arch> — <вердикт>` (например, `Beta smoke macOS arm64 — pass with notes`)
-4. Если есть FAIL — приложите `lazytg debug-bundle` (gzip tarball без секретов, см. [TROUBLESHOOTING.md](TROUBLESHOOTING.md#как-собрать-debug-bundle))
+4. Если есть FAIL — приложите `lazytg debug-bundle` (gzip tarball без секретов, см. [TROUBLESHOOTING.md](TROUBLESHOOTING.md#collecting-a-debug-bundle))
 
 Спасибо за помощь с beta-period! Без ≥3 confirmation мы не релизим stable v0.1.0.

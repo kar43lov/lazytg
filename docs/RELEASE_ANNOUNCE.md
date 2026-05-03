@@ -58,7 +58,7 @@
 >
 > It's a 2-pane TUI (chats + thread, WeeChat-style — not 3-pane lazygit-style; we tested that and it's a categorical mismatch for chat domain). Pure Go, no CGo by default, single binary cross-built for linux+darwin × amd64+arm64. Sessions in Keychain / Secret Service / wincred via go-keyring.
 >
-> Architecture is 3-layer with depguard rules in CI (`internal/core` cannot import gotd or bubbletea). Tests-first for core (coverage 81%, ui 83%).
+> Architecture is 3-layer with depguard rules in CI (`internal/core` cannot import gotd or bubbletea). Tests-first for core (coverage core 81.3%, ui 79.2%).
 >
 > **Important caveat:** Telegram automatically puts unofficial clients under observation. We added a send rate-limit guard and a `debug-bundle` command that strips secrets, but the only safe way to try lazytg is with a test account. After the Durov arrest (Aug 2024), enforcement spiked.
 >
@@ -97,12 +97,12 @@
 > Local-first Telegram client built around mtproto (gotd/td) and bubbletea. Architectural notes:
 >
 > - Three-layer separation enforced via depguard: `core` knows nothing about gotd or bubbletea, `ui` knows nothing about gotd, `storage` knows nothing about either.
-> - Pure-Go SQLite (modernc.org/sqlite) — no CGo by default. Build tag `sqlcipher` available for encrypted DB.
+> - Pure-Go SQLite (modernc.org/sqlite) — no CGo. SQLCipher (encrypted DB) reserved past v0.1; the build tag deliberately fails to compile until the real driver lands.
 > - FTS5 trigram tokenizer (built-in to SQLite ≥3.34) — language-agnostic, works for cyrillic without ICU. Lazy index: last 5000 messages per chat by default.
 > - Live-updates via gotd's updates.Manager backed by SQLite StateStorage (~50 LOC). Polling fallback via `--polling` if gaps cause issues.
 > - Cosign keyless OIDC for releases — no private keys to manage. Sigstore bundles per-archive.
 >
-> Coverage: core 81%, ui 83%, depguard CI gate, search SLA gated in CI (p95 <100ms benchmark fails build).
+> Coverage: core 81.3%, ui 79.2%, depguard CI gate, search SLA gated in CI (p95 <100ms benchmark fails build).
 >
 > https://github.com/pgmac/lazytg
 
@@ -117,8 +117,8 @@
 > - **modernc.org/sqlite** — pure Go SQLite port. ~75% perf of mattn/go-sqlite3 but zero CGo. Includes FTS5 + trigram tokenizer.
 > - **Three-layer architecture with depguard CI gate** — `internal/core` can't import gotd or bubbletea; `internal/ui` can't import gotd. Caught two regressions in development.
 > - **Memory budget gates in CI** — `test/perf/memory_test.go` fails build if idle >50MB or active >150MB.
-> - **GoReleaser + cosign keyless OIDC** — no key management. Sigstore bundles. Build matrix: linux+darwin × amd64+arm64. Optional CGo build with `-tags sqlcipher` for encrypted DB.
+> - **GoReleaser + cosign keyless OIDC** — no key management. Sigstore bundles. Build matrix: linux+darwin × amd64+arm64.
 >
-> Coverage core 81%, ui 83%. lefthook for pre-commit (gofmt, go vet, go test -short). git-cliff + commitlint for changelog.
+> Coverage core 81.3%, ui 79.2%. lefthook for pre-commit (gofmt, go vet, go test -short). git-cliff + commitlint for changelog.
 >
 > https://github.com/pgmac/lazytg

@@ -144,39 +144,17 @@ full dev-loop targets (`make test`, `make lint`, `make bench`, `make tidy`).
 
 ## SQLCipher build (encrypted database)
 
-> CGo SQLCipher wiring is reserved for v0.1.x but **not yet active** — the
-> build tag is recognised today only by the GoReleaser config, and the
-> database layer is unencrypted regardless. This section documents the
-> intended workflow for when the wiring lands. Stage 4 of the v0.1.0 plan
-> ships only the release-pipeline plumbing.
+Deferred past v0.1. The `sqlcipher` build tag is reserved for a future
+CGo-backed driver. Until that driver lands, `go build -tags sqlcipher`
+deliberately fails to compile (see
+`internal/storage/sqlite/driver_sqlcipher.go`) so that no binary can ship
+under the encrypted-DB label without the real implementation. Releases
+ship the pure-Go variant only.
 
-For users who want SQLite-at-rest encryption (in addition to the OS keyring
-session protection lazytg already provides), a CGo build variant uses
-[SQLCipher](https://www.zetetic.net/sqlcipher/). It requires a system
-`libsqlcipher` at runtime.
+Rely instead on:
 
-Install runtime dependency:
-
-```sh
-brew install sqlcipher                    # macOS
-sudo apt install libsqlcipher-dev         # Debian / Ubuntu
-sudo dnf install libsqlcipher-devel       # Fedora / RHEL
-```
-
-Then either pull the dedicated archive from a GitHub Release
-(`lazytg-sqlcipher_*` — published only for `darwin/{amd64,arm64}` and
-`linux/amd64`; cross-compiling CGo to other platforms requires extra
-toolchains), or build locally:
-
-```sh
-go install -tags sqlcipher github.com/pgmac/lazytg/cmd/lazytg@v0.1.0
-# or, from a clone:
-go build -tags sqlcipher -o bin/lazytg-sqlcipher ./cmd/lazytg
-```
-
-The encrypted variant is interoperable with the pure-Go variant only if you
-migrate the database explicitly. By default the two binaries open different
-files — keep them separated by `XDG_DATA_HOME` overrides if you experiment.
+- the startup permissions audit (refuses `lazytg.db` mode > `0600`), and
+- OS-level disk encryption (FileVault on macOS, LUKS on Linux).
 
 ---
 

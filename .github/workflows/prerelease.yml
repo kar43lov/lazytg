@@ -1,9 +1,18 @@
 name: Create prerelease tag
 
 # Convenience workflow for cutting a `v*-alpha.N` / `v*-beta.N` / `v*-rc.N` tag
-# without computing the next number by hand. Once the tag is pushed, release.yml
-# triggers automatically and produces a GitHub prerelease (brew/nfpm publish are
-# skipped via .goreleaser.yaml templates — see docs/CONTRIBUTING.md).
+# without computing the next number by hand. Brew/nfpm publish are skipped for
+# prerelease tags via .goreleaser.yaml templates — see docs/CONTRIBUTING.md.
+#
+# IMPORTANT: tags pushed by the default GITHUB_TOKEN do NOT trigger downstream
+# `on: push: tags` workflows (GitHub blocks recursive workflow dispatch). After
+# this workflow completes, the maintainer must run release.yml manually:
+#
+#   gh workflow run release.yml --ref <NEW_TAG>
+#
+# The release.yml workflow has a `workflow_dispatch` trigger that accepts a
+# `ref` input for exactly this case. The notice at the end of this workflow
+# echoes the right command.
 #
 # Stable releases (`vMAJOR.MINOR.PATCH` without suffix) are intentionally NOT
 # created here — they remain a manual `git tag -a v0.1.0 -m ...` step so that

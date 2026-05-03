@@ -119,6 +119,13 @@ func TestMemoryBudget_Idle(t *testing.T) {
 	if testing.Short() {
 		t.Skip("memory budget tests skipped under -short")
 	}
+	// macOS runners add scheduler noise that flakes the active-load drain
+	// window without surfacing a real regression — same caveat as the
+	// search SLA gate. CI ci.yml gates on Linux only; skip on others so
+	// `go test ./...` on macOS does not flake.
+	if runtime.GOOS != "linux" {
+		t.Skipf("memory budget gate runs on linux only (got %s)", runtime.GOOS)
+	}
 
 	buildIsolatedApp(t)
 
@@ -154,6 +161,9 @@ func TestMemoryBudget_Idle(t *testing.T) {
 func TestMemoryBudget_Active(t *testing.T) {
 	if testing.Short() {
 		t.Skip("memory budget tests skipped under -short")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skipf("memory budget gate runs on linux only (got %s)", runtime.GOOS)
 	}
 
 	a, bgCtx := buildIsolatedApp(t)

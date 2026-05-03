@@ -9,10 +9,12 @@
 [![codecov](https://codecov.io/gh/pgmac/lazytg/branch/main/graph/badge.svg)](https://codecov.io/gh/pgmac/lazytg)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+<!-- Demo GIF placeholder. Recording recipe: docs/DEMO.md. The line below
+     intentionally stays commented out until a real recording lands so
+     GitHub does not show a broken-image icon.
 ![demo](docs/demo.gif)
+-->
 
-<!-- The GIF lands once a maintainer records one — see docs/DEMO.md.
-     Until then GitHub renders the alt text instead of breaking the layout. -->
 
 ## What is lazytg
 
@@ -98,8 +100,8 @@ lazytg login --account +71234567890
 lazytg                                 # opens the TUI
 ```
 
-Other install paths (`.deb`, `.rpm`, manual signed tarball, `go install`,
-`-tags sqlcipher` build) are documented in [docs/INSTALL.md](docs/INSTALL.md).
+Other install paths (`.deb`, `.rpm`, manual signed tarball, `go install`)
+are documented in [docs/INSTALL.md](docs/INSTALL.md).
 
 ## Install
 
@@ -191,9 +193,12 @@ Developer docs:
 - [docs/DEMO.md](docs/DEMO.md) — maintainer runbook for recording the demo gif.
 - [docs/plans/lazytg-v0.1.0.md](docs/plans/lazytg-v0.1.0.md) — full v0.1.0 roadmap.
 
-Stage 4 deliverables (`docs/BETA_CHECKLIST.md`, `docs/RELEASE_PROCESS.md`,
-`docs/RELEASE_ANNOUNCE.md`) will be linked here once Tasks 6 and 7 of the
-[Stage 4 plan](docs/plans/20260503-lazytg-stage4-release.md) ship.
+Release/maintainer docs:
+
+- [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md) — alpha → beta → rc → stable runbook with hotfix and rollback.
+- [docs/BETA_CHECKLIST.md](docs/BETA_CHECKLIST.md) — 6-step external-tester smoke checklist.
+- [docs/RELEASE_ANNOUNCE.md](docs/RELEASE_ANNOUNCE.md) — Show HN / r/commandline / lobste.rs / r/golang announcement drafts.
+- [docs/plans/completed/20260503-lazytg-stage4-release.md](docs/plans/completed/20260503-lazytg-stage4-release.md) — Stage 4 release-engineering plan.
 
 ## Manual smoke test
 
@@ -222,15 +227,7 @@ The release pipeline assumes a few external resources exist before the first sta
 
 ### SQLCipher (encrypted DB) build variant
 
-The release matrix ships a second binary variant, `lazytg-sqlcipher_*`, built with `-tags sqlcipher` and CGo. It requires a system `libsqlcipher` at runtime (`brew install sqlcipher` on macOS, `apt install libsqlcipher-dev` on Debian/Ubuntu) and is published only for `darwin/{amd64,arm64}` and `linux/amd64` because cross-compiling CGo binaries needs additional toolchains.
-
-**Local snapshot caveat.** Building the SQLCipher variant locally requires `libsqlcipher` to be installed and discoverable by the C toolchain. To skip it during a local snapshot run, set `SKIP_SQLCIPHER=true`:
-
-```sh
-SKIP_SQLCIPHER=true goreleaser release --snapshot --clean --skip=publish --skip=sign --skip=announce
-```
-
-CI (`release.yml`) does not set `SKIP_SQLCIPHER` and builds both variants on a runner with the right toolchain.
+Deferred past v0.1. The `sqlcipher` build tag is reserved for a future CGo-backed driver. Until that driver lands, building with `-tags sqlcipher` fails to compile (deliberately — see `internal/storage/sqlite/driver_sqlcipher.go`). Releases ship the pure-Go variant only.
 
 ### Verifying signatures
 

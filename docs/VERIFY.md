@@ -149,7 +149,7 @@ gating), open an issue describing the workflow you want to enable.
 | `Error: no matching signatures`                     | The signature does not match this artifact's hash                                       | The archive was modified after signing. Re-download from GitHub Releases and try again; if it still fails, file a security advisory. |
 | `Error: certificate identity does not match`         | The workflow that signed this run is not `pgmac/lazytg/.github/workflows/release.yml`  | Either the artifact came from a fork, or the regex above is stale. Confirm the URL points at the canonical repo.   |
 | `Error: ... transparency log entry not found`        | The signature's Rekor entry has aged out (Sigstore-side outage)                         | Try again later; this rarely happens. Validate via Step 1 (checksum + checksum-signature) in the meantime.        |
-| `Verified OK` but archive contents look wrong       | Archive integrity is good but you grabbed the wrong target (e.g. SQLCipher vs pure-Go)  | Re-check the filename — pure-Go is `lazytg_*`, SQLCipher is `lazytg-sqlcipher_*`.                                  |
+| `Verified OK` but archive contents look wrong       | Archive integrity is good but you grabbed the wrong platform/arch                       | Re-check the filename — should match `lazytg_${VERSION}_${OS}_${ARCH}.tar.gz` for your platform.                  |
 
 A `Verified OK` plus a successful `sha256sum -c` is the gating signal
 for installation. **Do not install if either fails.**

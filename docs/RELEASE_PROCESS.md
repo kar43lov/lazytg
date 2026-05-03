@@ -43,9 +43,9 @@
 
 ### Этап A — Alpha (внутреннее тестирование)
 
-1. Обновить `CHANGELOG.md`:
+1. Обновить `CHANGELOG.md` (флаг `--prepend` добавляет новую секцию **поверх** существующего файла, не затирая историю):
    ```sh
-   git-cliff --tag v0.1.0-alpha.1 --unreleased --output CHANGELOG.md
+   git-cliff --tag v0.1.0-alpha.1 --unreleased --prepend CHANGELOG.md
    ```
    _Если git-cliff не установлен — отредактировать `CHANGELOG.md` вручную, перенеся Unreleased → `## [0.1.0-alpha.1] - YYYY-MM-DD`._
 
@@ -68,11 +68,17 @@
 
 5. CI (`release.yml`) автоматически:
    - Запустит goreleaser
-   - Соберёт артефакты (pure-Go × 4 платформы + sqlcipher × 3 платформы где есть CGo тулчейн)
+   - Соберёт артефакты (pure-Go × 4 платформы — linux/darwin × amd64/arm64; SQLCipher отложен past v0.1)
    - Подпишет через cosign keyless OIDC (sigstore bundle per-archive + checksums.txt)
    - Создаст GitHub Release с `prerelease=true`
    - **НЕ** обновит brew formula (skip_upload по `.Prerelease` template)
    - **НЕ** опубликует .deb/.rpm в публичные репозитории (только как assets в Release)
+
+   _Альтернативно — если тег создан через `gh workflow run prerelease.yml`, release.yml **не триггерится автоматически** (GitHub блокирует recursive workflow dispatch для тегов, запушенных GITHUB_TOKEN). Запустить вручную:_
+
+   ```sh
+   gh workflow run release.yml --ref v0.1.0-alpha.1
+   ```
 
 6. Проверить GitHub Release вручную:
    - Скачать `lazytg_*_darwin_arm64.tar.gz` + `.sigstore.json`
@@ -104,9 +110,9 @@
 
 ### Этап D — Stable
 
-1. Обновить `CHANGELOG.md` финально (объединив все alpha/beta/rc entries в один `## [0.1.0] - YYYY-MM-DD`):
+1. Обновить `CHANGELOG.md` финально (флаг `--prepend` добавляет секцию поверх; объединение alpha/beta/rc entries в `## [0.1.0]` делается вручную, если нужно):
    ```sh
-   git-cliff --tag v0.1.0 --unreleased --output CHANGELOG.md
+   git-cliff --tag v0.1.0 --unreleased --prepend CHANGELOG.md
    ```
 
 2. Commit + tag + push:
@@ -165,9 +171,9 @@ GitHub Releases можно пометить как deprecated, но **удаля
 |---------|-------------|---------|
 | `goreleaser` падает на cosign sign | Проверить что `id-token: write` permission в release.yml | Добавить `permissions: id-token: write, contents: write` в job |
 | Brew formula не обновилась | Проверить `HOMEBREW_TAP_GITHUB_TOKEN` secret + scope `contents:write` на `pgmac/homebrew-lazytg` | Перегенерировать PAT, обновить secret |
-| Sqlcipher build падает на ARM linux | CGo cross-compile требует `aarch64-linux-gnu-gcc` тулчейна | Убрать `linux/arm64` из sqlcipher build entry в `.goreleaser.yaml` (документировано в плане) |
-| `nfpms` не генерирует .deb | Проверить что `builds: [lazytg]` (только pure-Go ID) | Не указывать `lazytg-sqlcipher` в nfpms.builds |
-| GitHub Release создан, но без assets | goreleaser завершился до upload — смотреть логи job | Перезапустить workflow вручную через `gh workflow run release.yml` |
+| `nfpms` не генерирует .deb | Проверить что `builds: [lazytg]` (только pure-Go ID) | В `.goreleaser.yaml` секция `nfpms[].ids` должна содержать `lazytg` |
+| Тег от prerelease.yml не запустил release.yml | GitHub блокирует recursive workflow dispatch для тегов от GITHUB_TOKEN | `gh workflow run release.yml --ref <tag>` (workflow_dispatch добавлен) |
+| GitHub Release создан, но без assets | goreleaser завершился до upload — смотреть логи job | Перезапустить workflow вручную через `gh workflow run release.yml --ref <tag>` |
 | `cosign verify-blob` падает у пользователя | Mismatch certificate-identity-regexp | Убедиться что pattern в VERIFY.md соответствует реальному pattern в OIDC claim |
 
 ---
