@@ -214,7 +214,7 @@ v0.1.0 готов к тегированию: код-функционал Stages 
 1. **Стек зафиксирован.** Не предлагать миграцию на TDLib, Bubble Tea v1, gocui, tview, mattn/go-sqlite3.
 2. **Архитектурные слои.** Любой код в `internal/core/` НЕ должен импортировать gotd или bubbletea (depguard защитит, но проверять при ревью).
 3. **Tests-first для core.** Каждая задача в плане = тесты (unit/integration/e2e). Целевой coverage: `core` ≥80% (текущее ~81%), `ui` ≥60% (текущее ~79%) — codecov tracks, без hard CI gate.
-4. **Conventional commits.** `feat:`, `fix:`, `perf:`, `security:`, `breaking:`. Enforced через lefthook commit-msg hook (commitlint via npx с bash-fallback) + CI pr-title job (`amannn/action-semantic-pull-request`).
+4. **Conventional commits.** Allowed types (см. `.commitlintrc.yml` type-enum): `feat`, `fix`, `perf`, `security`, `docs`, `refactor`, `test`, `chore`, `build`, `ci`. Breaking changes — через `!`-суффикс (`feat!:`, `fix(scope)!:`), не через тип `breaking`. Enforced через lefthook commit-msg hook (commitlint с bash-fallback) + CI pr-title job (`amannn/action-semantic-pull-request`).
 5. **Никаких самостоятельных коммитов.** Коммиты только по явному запросу пользователя.
 6. **YAGNI.** Если идея не в roadmap — не реализуем. Plugin API, multi-account UI, voice — отложены явно.
 7. **Ban-risk first.** При любых изменениях auth/send/updates задумываться о поведенческом следе. Rate-limit guard будет добавлен вместе с send-path (Stage 2) и не отключается.

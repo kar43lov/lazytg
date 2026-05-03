@@ -10,9 +10,11 @@ name: Create prerelease tag
 #
 #   gh workflow run release.yml --ref <NEW_TAG>
 #
-# The release.yml workflow has a `workflow_dispatch` trigger that accepts a
-# `ref` input for exactly this case. The notice at the end of this workflow
-# echoes the right command.
+# The release.yml workflow has a `workflow_dispatch` trigger; `gh workflow run
+# --ref <tag>` checks out that tag and exposes it as `github.ref_name`, which
+# release.yml uses for both the push-tag and manual-dispatch paths (no explicit
+# input needed). The notice at the end of this workflow echoes the right
+# command.
 #
 # Stable releases (`vMAJOR.MINOR.PATCH` without suffix) are intentionally NOT
 # created here — they remain a manual `git tag -a v0.1.0 -m ...` step so that
@@ -93,8 +95,8 @@ jobs:
             exit 1
           fi
 
-          echo "tag=${NEW_TAG}" >> $GITHUB_OUTPUT
-          echo "base=${BASE}" >> $GITHUB_OUTPUT
+          echo "tag=${NEW_TAG}" >> "$GITHUB_OUTPUT"
+          echo "base=${BASE}" >> "$GITHUB_OUTPUT"
           echo "::notice title=Computed prerelease tag::${NEW_TAG} (base=${BASE}, kind=${KIND})"
 
       - name: Configure git identity
