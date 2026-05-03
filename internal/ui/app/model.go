@@ -18,6 +18,7 @@ import (
 	"github.com/pgmac/lazytg/internal/ui/keymap"
 	"github.com/pgmac/lazytg/internal/ui/overlay"
 	"github.com/pgmac/lazytg/internal/ui/panes/chats"
+	uisearch "github.com/pgmac/lazytg/internal/ui/panes/search"
 	"github.com/pgmac/lazytg/internal/ui/panes/thread"
 	"github.com/pgmac/lazytg/internal/ui/statusbar"
 )
@@ -77,6 +78,7 @@ type Deps struct {
 	Thread *thread.Model
 	Input  *input.Model
 	Status *statusbar.Model
+	Search *uisearch.Model
 }
 
 // App is the root Bubble Tea model. Sub-pane fields are concrete types
@@ -88,6 +90,21 @@ type App struct {
 	input  input.Model
 	status statusbar.Model
 	help   overlay.Help
+	search uisearch.Model
+
+	// preSearchFocus remembers the focus target the user was on
+	// before opening the search overlay so Esc / SearchJump can
+	// restore it. -1 means "no overlay open" so the field is
+	// effectively ignored.
+	preSearchFocus FocusTarget
+
+	// pendingScroll holds a deferred ScrollTo target produced by
+	// handleSearchJump. The thread pane's applyLoaded calls
+	// GotoBottom unconditionally, so a synchronous ScrollTo would
+	// be overwritten. We instead remember the target and re-issue
+	// the scroll once the broadcast machinery has processed the
+	// messagesLoadedMsg. nil means no pending scroll.
+	pendingScroll *pendingThreadScroll
 
 	width    int
 	height   int
@@ -105,18 +122,42 @@ type App struct {
 // "(unfocused)" body, focus starts on Chats.
 func New(deps Deps) App {
 	app := App{
-		chats:  chooseModel(deps.Chats, chats.New),
-		thread: chooseModel(deps.Thread, thread.New),
-		input:  chooseModel(deps.Input, input.New),
-		status: chooseStatus(deps.Status),
-		help:   overlay.New(deps.Keymap),
-		focus:  FocusChats,
-		keymap: deps.Keymap,
-		bus:    deps.Bus,
-		log:    deps.Log,
+		chats:          chooseModel(deps.Chats, chats.New),
+		thread:         chooseModel(deps.Thread, thread.New),
+		input:          chooseModel(deps.Input, input.New),
+		status:         chooseStatus(deps.Status),
+		help:           overlay.New(deps.Keymap),
+		search:         chooseSearch(deps.Search),
+		preSearchFocus: -1,
+		focus:          FocusChats,
+		keymap:         deps.Keymap,
+		bus:            deps.Bus,
+		log:            deps.Log,
 	}
 	app.chats = app.chats.SetFocus(true)
 	return app
+}
+
+// chooseSearch returns *src if non-nil, else a no-service overlay
+// constructed with default debounce. The placeholder behaves as
+// "always empty" because its Service is nil — fine for
+// app/View tests that never open the overlay.
+func chooseSearch(src *uisearch.Model) uisearch.Model {
+	if src != nil {
+		return *src
+	}
+	return uisearch.New(nil, 0, nil)
+}
+
+// pendingThreadScroll is the deferred scroll target produced by
+// handleSearchJump. The app holds it until applyLoaded (the broadcast
+// path that lands messagesLoadedMsg in the thread pane) has run, at
+// which point ScrollTo can find the target message in m.messages and
+// position the viewport.
+type pendingThreadScroll struct {
+	ChatID    int64
+	MessageID int64
+	Around    int
 }
 
 // chooseModel returns *src if non-nil, else the package's zero-value
@@ -148,6 +189,16 @@ func (a App) Focus() FocusTarget { return a.focus }
 // HelpVisible reports whether the help overlay is currently shown. Exposed
 // for tests so they don't need to grep the rendered output.
 func (a App) HelpVisible() bool { return a.help.Visible }
+
+// SearchVisible reports whether the search overlay is currently
+// shown. Exposed for tests so they don't need to grep the rendered
+// output.
+func (a App) SearchVisible() bool { return a.search.Visible }
+
+// SearchModel returns the embedded search overlay (test helper). The
+// model is value-copied; mutating the returned value does not affect
+// the App.
+func (a App) SearchModel() uisearch.Model { return a.search }
 
 // TooSmall reports whether the last WindowSize was below MinWidth/MinHeight.
 // Exposed for tests so they can assert without parsing the rendered View.

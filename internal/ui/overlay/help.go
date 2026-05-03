@@ -94,6 +94,7 @@ func (h Help) rows() []row {
 		{"focus prev", h.Keymap.FocusPrev},
 		{"scroll up", h.Keymap.ScrollUp},
 		{"scroll down", h.Keymap.ScrollDown},
+		{"search", h.Keymap.Search},
 		{"quit", h.Keymap.Quit},
 	}
 	out := make([]row, 0, len(bindings))

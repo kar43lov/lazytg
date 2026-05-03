@@ -31,8 +31,11 @@ func (a App) View() tea.View {
 	}
 
 	body := a.renderBody()
-	if a.help.Visible {
+	switch {
+	case a.help.Visible:
 		body = a.help.View(a.width, maxInt(a.height-1, 1))
+	case a.search.Visible:
+		body = a.search.View(a.width, maxInt(a.height-1, 1))
 	}
 	view := tea.NewView(body)
 	view.AltScreen = true

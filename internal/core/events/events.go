@@ -112,3 +112,17 @@ type ReindexProgress struct {
 }
 
 func (ReindexProgress) eventMarker() {}
+
+// SearchJumpRequested is emitted by the search overlay when the user
+// presses Enter on a hit. The app routes it into a chat switch (chats
+// pane Update + thread pane OpenChat) followed by a thread-pane
+// ScrollTo(MessageID, ±5 around). Routing through the bus keeps the
+// search overlay decoupled from chats / thread internals — anyone
+// subscribed to the bus can react to a jump (status bar can show the
+// jump target, future history-of-jumps panel can record it, etc.).
+type SearchJumpRequested struct {
+	ChatID    int64
+	MessageID int64
+}
+
+func (SearchJumpRequested) eventMarker() {}

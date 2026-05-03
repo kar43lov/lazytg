@@ -77,13 +77,24 @@ func (c *SendConfig) defaults() {
 // background goroutine, then update the record + emit a follow-up event
 // when the server replies (or all retries are exhausted). The struct is
 // safe for concurrent SendText calls — every call spawns its own
-// goroutine, scoped to the caller's context.
+// goroutine, scoped to the service-level background context (see
+// WithBackgroundContext).
 type SendService struct {
 	sender SenderInterface
 	store  OutgoingStore
 	bus    *events.Bus
 	log    *slog.Logger
 	cfg    SendConfig
+
+	// bgCtx is the lifetime ctx used for the deliver goroutine and the
+	// markSent / markFailed storage writes. It is intentionally NOT the
+	// caller's ctx because the typical caller (input pane closure in the
+	// TUI) returns immediately after SendText, and a defer-cancel on
+	// the closure ctx would otherwise abort every in-flight retry the
+	// instant SendText returns. WithBackgroundContext lets the wiring
+	// layer plumb through a runtime-scoped ctx so all in-flight sends
+	// shut down cleanly on TUI exit.
+	bgCtx context.Context
 
 	now    func() time.Time
 	newID  func() string
@@ -92,6 +103,10 @@ type SendService struct {
 
 // NewSendService wires a SendService. log may be nil; a no-op logger is
 // used in that case so unit tests stay free of plumbing noise.
+//
+// The deliver goroutine starts with context.Background as its lifetime;
+// callers that want a bounded service lifetime (production wiring) should
+// chain WithBackgroundContext before handing the service to consumers.
 func NewSendService(sender SenderInterface, store OutgoingStore, bus *events.Bus, log *slog.Logger, cfg SendConfig) *SendService {
 	cfg.defaults()
 	if log == nil {
@@ -103,10 +118,26 @@ func NewSendService(sender SenderInterface, store OutgoingStore, bus *events.Bus
 		bus:    bus,
 		log:    log,
 		cfg:    cfg,
+		bgCtx:  context.Background(),
 		now:    time.Now,
 		newID:  uuid.NewString,
 		jitter: rand.Float64,
 	}
+}
+
+// WithBackgroundContext sets the lifetime ctx for the deliver goroutines.
+// The wiring layer typically passes a ctx scoped to the TUI session so
+// every in-flight send aborts cleanly on shutdown. Returns the same
+// service for fluent chaining.
+//
+// Calling with a nil ctx is a no-op — the previous (or default
+// context.Background) ctx is preserved so a misconfigured caller cannot
+// silently break the deliver goroutine.
+func (s *SendService) WithBackgroundContext(ctx context.Context) *SendService {
+	if ctx != nil {
+		s.bgCtx = ctx
+	}
+	return s
 }
 
 // SendText opens a new outgoing-message lifecycle: persist the optimistic
@@ -115,10 +146,15 @@ func NewSendService(sender SenderInterface, store OutgoingStore, bus *events.Bus
 // record is in place (or the storage write fails) so the UI can render
 // the message immediately.
 //
-// The background goroutine inherits the caller's context for cancellation
-// purposes; cancelling the caller's context aborts an in-progress retry
-// loop without leaving the local record in an indeterminate state — the
-// final transition to "failed" still fires.
+// ctx scopes the synchronous SaveOutgoing call only; the deliver
+// goroutine uses the service-level bgCtx instead. This separation
+// matters because the typical caller — the input-pane handler in the
+// TUI — runs inside a tea.Cmd closure that defer-cancels its own ctx
+// when the closure returns. If the deliver goroutine inherited that ctx,
+// every send would be cancelled before the first sender RPC completes.
+// The service-level bgCtx (set via WithBackgroundContext) lives for the
+// TUI session, so deliver can run its full retry loop and only aborts on
+// program shutdown.
 func (s *SendService) SendText(ctx context.Context, chatID int64, text string, replyTo int) (string, error) {
 	if chatID == 0 {
 		return "", errors.New("send: chat_id is required")
@@ -143,7 +179,7 @@ func (s *SendService) SendText(ctx context.Context, chatID int64, text string, r
 		ChatID:  chatID,
 		State:   events.OutgoingStatePending,
 	})
-	go s.deliver(ctx, localID, chatID, text, replyTo)
+	go s.deliver(s.bgCtx, localID, chatID, text, replyTo)
 	return localID, nil
 }
 

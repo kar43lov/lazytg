@@ -182,6 +182,11 @@ func (m Model) Loading() bool { return m.loading }
 // pagination updates the cursor.
 func (m Model) OldestID() int64 { return m.oldestID }
 
+// YOffset returns the viewport's current y offset (top-most visible
+// rendered line). Exposed for tests so ScrollTo can be verified
+// without parsing the rendered View.
+func (m Model) YOffset() int { return m.viewport.YOffset() }
+
 // SetSize updates the pane dimensions. Called by the app on resize. We
 // reserve one row for the focus-aware header rendered by View and clamp
 // the viewport to (minViewportWidth, minViewportHeight) so a zero-pane
@@ -228,6 +233,64 @@ func (m Model) ScrollUp() Model {
 // chord. See ScrollUp for the rationale.
 func (m Model) ScrollDown() Model {
 	m.viewport.PageDown()
+	return m
+}
+
+// ScrollTo positions the viewport so the message with messageID is
+// visible roughly in the middle of the visible window. around hints
+// how many rows above and below the target should remain readable —
+// when the surrounding context is shorter than the viewport height the
+// target is centred; otherwise the target lands one "around" worth of
+// rows below the top.
+//
+// Returns the model unchanged when messageID is not in m.messages
+// (the caller is presumed to have loaded the surrounding window
+// already via JumpContext or repo.GetMessagesBefore — Stage 3 Task 4
+// keeps that orchestration in the app layer so the thread pane stays
+// self-contained).
+func (m Model) ScrollTo(messageID int64, around int) Model {
+	if messageID == 0 || len(m.messages) == 0 {
+		return m
+	}
+	if around < 0 {
+		around = 0
+	}
+	idx := -1
+	for i, msg := range m.messages {
+		if msg.ID == messageID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return m
+	}
+
+	width := m.viewport.Width()
+	if width <= 0 {
+		width = minViewportWidth
+	}
+
+	// Lines occupied by everything strictly before the target.
+	linesBefore := countRenderedLines(m.messages[:idx], width)
+	// Add the inter-message blank-line separator that countRenderedLines
+	// only counts between adjacent messages — when idx > 0 the target's
+	// header is preceded by a blank row.
+	if idx > 0 {
+		linesBefore++
+	}
+
+	// Target the row where the target's header lands. Subtracting the
+	// "around" hint nudges the viewport up so the user has visible
+	// context above the hit. SetYOffset clamps internally so we don't
+	// have to handle negative values explicitly — but doing the clamp
+	// here keeps the value monotonically non-negative for tests that
+	// inspect it.
+	offset := linesBefore - around
+	if offset < 0 {
+		offset = 0
+	}
+	m.viewport.SetYOffset(offset)
 	return m
 }
 
@@ -292,11 +355,18 @@ func loadCmd(repo Repository, chatID int64, offset, limit int) tea.Cmd {
 // paginateCmd is the scroll-up sibling of loadCmd. It drops the result
 // into a separate message type so applyPagination knows to *prepend*
 // rather than replace the current slice.
-func paginateCmd(repo Repository, chatID int64, offset, limit int) tea.Cmd {
+//
+// Pagination is cursor-based (id < beforeID) rather than offset-based
+// because the latter races with applyIncoming: a live append between
+// initial load and scroll-up shifts the row count and produces a gap
+// at the boundary. The cursor pins the boundary to a concrete id, so
+// pagination remains correct regardless of how many messages have
+// arrived live in between.
+func paginateCmd(repo Repository, chatID, beforeID int64, limit int) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 		defer cancel()
-		raw, err := repo.GetMessages(ctx, chatID, limit+1, offset)
+		raw, err := repo.GetMessagesBefore(ctx, chatID, beforeID, limit+1)
 		if err != nil {
 			return messagesLoadFailedMsg{chatID: chatID, err: err}
 		}

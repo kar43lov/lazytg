@@ -178,10 +178,15 @@ func loadKeymap(override, configDir string) (keymap.Keymap, error) {
 // fire (the cmd layer calls that once tea.Program is ready to receive
 // program.Send for the bus → tea.Msg fan-in).
 //
+// bgCtx scopes the SendService deliver goroutines so an in-flight retry
+// loop aborts cleanly on TUI shutdown. Pass the same ctx the cmd layer
+// uses to drive the Bubble Tea program — typically the cobra cmd ctx
+// (or its background sub-ctx). nil falls back to context.Background.
+//
 // The method is idempotent: calling it twice replaces the previous
 // services with the new ones, which is useful when a reconnect rebuilds
 // the underlying gotd client.
-func (a *App) AttachClient(client *tgclient.Client) {
+func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client) {
 	if client == nil {
 		return
 	}
@@ -193,7 +198,8 @@ func (a *App) AttachClient(client *tgclient.Client) {
 	a.Backfill = backfill
 
 	sender := tgclient.NewSender(client.API(), peerResolverAdapter{peers: a.Peers})
-	a.Sender = coresync.NewSendService(senderAdapter{sender: sender}, outgoingStoreAdapter{repo: a.Repo}, a.Bus, a.Log, coresync.SendConfig{})
+	a.Sender = coresync.NewSendService(senderAdapter{sender: sender}, outgoingStoreAdapter{repo: a.Repo}, a.Bus, a.Log, coresync.SendConfig{}).
+		WithBackgroundContext(bgCtx)
 
 	a.Updates = tgclient.NewUpdatesDispatcher(a.Bus, a.Log)
 	a.Reconnect = coresync.NewReconnectManager(reconnectAdapter{client: client}, a.Bus, a.Log, coresync.ReconnectConfig{})

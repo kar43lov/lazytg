@@ -1,6 +1,10 @@
 package app
 
-import tea "charm.land/bubbletea/v2"
+import (
+	tea "charm.land/bubbletea/v2"
+
+	uisearch "github.com/pgmac/lazytg/internal/ui/panes/search"
+)
 
 // focusCycledMsg is the tea.Msg emitted by cmdNextFocus / cmdPrevFocus when
 // Tab/Shift-Tab moves focus. Update consumes it to apply the focus change.
@@ -26,6 +30,13 @@ func cmdPrevFocus() tea.Cmd {
 // cmdToggleHelp emits a helpToggledMsg.
 func cmdToggleHelp() tea.Cmd {
 	return func() tea.Msg { return helpToggledMsg{} }
+}
+
+// cmdOpenSearch emits a OpenedMsg the search overlay reacts to
+// by becoming Visible and focusing its textinput. Routing through the
+// Cmd path keeps the open behaviour observable from tests.
+func cmdOpenSearch() tea.Cmd {
+	return func() tea.Msg { return uisearch.OpenedMsg{} }
 }
 
 // cmdQuit is tea.Quit — re-exported under our naming convention so call

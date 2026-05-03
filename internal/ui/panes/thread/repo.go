@@ -14,11 +14,19 @@ import (
 //
 // GetMessages returns rows ordered by date desc / id desc — that is the
 // SQL contract enforced by sqlite.Repo. The thread pane reverses the
-// slice to render oldest-first (top to bottom reading order); keeping
-// the SQL "newest first" gives offset-paging the right shape (page 1 =
-// newest 200, page 2 = next 200 oldest).
+// slice to render oldest-first (top to bottom reading order). Used for
+// the initial chat-open load only.
+//
+// GetMessagesBefore returns rows with id strictly less than beforeID,
+// ordered by id desc. Used for scroll-up pagination because offset-
+// based paging races with applyIncoming: a live MessageReceived
+// appended between initial load and scroll-up shifts the "skip N rows"
+// boundary, leaving a one-message gap in displayed history. Cursor
+// paging (id < oldestID) is stable under live appends because the cursor
+// pins the boundary to a concrete id.
 type Repository interface {
 	GetMessages(ctx context.Context, chatID int64, limit, offset int) ([]domain.Message, error)
+	GetMessagesBefore(ctx context.Context, chatID, beforeID int64, limit int) ([]domain.Message, error)
 }
 
 // HistoryProvider mirrors core/sync.HistoryProvider so the thread pane

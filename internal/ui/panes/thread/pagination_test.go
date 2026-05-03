@@ -23,6 +23,10 @@ type fakeRepo struct {
 	// callOffsets records every (limit, offset) pair GetMessages was
 	// invoked with so tests can assert pagination cursors moved.
 	callOffsets [][2]int
+	// cursorCalls records every (beforeID, limit) pair GetMessagesBefore
+	// was invoked with. Cursor-based pagination is the production path
+	// for scroll-up; offset-based is only used for the initial load.
+	cursorCalls [][2]int64
 	err         error
 }
 
@@ -82,6 +86,34 @@ func (r *fakeRepo) GetMessages(_ context.Context, _ int64, limit, offset int) ([
 	}
 	out := make([]domain.Message, end-offset)
 	copy(out, r.messages[offset:end])
+	return out, nil
+}
+
+// GetMessagesBefore returns up to limit messages with id strictly less
+// than beforeID, ordered by id desc. r.messages is already sorted DESC
+// (newest first) at construction, so we scan to find the first entry
+// with ID < beforeID and slice from there.
+func (r *fakeRepo) GetMessagesBefore(_ context.Context, _ int64, beforeID int64, limit int) ([]domain.Message, error) {
+	r.cursorCalls = append(r.cursorCalls, [2]int64{beforeID, int64(limit)})
+	if r.err != nil {
+		return nil, r.err
+	}
+	start := -1
+	for i, m := range r.messages {
+		if m.ID < beforeID {
+			start = i
+			break
+		}
+	}
+	if start == -1 {
+		return nil, nil
+	}
+	end := start + limit
+	if end > len(r.messages) {
+		end = len(r.messages)
+	}
+	out := make([]domain.Message, end-start)
+	copy(out, r.messages[start:end])
 	return out, nil
 }
 
@@ -210,15 +242,25 @@ func TestPaginationLoadsOlderPage(t *testing.T) {
 		t.Fatalf("with 500 rows total and 400 loaded, hasMore should still be true")
 	}
 
-	// Repo offsets recorded: first call (limit+1, 0), second (limit+1, 200).
-	if len(repo.callOffsets) < 2 {
-		t.Fatalf("expected at least 2 repo calls, got %v", repo.callOffsets)
+	// Initial load uses GetMessages(limit+1, 0); scroll-up uses cursor-
+	// based GetMessagesBefore(beforeID=oldestLoaded, limit+1).
+	if len(repo.callOffsets) < 1 {
+		t.Fatalf("expected at least 1 GetMessages call, got %v", repo.callOffsets)
 	}
 	if repo.callOffsets[0] != [2]int{initialPageSize + 1, 0} {
 		t.Fatalf("first call offsets: want {201,0}, got %v", repo.callOffsets[0])
 	}
-	if repo.callOffsets[1] != [2]int{pageSize + 1, initialPageSize} {
-		t.Fatalf("second call offsets: want {201,200}, got %v", repo.callOffsets[1])
+	if len(repo.cursorCalls) < 1 {
+		t.Fatalf("expected at least 1 GetMessagesBefore call after pagination, got %v", repo.cursorCalls)
+	}
+	// After initial load, oldest visible ID is 301 (newest 200 of 500).
+	// Cursor request must page strictly older than 301 to avoid races
+	// with applyIncoming.
+	if repo.cursorCalls[0][0] != 301 {
+		t.Fatalf("cursor beforeID: want 301, got %d", repo.cursorCalls[0][0])
+	}
+	if repo.cursorCalls[0][1] != int64(pageSize+1) {
+		t.Fatalf("cursor limit: want %d, got %d", pageSize+1, repo.cursorCalls[0][1])
 	}
 }
 

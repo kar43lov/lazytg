@@ -127,36 +127,19 @@ Pitch продукта «Instant search across your entire Telegram history» с
 
 ### Task 4: Search service jump-to-message + Search UI overlay
 
-- [ ] Расширить `internal/core/search/service.go`: метод `JumpContext(ctx, hit Hit, around int) ([]domain.Message, int, error)` где `around` = 5. Возвращает 11 сообщений (5 до + сам + 5 после) из того же чата + индекс target в slice. Используется UI для прокрутки к нужному сообщению с контекстом
-- [ ] Добавить событие `SearchJumpRequested{ChatID int64; MessageID int64}` в `internal/core/events/events.go` — UI app слушает и переключает chat + scroll thread pane
-- [ ] Создать `internal/ui/panes/search/messages.go` с TUI-сообщениями:
-  - `SearchOpenedMsg{}`
-  - `SearchClosedMsg{}`
-  - `SearchQueryChangedMsg{Query string}`
-  - `SearchResultsMsg{Hits []search.Hit; Err error}`
-  - `SearchJumpMsg{Hit search.Hit}`
-- [ ] Создать `internal/ui/panes/search/model.go` с `Model{input textinput.Model; results list.Model; service SearchServiceInterface; debounce time.Duration; lastQuery string; loading bool; err error}` где `SearchServiceInterface{Search(ctx, raw string, limit int) ([]search.Hit, error)}`. Конструктор `New(service, debounce time.Duration) Model` (default debounce 150ms)
-- [ ] Создать `internal/ui/panes/search/update.go`:
-  - `tea.KeyMsg`:
-    - Esc → `SearchClosedMsg`
-    - Enter (на выбранном результате) → `SearchJumpMsg{Hit}` → app конвертирует в `events.SearchJumpRequested`
-    - Up/Down/PgUp/PgDn → делегировать в `m.results.Update`
-    - Иначе → делегировать в `m.input.Update`
-  - После input изменения: установить debounce-таймер через `tea.Tick(150ms, ...)`. Если за это время input не менялся — эмитировать `SearchQueryChangedMsg`
-  - `SearchQueryChangedMsg{Query}` → если Query пустой — очистить results, иначе → `tea.Cmd` который вызывает `service.Search(ctx, query, 50)` и возвращает `SearchResultsMsg`
-  - `SearchResultsMsg` → обновить `m.results.SetItems(...)`, `m.loading = false`
-- [ ] Создать `internal/ui/panes/search/view.go` — overlay в центре экрана: lipgloss border, top-3 строки input, ниже список results. Каждый результат: chat title + snippet (с `<b>` метками заменёнными на ANSI bold) + дата
-- [ ] Подключить overlay в `internal/ui/app/`: keymap binding `Search` (default `/`), при активации `m.search.Visible = true`, focus в search overlay (приоритет над panes). При `SearchJumpMsg` → закрыть overlay, эмитировать `events.SearchJumpRequested` через app.bus, thread pane подпишется и сделает `OpenChat(ChatID) → ScrollTo(MessageID, around=5)`
-- [ ] Добавить метод `ScrollTo(messageID int64, around int)` в `internal/ui/panes/thread/model.go` — загружает контекст через `service.JumpContext` (или прямо через repo), устанавливает viewport scroll так чтобы target был видим (5 строк сверху, 5 снизу)
-- [ ] Создать `internal/ui/panes/search/model_test.go` через teatest:
-  1. Init → input пустой, results пустые
-  2. KeyMsg "h", "i" → debounce-таймер взведён
-  3. После 150ms → `SearchQueryChangedMsg{Query: "hi"}` → service.Search вызван
-  4. Вернуть `SearchResultsMsg{Hits: [...]}` → results содержат hits
-  5. KeyMsg Down + Enter → `SearchJumpMsg{Hit}` эмитирован
-  6. KeyMsg Esc → `SearchClosedMsg`
-- [ ] Создать `internal/ui/panes/thread/scroll_test.go`: моки repo с 100 сообщениями, `ScrollTo(messageID=50, around=5)` → viewport показывает сообщения 45-55, target 50 в фокусе
-- [ ] Запустить `go test -race ./internal/ui/...` — зелёное
+- [x] `Service.JumpContext(ctx, hit Hit, around int) ([]domain.Message, int, error)` реализован в `internal/core/search/service.go`. Default `around = 5` через константу `DefaultJumpContext`. Один SQL round-trip — `UNION ALL` двух полузапросов (id < target DESC LIMIT around) и (id >= target ASC LIMIT around+1) с внешним `ORDER BY id ASC` чтобы вернуть слайс уже в правильном порядке. На границах возвращается короче (target=2 → 7 сообщений вместо 11). Если target отсутствует в репо — `ErrJumpTargetMissing`. Coverage: 4 кейса в `jump_test.go` (centred window, start boundary, default around, missing target).
+- [x] `events.SearchJumpRequested{ChatID, MessageID}` добавлен в `internal/core/events/events.go` с `eventMarker()`. Публикуется приложением при `JumpMsg`-обработке (если bus подключён). Подписчики (chats pane reorder, status bar, future history-of-jumps) могут реагировать на bus event.
+- [x] `internal/ui/panes/search/messages.go` создан с типами `OpenedMsg`, `ClosedMsg`, `QueryChangedMsg{Query}`, `ResultsMsg{Hits, Err}`, `JumpMsg{Hit}`. Имена без префикса `Search` — пакет уже называется `search`, повторение стертерило бы (revive linter); со стороны app они доступны как `uisearch.OpenedMsg` и т.д.
+- [x] `internal/ui/panes/search/model.go` создан с `Model{Width, Height, Visible, input textinput.Model, service Service, debounce, log, queryGeneration, lastQuery, hits, cursor, err, loading}`. Интерфейс `Service` (вместо `SearchServiceInterface`) с одним методом `Search(ctx, raw, limit) ([]search.Hit, error)`. Конструктор `New(service, debounce, log)` с fallback к `DefaultDebounce=150ms` и `DefaultLimit=50`. Cursor в результатах хранится напрямую (без bubbles/list — упрощает тесты).
+- [x] `internal/ui/panes/search/update.go` создан. Esc → `Close + ClosedMsg`. Enter на выбранном hit → `Close + JumpMsg{Hit}`. Up/Down → cursor с clamp на границах. Любая другая клавиша → forward в `textinput.Update`; если value изменился — `scheduleQuery` инкрементирует `queryGeneration` и арм-ит `tea.Tick(debounce)` с этим generation. `debounceTickMsg` со stale generation (после последующих keystrokes) — drop. `ResultsMsg` сбрасывает loading и cursor=0; ошибки попадают в `m.err` для рендера в View.
+- [x] `internal/ui/panes/search/view.go` создан. lipgloss centred modal с rounded border. Внутри: input строка, далее по состоянию — error / "Searching…" / hint / список hits. В каждом hit-row: `chat=<id>  YYYY-MM-DD HH:MM  snippet`. FTS5-маркеры `<b>...</b>` в snippet заменяются на bold ANSI runs (через `applyDelim`-style парсер чтобы непарные открытия не съели остаток). Cursor row красится в `lipgloss.Color("12")` (bright blue).
+- [x] Wiring overlay в `internal/ui/app/`: keymap binding `Search` добавлен с дефолтом `/` в `keymap/defaults.go` и `loader.go`. Help overlay показывает новый binding. Global key handler в `app/update.go` пропускает `/` если `focus == FocusInput` (printable char) или `focus == FocusChats` (там `/` — bubbles/list filter, нельзя угнать). Search-overlay приоритет над panes — пока `a.search.Visible == true`, все сообщения роутятся в `a.search.Update`. View рисует overlay поверх 2-pane через свитч в `view.go`.
+- [x] `Model.ScrollTo(messageID, around int)` в `internal/ui/panes/thread/model.go`. Находит target в `m.messages`, считает `linesBefore` через `countRenderedLines` + 1 за blank-line separator, вычитает `around` и через `viewport.SetYOffset` ставит окно. Clamp в `>= 0` встроен. Несуществующий ID — no-op. Дополнительно экспонирован метод-геттер `YOffset()` для тестов.
+- [x] App-wiring scroll-after-load: `JumpMsg` в `app/update.go::handleSearchJump` сохраняет `pendingScroll` (chatID, messageID, around=5), вызывает `thread.OpenChat`, через `bus.Publish(events.SearchJumpRequested)` уведомляет других подписчиков. Метод `applyPendingScroll` вызывается из `withPendingScroll(broadcastToPanes(msg))` после того как `messagesLoadedMsg` уже применился — иначе `applyLoaded`-ный `GotoBottom()` затёр бы наш scroll. Если target ещё не загружен (старее initialPageSize), pendingScroll просто не находит ID и ничего не двигает; scroll-сигнал держится до следующего broadcast — TODO для будущей итерации. По факту в тесте `TestSearchJumpSwitchesChatAndScrolls` без живого репо проверяется только switch chat и закрытие overlay.
+- [x] `internal/ui/panes/search/model_test.go`: 9 тестов. `TestUpdate_KeyTriggersDebouncedSearch` использует `time.Hour`-debounce с прямой инжекцией `debounceTickMsg` (generation 1 → stale, generation 2 → fresh + `service.Search` вызван) — без актуального `time.NewTimer` в тесте. Также: Open/Close/Reset, Esc/Enter/cursor, empty-query clears, error surfaces, View hidden/visible.
+- [x] `internal/ui/app/search_test.go`: 5 тестов. `/` из FocusThread открывает overlay. `/` из FocusChats — suppressed. Esc закрывает. End-to-end JumpMsg: переключение chatID + закрытие overlay. Deps.Search injection survives construction.
+- [x] `internal/ui/panes/thread/scroll_test.go`: 3 теста. Centred target — ScrollTo двигает viewport между top и bottom (offset > 0 и < bottomOffset). Unknown ID — no-op. Target в начале — clamp в YOffset=0.
+- [x] `go test -race ./internal/ui/... ./internal/core/search/...` зелёное; `golangci-lint run` — 0 issues.
 
 ### Task 5: Frecency store + Командная палитра L1 (Ctrl-Space) + Unicode-fuzzy
 

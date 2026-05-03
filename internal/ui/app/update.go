@@ -7,6 +7,7 @@ import (
 	"github.com/pgmac/lazytg/internal/core/events"
 	"github.com/pgmac/lazytg/internal/ui/input"
 	"github.com/pgmac/lazytg/internal/ui/panes/chats"
+	uisearch "github.com/pgmac/lazytg/internal/ui/panes/search"
 )
 
 // Init is the initial Cmd batch. Each sub-pane gets its own Init so they can
@@ -64,11 +65,27 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		events.ConnectionStateChanged,
 		events.StorageStateChanged:
 		return a.broadcastBusEvent(msg)
+	case uisearch.OpenedMsg:
+		return a.openSearch()
+	case uisearch.ClosedMsg:
+		return a.closeSearch(), nil
+	case uisearch.JumpMsg:
+		return a.handleSearchJump(m)
+	case uisearch.ResultsMsg, uisearch.QueryChangedMsg:
+		updated, cmd := a.search.Update(msg)
+		a.search = updated
+		return a, cmd
 	}
 
 	if a.help.Visible {
 		updatedHelp, cmd := a.help.Update(msg)
 		a.help = updatedHelp
+		return a, cmd
+	}
+
+	if a.search.Visible {
+		updated, cmd := a.search.Update(msg)
+		a.search = updated
 		return a, cmd
 	}
 
@@ -89,7 +106,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// so we broadcast and let each pane's Update filter on its own
 	// payload type. Keypresses keep the focus-only routing because that
 	// is what a single-active-input UX requires.
-	return a.broadcastToPanes(msg)
+	return a.withPendingScroll(a.broadcastToPanes(msg))
 }
 
 // broadcastToPanes forwards msg to every sub-pane and merges the
@@ -230,6 +247,119 @@ func (a App) broadcastBusEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
+// openSearch flips the overlay visible, remembers the previous focus
+// target so closeSearch can restore it, and forwards Open() to the
+// overlay so its textinput is focused (cursor blink scheduling).
+func (a App) openSearch() (tea.Model, tea.Cmd) {
+	if a.preSearchFocus < 0 {
+		a.preSearchFocus = a.focus
+	}
+	updated, cmd := a.search.Open()
+	a.search = updated
+	return a, cmd
+}
+
+// closeSearch hides the overlay and restores the focus target the
+// user was on when they opened it. Idempotent — calling on an
+// already-hidden overlay is a no-op.
+func (a App) closeSearch() App {
+	a.search = a.search.Close()
+	if a.preSearchFocus >= 0 {
+		a.preSearchFocus = -1
+	}
+	return a
+}
+
+// handleSearchJump consumes a JumpMsg from the overlay: switches
+// focus to the target chat, opens the thread on it, scrolls to the
+// matched message with surrounding context, and (if a bus is wired)
+// publishes a SearchJumpRequested event so other subscribers can
+// react. The overlay is closed as part of the jump because the user
+// signalled they want to read the chat now.
+//
+// The actual ScrollTo is deferred via a.pendingScroll: the thread
+// pane's applyLoaded calls GotoBottom unconditionally, so a
+// synchronous scroll would be overwritten by the loadCmd's
+// messagesLoadedMsg. broadcastToPanes (which routes the loaded
+// message to thread) honours pendingScroll on its way out so the
+// scroll always lands after the history was rendered.
+func (a App) handleSearchJump(msg uisearch.JumpMsg) (tea.Model, tea.Cmd) {
+	chatID := msg.Hit.ChatID
+	messageID := msg.Hit.Message.ID
+
+	a = a.closeSearch()
+
+	a.pendingScroll = &pendingThreadScroll{
+		ChatID:    chatID,
+		MessageID: messageID,
+		Around:    5,
+	}
+
+	updatedThread, cmd := a.thread.OpenChat(chatID)
+	a.thread = updatedThread
+	cmds := []tea.Cmd{}
+	if cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+
+	if title, ok := a.chatTitle(chatID); ok {
+		a.status.ChatTitle = title
+	}
+
+	if a.bus != nil {
+		a.bus.Publish(events.SearchJumpRequested{
+			ChatID:    chatID,
+			MessageID: messageID,
+		})
+	}
+
+	updatedInput, inputCmd := a.input.Update(input.SetChatMsg{ChatID: chatID})
+	a.input = updatedInput
+	if inputCmd != nil {
+		cmds = append(cmds, inputCmd)
+	}
+
+	if len(cmds) == 0 {
+		return a, nil
+	}
+	return a, tea.Batch(cmds...)
+}
+
+// applyPendingScroll runs after broadcastToPanes / broadcastBusEvent
+// so any deferred ScrollTo issued by handleSearchJump can land now
+// that the thread pane has had a chance to apply its
+// messagesLoadedMsg. The scroll is dropped silently if the target
+// message is not in the now-loaded slice (the message is older than
+// the initialPageSize cap and the user will need to paginate or load
+// the full context — Stage 3 leaves that interaction as a follow-up).
+func (a App) applyPendingScroll() App {
+	if a.pendingScroll == nil {
+		return a
+	}
+	if a.thread.ChatID() != a.pendingScroll.ChatID {
+		return a
+	}
+	if a.thread.Loading() {
+		return a
+	}
+	a.thread = a.thread.ScrollTo(a.pendingScroll.MessageID, a.pendingScroll.Around)
+	a.pendingScroll = nil
+	return a
+}
+
+// withPendingScroll wraps the (App, Cmd) tuple a routing helper
+// returned and invokes applyPendingScroll on the App. Used by the
+// Update arms that route through broadcastToPanes / broadcastBusEvent
+// so a deferred SearchJump scroll lands the moment its preconditions
+// are met.
+func (a App) withPendingScroll(model tea.Model, cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	app, ok := model.(App)
+	if !ok {
+		return model, cmd
+	}
+	return app.applyPendingScroll(), cmd
+}
+
 // chatTitle looks up the current title for the given chat id by
 // scanning the chats pane's loaded items. Returns ok=false when the
 // list is empty or the id isn't present (the latter happens when the
@@ -274,6 +404,7 @@ func (a App) handleResize(msg tea.WindowSizeMsg) App {
 	a.chats = a.chats.SetSize(chatsW, paneH)
 	a.thread = a.thread.SetSize(threadW, paneH)
 	a.input = a.input.SetWidth(a.width)
+	a.search = a.search.SetSize(a.width, a.height)
 	return a
 }
 
@@ -288,9 +419,19 @@ func (a App) handleResize(msg tea.WindowSizeMsg) App {
 // FocusPrev are non-printable chords and remain global.
 func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 	helpAllowed := a.focus != FocusInput && !a.chats.IsFilterActive()
+	// Search activation has the same suppression rules as ToggleHelp:
+	// the default chord ("/") is a printable character that the input
+	// pane composer and the chats filter both legitimately consume.
+	// When the chats pane is focused the bubbles/list "/" filter is the
+	// expected behaviour, so /-search is only available from Thread (or
+	// any non-filter Chats moment via the global chord on a future
+	// vim-style "ctrl+s" alias).
+	searchAllowed := a.focus != FocusInput && !a.chats.IsFilterActive() && a.focus != FocusChats
 	switch {
 	case helpAllowed && key.Matches(k, a.keymap.ToggleHelp):
 		return cmdToggleHelp(), true
+	case searchAllowed && key.Matches(k, a.keymap.Search):
+		return cmdOpenSearch(), true
 	case key.Matches(k, a.keymap.FocusNext):
 		return cmdNextFocus(), true
 	case key.Matches(k, a.keymap.FocusPrev):

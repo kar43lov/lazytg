@@ -277,20 +277,26 @@ func findOutgoingText(list []OutgoingMessage, localID string) string {
 // detects "scrolled to top + hasMore" and dispatches pagination. Both
 // cmds are returned via tea.Batch so the viewport's own cmd (e.g. high-
 // performance scrolling) is not dropped.
+//
+// Pagination uses the oldestID cursor instead of a row offset so a
+// concurrent applyIncoming (live message landing between initial load
+// and scroll-up) cannot shift the "skip N rows" boundary and produce
+// gaps in displayed history.
 func (m Model) handleKey(k tea.KeyPressMsg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(k)
 
 	if m.shouldPaginate() {
 		m.loading = true
-		return m, tea.Batch(cmd, paginateCmd(m.repo, m.chatID, len(m.messages), pageSize))
+		return m, tea.Batch(cmd, paginateCmd(m.repo, m.chatID, m.oldestID, pageSize))
 	}
 	return m, cmd
 }
 
 // shouldPaginate reports whether a scroll-to-top should trigger another
-// page load. Guards against re-entrancy (loading == true) and against
-// pagination on a placeholder model (repo == nil).
+// page load. Guards against re-entrancy (loading == true), pagination on
+// a placeholder model (repo == nil), and pagination from an empty
+// thread (oldestID == 0 — no cursor anchor).
 func (m Model) shouldPaginate() bool {
 	if m.repo == nil {
 		return false
@@ -299,6 +305,9 @@ func (m Model) shouldPaginate() bool {
 		return false
 	}
 	if !m.hasMore {
+		return false
+	}
+	if m.oldestID == 0 {
 		return false
 	}
 	return m.viewport.AtTop()
@@ -312,11 +321,11 @@ func (m Model) shouldPaginate() bool {
 // it is the right moment. Re-entrancy is still guarded via the loading
 // flag so two near-simultaneous LoadMore calls do not double-fetch.
 func (m Model) LoadMore() (Model, tea.Cmd) {
-	if m.repo == nil || !m.hasMore || m.loading {
+	if m.repo == nil || !m.hasMore || m.loading || m.oldestID == 0 {
 		return m, nil
 	}
 	m.loading = true
-	return m, paginateCmd(m.repo, m.chatID, len(m.messages), pageSize)
+	return m, paginateCmd(m.repo, m.chatID, m.oldestID, pageSize)
 }
 
 // countRenderedLines is a worst-case estimate of how many terminal

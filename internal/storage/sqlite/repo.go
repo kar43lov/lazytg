@@ -450,6 +450,57 @@ func (r *Repo) GetMessages(ctx context.Context, chatID int64, limit, offset int)
 	return out, nil
 }
 
+// GetMessagesBefore returns up to limit messages from chatID with id strictly
+// less than beforeID, ordered by id desc. Used by the thread pane for
+// cursor-based pagination — passing offset would race with applyIncoming
+// (live messages appended between initial load and scroll-up shift the
+// "skip N rows" semantics under our feet, leaving holes in the displayed
+// history). Pass beforeID = oldestID currently rendered.
+//
+// Pass limit <= 0 to get an empty slice. beforeID == 0 also yields nil
+// because cursor-based pagination has no defined "before nothing".
+func (r *Repo) GetMessagesBefore(ctx context.Context, chatID, beforeID int64, limit int) ([]domain.Message, error) {
+	if limit <= 0 || beforeID <= 0 {
+		return nil, nil
+	}
+	rows, err := r.db.QueryContext(ctx, `
+        SELECT id, chat_id, from_id, date, text, reply_to, raw_blob
+        FROM messages
+        WHERE chat_id = ? AND id < ?
+        ORDER BY id DESC
+        LIMIT ?
+    `, chatID, beforeID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query messages before chat=%d id=%d: %w", chatID, beforeID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain.Message
+	for rows.Next() {
+		var (
+			m       domain.Message
+			fromID  sql.NullInt64
+			text    sql.NullString
+			replyTo sql.NullInt64
+			date    int64
+			raw     []byte
+		)
+		if err := rows.Scan(&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &raw); err != nil {
+			return nil, fmt.Errorf("scan message: %w", err)
+		}
+		m.FromID = fromID.Int64
+		m.Text = text.String
+		m.ReplyTo = replyTo.Int64
+		m.Date = time.Unix(date, 0).UTC()
+		m.RawBlob = raw
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate messages: %w", err)
+	}
+	return out, nil
+}
+
 // nullableUnix returns a sql.NullInt64 for the Unix timestamp of t, or NULL if
 // t is the zero value (so we can distinguish "never had a message" chats).
 func nullableUnix(t time.Time) sql.NullInt64 {

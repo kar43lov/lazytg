@@ -347,7 +347,7 @@ func TestSendService_StoreSaveError_ReturnedSync(t *testing.T) {
 	}
 }
 
-func TestSendService_ContextCancellationDuringRetry(t *testing.T) {
+func TestSendService_ServiceShutdownAbortsRetry(t *testing.T) {
 	t.Parallel()
 	store := newInMemoryOutgoing()
 	bus := events.New()
@@ -358,14 +358,21 @@ func TestSendService_ContextCancellationDuringRetry(t *testing.T) {
 	cfg := SendConfig{MaxNetworkRetries: 5, InitialBackoff: 50 * time.Millisecond, BackoffCap: time.Second}
 	svc := NewSendService(sender, store, bus, nil, cfg)
 	svc.jitter = func() float64 { return 0 }
+	// Service-level ctx scopes the deliver goroutine. Cancelling it
+	// (the wiring layer does this on TUI shutdown) aborts any in-flight
+	// retry loop and lands the record in Failed. The caller's per-send
+	// ctx, in contrast, only scopes the synchronous SaveOutgoing — it
+	// has no effect on deliver because the input-pane closure cancels
+	// its ctx the moment SendText returns.
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	svc.WithBackgroundContext(bgCtx)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	if _, err := svc.SendText(ctx, 1, "x", 0); err != nil {
+	if _, err := svc.SendText(context.Background(), 1, "x", 0); err != nil {
 		t.Fatalf("SendText: %v", err)
 	}
-	// Cancel before the first backoff completes.
+	// Cancel the service ctx before the first backoff completes.
 	time.Sleep(5 * time.Millisecond)
-	cancel()
+	bgCancel()
 
 	deadline := time.After(time.Second)
 	for {
@@ -375,6 +382,37 @@ func TestSendService_ContextCancellationDuringRetry(t *testing.T) {
 		select {
 		case <-deadline:
 			t.Fatalf("never failed after cancel; calls=%d updates=%+v", sender.callCount(), store.snapshot())
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+}
+
+func TestSendService_CallerCtxCancelDoesNotAbortDeliver(t *testing.T) {
+	t.Parallel()
+	// Regression: the input pane's tea.Cmd closure cancels its ctx
+	// the moment SendText returns. SendService must not treat that as
+	// a shutdown signal — otherwise every send fails before the first
+	// sender RPC completes.
+	store := newInMemoryOutgoing()
+	bus := events.New()
+	sender := &scriptedSender{steps: []sendStep{{id: 42}}}
+	svc := NewSendService(sender, store, bus, nil, SendConfig{})
+
+	callerCtx, cancelCaller := context.WithCancel(context.Background())
+	if _, err := svc.SendText(callerCtx, 1, "x", 0); err != nil {
+		t.Fatalf("SendText: %v", err)
+	}
+	cancelCaller()
+
+	deadline := time.After(time.Second)
+	for {
+		if u := store.snapshot(); len(u) == 1 && u[0].State == events.OutgoingStateSent {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("deliver aborted after caller cancel; updates=%+v calls=%d",
+				store.snapshot(), sender.callCount())
 		case <-time.After(2 * time.Millisecond):
 		}
 	}

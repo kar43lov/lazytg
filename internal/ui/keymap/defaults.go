@@ -24,6 +24,7 @@ type Keymap struct {
 	FocusPrev  key.Binding
 	ScrollUp   key.Binding
 	ScrollDown key.Binding
+	Search     key.Binding
 	Quit       key.Binding
 }
 
@@ -68,6 +69,10 @@ func Default() Keymap {
 		ScrollDown: key.NewBinding(
 			key.WithKeys("ctrl+f", "pgdown"),
 			key.WithHelp("ctrl+f/pgdn", "scroll down"),
+		),
+		Search: key.NewBinding(
+			key.WithKeys("/"),
+			key.WithHelp("/", "search"),
 		),
 		Quit: key.NewBinding(
 			key.WithKeys("ctrl+c", "ctrl+q"),
