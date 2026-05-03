@@ -1,0 +1,464 @@
+# Plan: lazytg Stage 4 — Release Engineering для v0.1.0
+
+## Overview
+
+Финальный этап перед публичным релизом v0.1.0. Превращаем рабочий прототип (Stages 1-3) в **сериозный OSS-продукт первого дня**: cross-platform signed binaries, Homebrew tap, .deb/.rpm пакеты, pre-release pipeline (alpha → beta → rc → stable), автоматизация changelog через conventional commits, формализованный beta-период с smoke-чеклистом, финальная пользовательская документация.
+
+После Stage 4 должно работать:
+- `git tag v0.1.0-alpha.1 && git push --tags` → GitHub Release с 4+ подписанными бинарями (linux/darwin × amd64/arm64), checksums, sigstore-bundles, .deb, .rpm, brew formula auto-обновлена в tap-репо.
+- `brew install pgmac/lazytg/lazytg` ставит lazytg на macOS.
+- `cosign verify-blob --bundle <bundle>.json --certificate-identity ... <binary>` подтверждает подпись.
+- Conventional commits enforced через commitlint в pre-commit hook (никаких "fix stuff" коммитов в main).
+- CHANGELOG.md auto-генерируется через git-cliff с категориями feat/fix/perf/security/breaking.
+- Beta-период: ≥3 внешних тестера прошли формализованный 6-пунктный smoke-чеклист.
+- Memory budget: idle <50MB, active <150MB — задокументировано через benchmark.
+- Полная пользовательская документация: README с demo-gif, INSTALL, CONFIGURATION, SEARCH, TROUBLESHOOTING, VERIFY, PERFORMANCE, FILES, ARCHITECTURE, SECURITY, CONTRIBUTING, CHANGELOG.
+
+**Acceptance criteria v0.1.0 (из главного плана):**
+- GitHub Release с подписанными бинарями (4 артефакта: linux-{amd64,arm64}, darwin-{amd64,arm64} + checksums + sigstore bundles).
+- `brew install pgmac/lazytg/lazytg` работает.
+- `.deb` и `.rpm` доступны.
+- ≥3 тестера заполнили формализованный smoke-чеклист.
+- CI зелёный, e2e smoke в CI проходит.
+- Coverage `core` ≥80%, `ui` ≥60`.
+- Memory: idle <50MB, active <150MB (документировано в `docs/PERFORMANCE.md`).
+
+## Context
+
+**Stages 1-3 завершены.** Функционально продукт complete:
+- Auth phone+code+2FA + multi-account (через `--account` флаг)
+- 2-pane TUI (chats + thread) + emacs/readline ввод + statusbar + help overlay
+- Send/reply с optimistic UI, $EDITOR delegation (Ctrl-E)
+- Live-updates через gotd `updates.Manager` (latency p95 ≈ 4ms, SLA <500ms — запас 100×)
+- **FTS5 trigram локальный поиск (p95 ≈ 47ms на 100k сообщений, SLA <100ms — запас 2×)**
+- Командная палитра L1 (Ctrl-Space) с Unicode-fuzzy "Алёна"=="Алена"
+- Files: download (Ctrl-D) + upload (Ctrl-U) с прогрессом в statusbar
+- `lazytg debug-bundle` без секретов (доказано grep-тестом)
+- Security: permission checks 0600/0700, send rate-limit guard
+- Coverage: core 81.3%, ui 83% (gates пройдены)
+
+**Что уже есть в release infra (со Stages 1-3):**
+- `.goreleaser.yaml`: build matrix linux+darwin × amd64+arm64 (pure-Go), archives tar.gz, checksums, cosign keyless для checksums, release с ban-warning header
+- `.github/workflows/`: `ci.yml`, `release.yml`, `snapshot.yml`
+- `.github/ISSUE_TEMPLATE/`: bug_report.yml, feature_request.yml; `PULL_REQUEST_TEMPLATE.md`; `SECURITY.md`
+- Документация: ARCHITECTURE.md, CONTRIBUTING.md, FILES.md, MANUAL_SMOKE.md, SEARCH.md, SECURITY.md
+- LICENSE MIT, CHANGELOG.md (Keep a Changelog format)
+
+**Что добавляем в Stage 4:**
+- Расширить `.goreleaser.yaml`: второй build entry с `-tags sqlcipher` (CGo), nfpm для .deb/.rpm, brew tap config, sign не только checksums но и сами бинарники (sigstore bundles per-binary)
+- Pre-release pipeline: tags `v*-alpha.*`/`v*-beta.*`/`v*-rc.*` → prerelease, brew/scoop/.deb НЕ обновляются. Stable tag → publishes everywhere
+- `cliff.toml` + `.commitlintrc.yml` + lefthook commit-msg hook
+- `test/perf/memory_test.go` — измерение RSS на сценариях idle/active, fail если выше budgets
+- Документация: README обновить с demo-cast/gif, INSTALL.md, CONFIGURATION.md, TROUBLESHOOTING.md, VERIFY.md, PERFORMANCE.md
+- `docs/BETA_CHECKLIST.md` — формализованный 6-пунктный smoke-чеклист для тестеров
+
+**Стек дополнения:**
+- `git-cliff` (CLI tool, через brew или Cargo) — конфиг `cliff.toml` коммитится в репо
+- `commitlint` через `lefthook` commit-msg hook (используем `npx --package=@commitlint/cli` или Go-аналог)
+- `nfpm` встроен в goreleaser
+- `cosign` уже доступен (используется keyless через GitHub OIDC)
+
+**Отложено на v0.2 (явно НЕ делать в Stage 4):**
+- Windows билды (отдельная боль с TUI keys/colors на cmd.exe — нужен реальный тест на Win10/11+WSL)
+- macOS notarization (требует Apple ID secrets + $99/год, complexity не оправдана для v0.1)
+- Snap, Flatpak, AUR — добавляем когда будет community
+- Auto-update mechanism — ручное обновление через brew/manual
+
+**Гайдлайны для исполнителя:**
+- НЕ создавать репо `homebrew-lazytg` (это отдельный repo на GitHub) — только goreleaser config + документировать в INSTALL.md что репо нужно создать вручную перед первым релизом
+- НЕ запускать реальный release (`goreleaser release` без `--snapshot`) — это destructive action, требует явного запроса пользователя
+- НЕ пушить теги `v0.1.0-alpha.*` — pushing tags = триггер CI release pipeline, шипит реальные артефакты в GitHub Releases
+- Beta-period — ручная фаза, документируется но не автоматизируется. В таске только подготовка артефактов (checklist + draft анонса)
+
+## Validation Commands
+
+- `cd /Users/pgmac/Data/prjcts/lazytg && go build ./...`
+- `cd /Users/pgmac/Data/prjcts/lazytg && go test -race ./...`
+- `cd /Users/pgmac/Data/prjcts/lazytg && golangci-lint run`
+
+### Task 1: GoReleaser production — расширить build matrix + nfpm + brew tap + per-binary signing
+
+- [x] Открыть `.goreleaser.yaml`. Добавить второй build entry для sqlcipher через `-tags sqlcipher` и `CGO_ENABLED=1`. Имя `lazytg-sqlcipher`. Goos только `linux+darwin` (без arm64 на linux потому что cross-compile с CGo требует тулчейна — оставить только нативные `darwin/{amd64,arm64}` и `linux/amd64`). Добавить условие в release notes что sqlcipher-вариант требует system libsqlcipher
+- [x] Расширить секцию `archives` чтобы хватило обоих builds. Добавить отдельный archive id `sqlcipher` с шаблоном `{{ .ProjectName }}-sqlcipher_{{ .Version }}_{{ .Os }}_{{ .Arch }}`
+- [x] Добавить секцию `nfpms` в `.goreleaser.yaml` для генерации .deb и .rpm:
+  ```yaml
+  nfpms:
+    - id: default
+      package_name: lazytg
+      vendor: lazytg contributors
+      homepage: https://github.com/pgmac/lazytg
+      maintainer: pgmac <noreply@github.com>
+      description: |
+        Local-first Telegram TUI client with FTS5 search.
+        Telegram automatically puts unofficial clients under observation.
+        Use with a test account first.
+      license: MIT
+      formats: [deb, rpm]
+      bindir: /usr/bin
+      builds: [lazytg]  # только pure-Go вариант
+      contents:
+        - src: LICENSE
+          dst: /usr/share/doc/lazytg/LICENSE
+        - src: README.md
+          dst: /usr/share/doc/lazytg/README.md
+  ```
+- [x] Добавить секцию `brews` в `.goreleaser.yaml`:
+  ```yaml
+  brews:
+    - name: lazytg
+      ids: [default]  # только pure-Go архив
+      repository:
+        owner: pgmac
+        name: homebrew-lazytg
+        token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+      directory: Formula
+      homepage: https://github.com/pgmac/lazytg
+      description: Local-first Telegram TUI client with FTS5 search
+      license: MIT
+      install: |
+        bin.install "lazytg"
+      test: |
+        system "#{bin}/lazytg", "version"
+      caveats: |
+        Telegram automatically puts unofficial clients under observation.
+        Use lazytg with a test account first. See:
+        https://github.com/pgmac/lazytg/blob/main/docs/SECURITY.md
+
+        Set LAZYTG_API_ID and LAZYTG_API_HASH env vars before first run.
+        Get them at https://my.telegram.org/apps
+  ```
+- [x] Расширить секцию `signs` чтобы подписывать **сами бинарники**, не только checksums. Использовать `signs.artifacts: archive` для подписи tar.gz архивов через cosign sign-blob (sigstore bundle per-archive). Сохранить старую подпись checksums как backup
+- [x] Документировать в README.md секцию «Setup before first release» что нужно: (1) создать репо `pgmac/homebrew-lazytg` вручную с пустым `Formula/` каталогом; (2) сгенерировать PAT с `contents:write` на этот репо и добавить в org/repo secrets как `HOMEBREW_TAP_GITHUB_TOKEN`; (3) первый push тега `v0.1.0` (не alpha/beta) запушит формулу автоматически
+- [x] Запустить локально `goreleaser check` (валидация конфига без сборки) и `goreleaser release --snapshot --clean --skip=publish --skip=sign --skip=brew --skip=announce` (быстрый snapshot без сети) — артефакты в `dist/` должны включать pure-Go архивы для linux/darwin × amd64/arm64. **Sqlcipher вариант скипнуть в snapshot если CGo тулчейн недоступен** (документировать)
+- [x] Если snapshot падает — диагностировать и зафиксировать (наиболее вероятно — отсутствие cgo для sqlcipher на ARM linux; если так — убрать `linux/arm64` из sqlcipher build entry). Запустить `go build ./...` и `go test -race ./...` после изменений `.goreleaser.yaml` (любые ldflags могли поломать version pkg)
+
+### Task 2: Pre-release pipeline (alpha/beta/rc gates)
+
+- [ ] Открыть `.github/workflows/release.yml`. Добавить job-level условную логику по тегу через template:
+  - Triggered: `on.push.tags: ['v*']`
+  - Job `goreleaser`: всегда запускается
+  - Внутри goreleaser-action добавить ENV `GORELEASER_PRERELEASE` который вычисляется из тега (через bash step):
+    ```yaml
+    - name: Detect prerelease
+      id: prerel
+      run: |
+        TAG="${GITHUB_REF#refs/tags/}"
+        if [[ "$TAG" =~ -(alpha|beta|rc)\. ]]; then
+          echo "prerelease=true" >> $GITHUB_OUTPUT
+          echo "skip_brew=true" >> $GITHUB_OUTPUT
+          echo "skip_nfpm_publish=true" >> $GITHUB_OUTPUT
+        else
+          echo "prerelease=false" >> $GITHUB_OUTPUT
+        fi
+    ```
+- [ ] В `.goreleaser.yaml` отделить prerelease behavior:
+  - `release.prerelease: auto` (goreleaser сам определяет по тегу — semver pre-release suffix)
+  - `brews[].skip_upload: '{{ if .Prerelease }}true{{ end }}'` — формулу не обновляем для alpha/beta/rc
+  - Аналогично для `nfpms` если есть upload — для alpha/beta скипаем (но локально артефакты собираются и попадают в GitHub Release как assets)
+- [ ] Создать новый workflow `.github/workflows/prerelease.yml` для удобного запуска вручную через workflow_dispatch:
+  ```yaml
+  on:
+    workflow_dispatch:
+      inputs:
+        kind:
+          description: alpha, beta, or rc
+          required: true
+          type: choice
+          options: [alpha, beta, rc]
+  ```
+  Job: вычисляет следующий prerelease tag (например, читает существующие теги через `git tag -l 'v*-alpha.*' | sort -V | tail -1` и инкрементит), создаёт annotated tag, пушит → триггерит release.yml
+- [ ] Документировать pre-release flow в `docs/CONTRIBUTING.md`:
+  - alpha → внутреннее тестирование, brew не обновляется
+  - beta → external testers (≥3 человека), brew не обновляется, beta-checklist обязателен
+  - rc → release candidate, последний сабж до stable, brew не обновляется
+  - stable → `vMAJOR.MINOR.PATCH` без суффикса, brew + nfpm publish, anонс в README
+- [ ] Запустить `act` локально или dry-run через `gh workflow view` если есть `gh` (опционально — проверить YAML-валидность через `actionlint`)
+- [ ] Проверить `go build ./...` — workflow-изменения не должны влиять на код, но регресс-проверка обязательна
+
+### Task 3: Changelog automation — git-cliff + commitlint
+
+- [ ] Создать `cliff.toml` в корне репо со следующей конфигурацией:
+  ```toml
+  [changelog]
+  header = "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\nThe format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),\nand this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).\n\n"
+  body = """
+  {% if version %}\
+      ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+  {% else %}\
+      ## [Unreleased]
+  {% endif %}\
+  {% for group, commits in commits | group_by(attribute="group") %}
+      ### {{ group | upper_first }}
+      {% for commit in commits %}
+          - {{ commit.message | upper_first }}\
+            {% if commit.breaking %} (BREAKING){% endif %}
+      {% endfor %}
+  {% endfor %}\n
+  """
+  trim = true
+  footer = ""
+
+  [git]
+  conventional_commits = true
+  filter_unconventional = false
+  commit_parsers = [
+    { message = "^feat", group = "Added" },
+    { message = "^fix", group = "Fixed" },
+    { message = "^perf", group = "Performance" },
+    { message = "^security", group = "Security" },
+    { message = "^docs", group = "Documentation" },
+    { message = "^refactor", group = "Refactoring" },
+    { message = "^test", skip = true },
+    { message = "^chore", skip = true },
+    { message = "^Merge", skip = true },
+    { body = ".*BREAKING CHANGE", group = "Breaking" },
+  ]
+  filter_commits = false
+  tag_pattern = "v[0-9].*"
+  ignore_tags = ""
+  topo_order = false
+  sort_commits = "oldest"
+  ```
+- [ ] Создать `.commitlintrc.yml` в корне:
+  ```yaml
+  extends:
+    - "@commitlint/config-conventional"
+  rules:
+    type-enum:
+      - 2
+      - always
+      - [feat, fix, perf, security, docs, refactor, test, chore, build, ci]
+    subject-max-length:
+      - 2
+      - always
+      - 100
+    body-leading-blank:
+      - 1
+      - always
+    footer-leading-blank:
+      - 1
+      - always
+  ```
+- [ ] Обновить `lefthook.yml` — добавить commit-msg hook для commitlint:
+  ```yaml
+  commit-msg:
+    commands:
+      commitlint:
+        run: npx --no-install --package=@commitlint/cli -- commitlint --edit {1}
+        skip:
+          - merge
+          - rebase
+  ```
+  Если npx unavailable — fallback на самостоятельный bash-парсер: regex `^(feat|fix|perf|security|docs|refactor|test|chore|build|ci)(\([a-z0-9-]+\))?!?: .{1,100}` через `grep -E` в commit-msg hook
+- [ ] Документировать в `docs/CONTRIBUTING.md` секцию «Commit message format» с примерами и ссылкой на conventional commits спецификацию
+- [ ] Добавить GitHub Actions job в `ci.yml` для проверки PR title (использовать action `amannn/action-semantic-pull-request@v5` или ручной grep по `${{ github.event.pull_request.title }}`)
+- [ ] Запустить `git-cliff --tag v0.1.0 --unreleased` локально для генерации первого CHANGELOG (если git-cliff установлен через brew). Сохранить результат как стартовую точку CHANGELOG.md, заменив существующий пустой Unreleased section
+- [ ] Если git-cliff не установлен — документировать в README.md и CONTRIBUTING.md что для генерации changelog нужно `brew install git-cliff` или `cargo install git-cliff`. Не блокировать таск на этом
+- [ ] Проверить `go build ./...` и `go test -race ./...` — изменения в `.commitlintrc.yml`, `cliff.toml`, `lefthook.yml` не должны затрагивать Go-код, но регресс обязателен
+
+### Task 4: Memory budget benchmark (idle <50MB, active <150MB)
+
+- [ ] Создать `test/perf/memory_test.go` с двумя тестами:
+  1. `TestMemoryBudget_Idle` — собирает app через `internal/app.Build` с моками (без реального Telegram), стартует в горутине, ждёт 5 секунд stabilization (`time.Sleep`), вызывает `runtime.GC()` × 2, читает `runtime.MemStats.HeapAlloc`. **Fail если HeapAlloc > 50 * 1024 * 1024 (50MB)**
+  2. `TestMemoryBudget_Active` — то же что выше, но симулирует активную нагрузку: 1000 mock messages через event bus за 30 секунд (≈33 msg/sec), параллельно 10 search-запросов с benchmark fixture. После нагрузки — `runtime.GC()` × 2 → проверить `HeapAlloc`. **Fail если > 150 * 1024 * 1024 (150MB)**
+- [ ] Использовать helper из существующих perf-тестов (`test/perf/`). Mock backends: Storage in-memory или `:memory:` SQLite, Transport — fake `Sender`/`HistoryProvider` уже есть в Stage 2 fakes (если приватные — продублировать в `test/perf/fakes.go`)
+- [ ] Замерить через `runtime.MemStats`:
+  - Idle: после `time.Sleep(5 * time.Second)` + GC×2
+  - Active: throughput через `bus.Publish(events.MessageReceived{...})` + `searchService.Search(...)` параллельно, замер через 30 секунд
+- [ ] Создать `docs/PERFORMANCE.md` с описанием:
+  - Memory budgets (idle <50MB, active <150MB) — обоснование (TUI на разработчиков с долгими сессиями ssh; >150MB начнёт мешать другим процессам в tmux)
+  - Search SLA (p95 <100ms на 100k сообщений) — фактический результат из BenchmarkSearch100k
+  - Live-updates SLA (p95 <500ms) — фактический результат из BenchmarkLiveUpdateLatency
+  - DB size guidance (3-5× от текста сообщений из-за trigram, default cap 5000 msg/chat)
+  - Известные ограничения: тяжёлые чаты (>10k активных сообщений в одном чате) могут давать viewport jank — рекомендация ограничить через config
+- [ ] Добавить в `ci.yml` шаг `go test -run "TestMemoryBudget" ./test/perf/...` (отдельный шаг чтобы видно было если упадёт)
+- [ ] Запустить локально `go test -v -run "TestMemoryBudget" ./test/perf/...` — оба теста должны пройти. Если HeapAlloc выше budget — диагностировать через `pprof` (`go test -memprofile=mem.out -run TestMemoryBudget_Active ./test/perf/` + `go tool pprof -top mem.out`)
+
+### Task 5: Финальная пользовательская документация
+
+- [ ] Создать `docs/INSTALL.md`. Секции:
+  - **Recommended (macOS):** `brew install pgmac/lazytg/lazytg` (после публикации tap)
+  - **Linux .deb:** `wget https://github.com/pgmac/lazytg/releases/latest/download/lazytg_<version>_linux_amd64.deb && sudo dpkg -i lazytg_*.deb`
+  - **Linux .rpm:** `sudo dnf install https://github.com/.../lazytg_<version>_linux_amd64.rpm`
+  - **Manual binary:** скачать tar.gz из GitHub Release, проверить через `cosign verify-blob` (ссылка на VERIFY.md), распаковать, `sudo install lazytg /usr/local/bin/`
+  - **From source:** `go install github.com/pgmac/lazytg/cmd/lazytg@v0.1.0` (требует Go 1.22+)
+  - **SQLCipher build (encrypted DB):** только manual download `lazytg-sqlcipher_*` или `go install -tags sqlcipher`. Документировать что нужен `libsqlcipher` в системе
+  - **Setup:** получить API_ID/API_HASH в https://my.telegram.org/apps, экспортировать `LAZYTG_API_ID`, `LAZYTG_API_HASH`, запустить `lazytg login --account +<phone>`
+- [ ] Создать `docs/CONFIGURATION.md`. Секции:
+  - **Config file location:** `$XDG_CONFIG_HOME/lazytg/config.toml` (default `~/.config/lazytg/config.toml`)
+  - **Все опции config.toml:** документировать каждое поле (с дефолтами): logging level/path/debug, storage path, fts5 max_messages_per_chat, polling interval, send rate-limit, downloads dir, editor, и т.д.
+  - **Keymap config:** `~/.config/lazytg/keymap.toml`. Default bindings + примеры override (например, swap Ctrl+R и Ctrl+E)
+  - **Env vars:** `LAZYTG_API_ID`, `LAZYTG_API_HASH`, `EDITOR`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`
+  - **Multi-account:** через `--account <phone>` флаг, по аккаунту своя session+config. Состояние accounts хранится в БД таблицы `accounts`
+- [ ] Создать `docs/TROUBLESHOOTING.md`. Секции в формате «Симптом → диагностика → решение»:
+  - "lazytg login fails with FLOOD_WAIT" → подождать N секунд указанный в ошибке, gotd сам ретраит. Если повторяется — возможно account под observation (Telegram security)
+  - "Search не находит ничего" → проверить что reindex прошёл (`lazytg reindex --all`); проверить размер индекса (`lazytg debug-bundle` → распаковать → `db_stats.txt`)
+  - "TUI выглядит сломано / нет цветов" → проверить `$TERM` (рекомендуется xterm-256color или alacritty); проверить что терминал поддерживает Unicode
+  - "Permission denied при старте" → security check сработал. Проверить права на ~/.config/lazytg/ (должно быть 0700) и secrets.age (0600). Исправить через `chmod`
+  - "DB locked" → другой процесс держит БД (другой запущенный lazytg). Закрыть его. Если процессов нет — удалить `~/.local/share/lazytg/lazytg.db-shm` и `-wal` (WAL-файлы)
+  - "Account banned" → к сожалению, риск userbot-аккаунтов. Написать в recover@telegram.org с описанием use-case (TUI-клиент для personal use). См. SECURITY.md
+  - **Как собрать debug-bundle для bug-report:** `lazytg debug-bundle` → tar.gz появится в cwd → приложить к GitHub Issue (gist если большой)
+- [ ] Создать `docs/VERIFY.md`. Секции:
+  - **Verify checksums:** `sha256sum -c checksums.txt` после скачивания всех артефактов
+  - **Verify cosign signatures:** инструкция через `cosign verify-blob` с keyless OIDC. Команда:
+    ```sh
+    cosign verify-blob \
+      --bundle lazytg_<version>_<os>_<arch>.tar.gz.sigstore.json \
+      --certificate-identity-regexp "https://github.com/pgmac/lazytg/.github/workflows/release.yml@refs/tags/v.*" \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      lazytg_<version>_<os>_<arch>.tar.gz
+    ```
+  - **What it proves:** binary собран в GitHub Actions с workflow `release.yml` под тегом начинающимся с `v`, никто не подменил после
+  - Проверить cosign установлен (`brew install cosign` для macOS)
+- [ ] Обновить `README.md`:
+  - **Первая строка под заголовком:** ban-warning (уже есть, проверить актуальность)
+  - **Pitch:** «Local-first Telegram TUI with instant FTS5 search. Built for developers who live in tmux+nvim+ssh.»
+  - **Demo:** placeholder для asciinema-cast или gif (`![demo](docs/demo.gif)` — файл записать вручную после ручного smoke-тестирования; в плане документировать как создать)
+  - **Quickstart (3 шага):** `brew install` → set env vars → `lazytg login`
+  - **Features:** список с эмодзи 🔍 search, ⚡ instant, 🔐 local-first, ⌨️ vim-friendly keymap, 📥📤 file transfer, 🛡️ rate-limited
+  - **Acceptance criteria badges:** GitHub Actions status, Go report card, codecov coverage
+  - **Links:** INSTALL.md, CONFIGURATION.md, SEARCH.md, TROUBLESHOOTING.md, SECURITY.md, ARCHITECTURE.md, CONTRIBUTING.md, VERIFY.md, PERFORMANCE.md, FILES.md, CHANGELOG.md
+  - **License:** MIT
+- [ ] Документировать **как записать demo** в `docs/DEMO.md` (для maintainer'a):
+  ```
+  1. asciinema rec -c "lazytg" docs/demo.cast
+  2. agg --speed 2 --theme dracula docs/demo.cast docs/demo.gif (или asciinema-gif-generator)
+  3. Сценарий: login → выбор чата → ввод "hello" → отправка → /search "тест" → результаты → переход в чат
+  ```
+- [ ] Проверить что все docs-ссылки в README.md и CLAUDE.md ведут на существующие файлы (`grep -rn 'docs/' README.md CLAUDE.md` + manual проверка)
+
+### Task 6: Issue/PR templates + Security policy — доработка
+
+- [ ] Открыть `.github/ISSUE_TEMPLATE/bug_report.yml`. Убедиться что есть:
+  - Поле для версии (`lazytg version`)
+  - Поле для OS/arch
+  - Поле для шагов воспроизведения
+  - **Поле для debug-bundle:** прямое указание что нужно прикрепить (с инструкцией как собрать через `lazytg debug-bundle`)
+  - **Чекбокс «I confirm debug-bundle does not contain my session/api_hash»** (legal protection)
+  - Ссылка на SECURITY.md в подсказке: «Не сообщайте security issues публично — используйте GitHub Security Advisories»
+- [ ] Открыть `.github/ISSUE_TEMPLATE/feature_request.yml`. Убедиться что есть:
+  - Описание проблемы (которую решает feature)
+  - Предполагаемое решение
+  - Альтернативы (как сейчас обходится)
+  - **Чекбокс «I checked the v0.2/v0.3 roadmap in CLAUDE.md»** (избежать дублей по уже запланированным фичам)
+- [ ] Создать `.github/ISSUE_TEMPLATE/config.yml` с links для перенаправления:
+  ```yaml
+  blank_issues_enabled: false
+  contact_links:
+    - name: Security vulnerability
+      url: https://github.com/pgmac/lazytg/security/advisories/new
+      about: Report security issues privately via GitHub Security Advisories
+    - name: Question / discussion
+      url: https://github.com/pgmac/lazytg/discussions
+      about: Use GitHub Discussions for usage questions
+  ```
+- [ ] Открыть `.github/PULL_REQUEST_TEMPLATE.md`. Убедиться что есть чек-лист:
+  - [ ] Tests added (если применимо — в core ≥80%, ui ≥60%)
+  - [ ] Docs updated (если изменён behaviour)
+  - [ ] CHANGELOG.md entry добавлен в Unreleased section (или будет auto-generated через git-cliff)
+  - [ ] Conventional commits format соблюдён (`feat:`/`fix:`/etc — проверяется CI)
+  - [ ] depguard rules не нарушены (CI проверит)
+  - [ ] Coverage gates не упали
+- [ ] Открыть существующий `SECURITY.md` (в корне) и `docs/SECURITY.md` — убедиться что:
+  - Disclosure policy: 90 дней, через GitHub Security Advisories (private)
+  - Threat model: что защищаем (session keys, contacts metadata на диске), от кого (local malware с user-доступом, утечка устройства), чего НЕ защищаем (root malware, Telegram сервер)
+  - Ban-risk warning: подробное объяснение Telegram observation policy для unofficial clients, рекомендации (тестовый аккаунт, rate-limit guard включён, не использовать для massive operations)
+  - Contact: GitHub Security Advisories (НЕ email — privacy)
+- [ ] Создать `.github/CODEOWNERS`:
+  ```
+  # Default owner — все файлы
+  *       @pgmac
+  # Security-sensitive — extra review требуется
+  /internal/tg/         @pgmac
+  /internal/core/security/ @pgmac
+  /docs/SECURITY.md     @pgmac
+  /SECURITY.md          @pgmac
+  ```
+- [ ] Запустить `go build ./...` и `go test -race ./...` — изменения в .github/ не затрагивают код, но регресс-проверка обязательна
+
+### Task 7: Beta smoke checklist + draft анонса
+
+- [ ] Создать `docs/BETA_CHECKLIST.md` с **6-пунктным smoke-чеклистом** для beta-тестеров:
+  ```markdown
+  # lazytg v0.1.0-beta smoke checklist
+
+  Пожалуйста, заполните и приложите к GitHub issue с тегом `beta-feedback`.
+  Должно занять ≤15 минут. Спасибо!
+
+  **Tester info:**
+  - OS: __________ (macOS Sonoma / Ubuntu 22.04 / etc)
+  - Architecture: __________ (arm64 / amd64)
+  - Terminal: __________ (Alacritty / iTerm2 / Ghostty / etc)
+  - Tmux: yes / no
+  - Telegram account type: тестовый / основной (РЕКОМЕНДУЕМ ТЕСТОВЫЙ)
+
+  **Smoke steps (отметьте ✅ если работает, ❌ если сломано, ⚠️ если работает с замечаниями):**
+
+  - [ ] **1. Install:** `brew install pgmac/lazytg/lazytg` (или `.deb`/`.rpm`/binary). Команда `lazytg --version` показывает версию.
+  - [ ] **2. Login:** `lazytg login --account +<phone>`. Прошло phone → code → 2FA. Никаких cryptic errors. После завершения — `lazytg accounts` показывает аккаунт.
+  - [ ] **3. Read:** запуск `lazytg` (без подкоманды) открывает TUI. Слева список ваших чатов отсортированный по последнему сообщению. Стрелками можно выбрать чат, Enter → справа загружается история.
+  - [ ] **4. Send:** Tab → focus в input. Ввод "hello from lazytg" + Enter → сообщение появилось мгновенно (optimistic), пришло на телефон.
+  - [ ] **5. Search:** `/привет` (или другое слово которое точно есть) → live results появились через ≤500ms. Enter на результате → переход в правильный чат + scroll к нужному сообщению.
+  - [ ] **6. Files:** на сообщении с фото нажать `Ctrl+D` → прогресс в статус-баре → файл в `~/Downloads/lazytg/<chat>/`. Затем `Ctrl+U` → выбрать любой .txt файл → отправлен в чат с caption.
+
+  **Free-form feedback:**
+  - Что понравилось:
+  - Что сломано / медленно / непонятно:
+  - Чего не хватает (но помните — мы целимся в v0.1.0, не в v1.0):
+  - Готовы ли использовать ежедневно? (yes / no / "если добавите X")
+  ```
+- [ ] Создать `docs/RELEASE_ANNOUNCE.md` (draft анонса для maintainer'a, **не публикуем автоматически**):
+  - Шаблон для Show HN / r/commandline / lobste.rs / r/golang
+  - Pitch: «lazytg — local-first Telegram TUI client with FTS5 search, written in pure Go»
+  - Highlights: 100k msg search p95 47ms, multi-account, $EDITOR delegation, cosign-verified binaries
+  - Honesty: alpha quality, ban-risk предупреждение, не replace для Telegram Desktop а tool для tmux-resident developers
+  - Ссылки: GitHub repo, demo gif, install instructions, beta checklist
+  - **НЕ публиковать без явной команды пользователя.** Это draft для финальной фазы release
+- [ ] Создать `docs/RELEASE_PROCESS.md` — runbook для maintainer'a:
+  ```
+  1. Убедиться что main зелёный (CI green, coverage gates passed, benchmark gates passed)
+  2. Обновить CHANGELOG.md через `git-cliff --tag <new-version> --unreleased`
+  3. Commit: `git commit -m "chore(release): prepare v0.1.0-alpha.1"`
+  4. Tag: `git tag -a v0.1.0-alpha.1 -m "v0.1.0-alpha.1"`
+  5. Push: `git push origin main && git push origin v0.1.0-alpha.1`
+  6. CI запустит release.yml → артефакты в GitHub Releases (prerelease=true для alpha/beta/rc)
+  7. Beta phase: разослать BETA_CHECKLIST.md → собрать ≥3 confirmation
+  8. Если confirmations OK → tag v0.1.0 (без суффикса) → release.yml опубликует stable + brew + nfpm
+  9. Анонс через RELEASE_ANNOUNCE.md
+  ```
+- [ ] Запустить `go build ./...`, `go test -race ./...` — не должно быть регрессов
+
+### Task 8: Verification + plan move to completed
+
+- [ ] **Verification 1 — code & tests:**
+  - `go build ./...` exit 0
+  - `go test -race ./...` все пакеты OK
+  - `golangci-lint run` 0 issues
+  - Coverage core ≥80%, ui ≥60% (через `go test -coverprofile=...`)
+  - Memory tests: `go test -v -run TestMemoryBudget ./test/perf/...` — оба прошли (idle <50MB, active <150MB)
+  - SLA benchmarks: search p95 <100ms, live-updates p95 <500ms (re-run чтобы подтвердить нет регрессов)
+- [ ] **Verification 2 — release infra:**
+  - `goreleaser check` → конфиг валиден
+  - `goreleaser release --snapshot --clean --skip=publish --skip=announce` → артефакты в `dist/` для pure-Go вариантов всех 4 платформ + .deb + .rpm
+  - Если sqlcipher не собирается локально (нет CGo тулчейна) — задокументировать в README.md что это ожидаемо для cross-arch снапшотов; CI с правильной матрицей соберёт
+  - Проверить что в snapshot-артефактах есть `LICENSE`, `README.md`, `CHANGELOG.md` (через `tar -tzvf dist/lazytg_*_linux_amd64.tar.gz`)
+- [ ] **Verification 3 — workflows valid:**
+  - Если установлен `actionlint` — `actionlint .github/workflows/*.yml` (zero errors)
+  - Если есть `gh` CLI — `gh workflow list` показывает 4 workflows: ci, release, snapshot, prerelease
+- [ ] **Verification 4 — docs полные:**
+  - `ls docs/` содержит: ARCHITECTURE.md, BETA_CHECKLIST.md, CONFIGURATION.md, CONTRIBUTING.md, DEMO.md, FILES.md, INSTALL.md, MANUAL_SMOKE.md, PERFORMANCE.md, RELEASE_ANNOUNCE.md, RELEASE_PROCESS.md, SEARCH.md, SECURITY.md, TROUBLESHOOTING.md, VERIFY.md
+  - В корне: README.md (с обновлённым pitch + ban-warning), LICENSE, CHANGELOG.md, SECURITY.md, CLAUDE.md, .commitlintrc.yml, cliff.toml
+  - `.github/`: ISSUE_TEMPLATE/{bug_report,feature_request,config}.yml, PULL_REQUEST_TEMPLATE.md, CODEOWNERS, dependabot.yml, workflows/{ci,release,snapshot,prerelease}.yml
+- [ ] **Verification 5 — links integrity:**
+  - `grep -rn 'docs/' README.md` — все ссылки ведут на существующие файлы
+  - `grep -rn 'docs/' CLAUDE.md` — то же
+  - `grep -rn 'github.com/pgmac/lazytg' .` — ссылки на GitHub консистентны (тот же owner/repo)
+- [ ] **Verification 6 — CHANGELOG актуален:**
+  - В Unreleased section есть свежие feat/fix entries из последних коммитов Stage 4
+  - Если git-cliff установлен — `git-cliff --unreleased` генерирует осмысленный preview
+- [ ] **Manual smoke (документировать, не автоматизировать):** maintainer должен вручную:
+  1. Создать репо `pgmac/homebrew-lazytg` с пустым `Formula/` каталогом
+  2. Сгенерировать PAT с `contents:write` на этот репо, добавить в lazytg secrets как `HOMEBREW_TAP_GITHUB_TOKEN`
+  3. (Опционально) записать demo asciinema-cast → `docs/demo.gif`
+  4. Запустить локальный smoke по `docs/MANUAL_SMOKE.md` шаги 1-14 на реальном Telegram-аккаунте (тестовом!)
+- [ ] Move plan to `docs/plans/completed/20260503-lazytg-stage4-release.md` после успешного прохождения всех verification gates

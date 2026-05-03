@@ -155,6 +155,32 @@ export LAZYTG_API_HASH=...
 ./bin/lazytg                      # open the TUI
 ```
 
+## Maintainer notes
+
+### Setup before first release
+
+The release pipeline assumes a few external resources exist before the first stable tag is pushed:
+
+1. **Homebrew tap repository.** Create `pgmac/homebrew-lazytg` on GitHub manually, with an empty `Formula/` directory. GoReleaser commits the generated `Formula/lazytg.rb` here on every stable release.
+2. **PAT for tap pushes.** Generate a Personal Access Token (fine-grained) with `contents: write` on the `pgmac/homebrew-lazytg` repo. Add it to this repo's secrets as `HOMEBREW_TAP_GITHUB_TOKEN`. The token is **not needed** until the first stable tag — alpha/beta/rc skip the brew upload.
+3. **First publish.** The first `git tag v0.1.0 && git push --tags` (without `-alpha`/`-beta`/`-rc` suffix) pushes the formula automatically. From that point on `brew install pgmac/lazytg/lazytg` works.
+
+### SQLCipher (encrypted DB) build variant
+
+The release matrix ships a second binary variant, `lazytg-sqlcipher_*`, built with `-tags sqlcipher` and CGo. It requires a system `libsqlcipher` at runtime (`brew install sqlcipher` on macOS, `apt install libsqlcipher-dev` on Debian/Ubuntu) and is published only for `darwin/{amd64,arm64}` and `linux/amd64` because cross-compiling CGo binaries needs additional toolchains.
+
+**Local snapshot caveat.** Building the SQLCipher variant locally requires `libsqlcipher` to be installed and discoverable by the C toolchain. To skip it during a local snapshot run, set `SKIP_SQLCIPHER=true`:
+
+```sh
+SKIP_SQLCIPHER=true goreleaser release --snapshot --clean --skip=publish --skip=sign --skip=announce
+```
+
+CI (`release.yml`) does not set `SKIP_SQLCIPHER` and builds both variants on a runner with the right toolchain.
+
+### Verifying signatures
+
+Every release archive ships a sigstore bundle (`*.sigstore.json`) and `checksums.txt` is signed via cosign keyless OIDC. See [docs/VERIFY.md](docs/VERIFY.md) (Stage 4) for the full verification recipe.
+
 ## License
 
 [MIT](LICENSE) © 2026 lazytg contributors.

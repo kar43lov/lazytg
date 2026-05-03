@@ -26,9 +26,52 @@ builds:
     flags:
       - -trimpath
 
+  # SQLCipher build — encrypted SQLite via CGo. Cross-compile с CGo требует тулчейна,
+  # поэтому ограничиваемся нативными целями: darwin (amd64/arm64) и linux/amd64.
+  # Для сборки требуется system libsqlcipher (Homebrew: `brew install sqlcipher`,
+  # Debian/Ubuntu: `apt install libsqlcipher-dev`). Документировано в release notes.
+  #
+  # `disable` позволяет пропустить этот build локально при отсутствии CGo тулчейна
+  # через `SKIP_SQLCIPHER=true goreleaser release --snapshot ...`.
+  # CI (release.yml) запускается с правильной матрицей и не выставляет SKIP_SQLCIPHER.
+  - id: lazytg-sqlcipher
+    main: ./cmd/lazytg
+    binary: lazytg
+    skip: '{{ if eq .Env.SKIP_SQLCIPHER "true" }}true{{ end }}'
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: linux
+        goarch: arm64
+    tags:
+      - sqlcipher
+    ldflags:
+      - -s -w
+      - -X github.com/pgmac/lazytg/cmd/lazytg/cmd.version={{.Version}}
+      - -X github.com/pgmac/lazytg/cmd/lazytg/cmd.commit={{.Commit}}
+      - -X github.com/pgmac/lazytg/cmd/lazytg/cmd.date={{.Date}}
+    flags:
+      - -trimpath
+
 archives:
   - id: default
+    ids: [lazytg]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+  - id: sqlcipher
+    ids: [lazytg-sqlcipher]
+    name_template: "{{ .ProjectName }}-sqlcipher_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
     files:
       - LICENSE
@@ -53,8 +96,58 @@ changelog:
       - "Merge pull request"
       - "Merge branch"
 
+nfpms:
+  - id: default
+    package_name: lazytg
+    vendor: lazytg contributors
+    homepage: https://github.com/pgmac/lazytg
+    maintainer: pgmac <noreply@github.com>
+    description: |
+      Local-first Telegram TUI client with FTS5 search.
+      Telegram automatically puts unofficial clients under observation.
+      Use with a test account first.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    ids:
+      - lazytg
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/lazytg/LICENSE
+      - src: README.md
+        dst: /usr/share/doc/lazytg/README.md
+
+brews:
+  - name: lazytg
+    ids:
+      - default
+    repository:
+      owner: pgmac
+      name: homebrew-lazytg
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/pgmac/lazytg
+    description: Local-first Telegram TUI client with FTS5 search
+    license: MIT
+    skip_upload: '{{ if .Prerelease }}true{{ end }}'
+    install: |
+      bin.install "lazytg"
+    test: |
+      system "#{bin}/lazytg", "version"
+    caveats: |
+      Telegram automatically puts unofficial clients under observation.
+      Use lazytg with a test account first. See:
+      https://github.com/pgmac/lazytg/blob/main/docs/SECURITY.md
+
+      Set LAZYTG_API_ID and LAZYTG_API_HASH env vars before first run.
+      Get them at https://my.telegram.org/apps
+
 signs:
-  - cmd: cosign
+  # Подпись checksums.txt — сохраняем как было (быстрая верификация всего набора).
+  - id: checksums
+    cmd: cosign
     artifacts: checksum
     signature: "${artifact}.sig"
     certificate: "${artifact}.pem"
@@ -62,6 +155,20 @@ signs:
       - sign-blob
       - "--output-certificate=${certificate}"
       - "--output-signature=${signature}"
+      - "${artifact}"
+      - --yes
+    output: true
+
+  # Per-archive подпись через sigstore bundle (cosign sign-blob --bundle).
+  # Это даёт возможность пользователям проверять конкретный архив без скачивания
+  # всех файлов — `cosign verify-blob --bundle <archive>.sigstore.json <archive>`.
+  - id: archives
+    cmd: cosign
+    artifacts: archive
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
       - "${artifact}"
       - --yes
     output: true
@@ -77,5 +184,10 @@ release:
     ## lazytg {{ .Version }}
 
     > ⚠️ Telegram automatically puts unofficial clients under observation. Use lazytg with a test account first. See [SECURITY.md](https://github.com/pgmac/lazytg/blob/main/docs/SECURITY.md).
+
+    ### Build variants
+
+    - **`lazytg_*` (default)** — pure-Go build. Database is unencrypted; rely on filesystem permissions and OS-level disk encryption.
+    - **`lazytg-sqlcipher_*`** — SQLCipher build with encrypted database. **Requires system `libsqlcipher`** (`brew install sqlcipher` / `apt install libsqlcipher-dev`). Available for darwin (amd64/arm64) and linux/amd64 only.
   footer: |
     **Full Changelog**: https://github.com/pgmac/lazytg/compare/{{ .PreviousTag }}...{{ .Tag }}
