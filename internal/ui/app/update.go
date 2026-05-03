@@ -1,14 +1,24 @@
 package app
 
 import (
+	"context"
+	"time"
+
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/pgmac/lazytg/internal/core/events"
 	"github.com/pgmac/lazytg/internal/ui/input"
+	"github.com/pgmac/lazytg/internal/ui/palette"
 	"github.com/pgmac/lazytg/internal/ui/panes/chats"
 	uisearch "github.com/pgmac/lazytg/internal/ui/panes/search"
 )
+
+// recordVisitTimeout caps the post-select RecordVisit RPC. The
+// chat switch already happened by the time this fires; the timeout
+// only protects against a stuck SQLite VFS lock leaking a goroutine
+// indefinitely.
+const recordVisitTimeout = 2 * time.Second
 
 // Init is the initial Cmd batch. Each sub-pane gets its own Init so they can
 // kick off their own loaders (Task 7+: chats reads from repo, etc.). Stage 2
@@ -75,11 +85,27 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, cmd := a.search.Update(msg)
 		a.search = updated
 		return a, cmd
+	case palette.OpenedMsg:
+		return a.openPalette()
+	case palette.ClosedMsg:
+		return a.closePalette(), nil
+	case palette.SelectedMsg:
+		return a.handlePaletteSelected(m)
+	case palette.LoadedMsg, palette.QueryChangedMsg:
+		updated, cmd := a.palette.Update(msg)
+		a.palette = updated
+		return a, cmd
 	}
 
 	if a.help.Visible {
 		updatedHelp, cmd := a.help.Update(msg)
 		a.help = updatedHelp
+		return a, cmd
+	}
+
+	if a.palette.Visible {
+		updated, cmd := a.palette.Update(msg)
+		a.palette = updated
 		return a, cmd
 	}
 
@@ -325,6 +351,81 @@ func (a App) handleSearchJump(msg uisearch.JumpMsg) (tea.Model, tea.Cmd) {
 	return a, tea.Batch(cmds...)
 }
 
+// openPalette flips the palette overlay visible, remembers the
+// previous focus target so closePalette can restore it, and
+// forwards Open() to the palette so its textinput is focused and
+// the candidate-list refresh starts.
+func (a App) openPalette() (tea.Model, tea.Cmd) {
+	if a.prePaletteFocus < 0 {
+		a.prePaletteFocus = a.focus
+	}
+	updated, cmd := a.palette.Open()
+	a.palette = updated
+	return a, cmd
+}
+
+// closePalette hides the palette overlay and restores the focus
+// target the user was on when they opened it. Idempotent — calling
+// on an already-hidden palette is a no-op.
+func (a App) closePalette() App {
+	a.palette = a.palette.Close()
+	if a.prePaletteFocus >= 0 {
+		a.prePaletteFocus = -1
+	}
+	return a
+}
+
+// handlePaletteSelected consumes a SelectedMsg from the palette:
+// closes the palette, switches the chat (chats pane Update + thread
+// pane OpenChat + input pane SetChatMsg), records the visit so the
+// next palette open ranks the just-visited chat higher, and
+// optionally publishes a DialogUpdated bus event so future
+// subscribers can react.
+//
+// The RecordVisit call is fire-and-forget in a goroutine because the
+// chat switch already happened — a transient SQLite error must not
+// block the UI. The error is logged but not surfaced; the next visit
+// will retry and the palette will fall back to the chats list order
+// in the meantime.
+func (a App) handlePaletteSelected(msg palette.SelectedMsg) (tea.Model, tea.Cmd) {
+	chatID := msg.ChatID
+	a = a.closePalette()
+
+	updatedThread, cmd := a.thread.OpenChat(chatID)
+	a.thread = updatedThread
+	cmds := []tea.Cmd{}
+	if cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+
+	updatedInput, inputCmd := a.input.Update(input.SetChatMsg{ChatID: chatID})
+	a.input = updatedInput
+	if inputCmd != nil {
+		cmds = append(cmds, inputCmd)
+	}
+
+	if title, ok := a.chatTitle(chatID); ok {
+		a.status.ChatTitle = title
+	}
+
+	if a.paletteFrecency != nil {
+		fr := a.paletteFrecency
+		log := a.log
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), recordVisitTimeout)
+			defer cancel()
+			if err := fr.RecordVisit(ctx, chatID); err != nil && log != nil {
+				log.Warn("palette: record visit failed", "chat_id", chatID, "err", err)
+			}
+		}()
+	}
+
+	if len(cmds) == 0 {
+		return a, nil
+	}
+	return a, tea.Batch(cmds...)
+}
+
 // applyPendingScroll runs after broadcastToPanes / broadcastBusEvent
 // so any deferred ScrollTo issued by handleSearchJump can land now
 // that the thread pane has had a chance to apply its
@@ -405,6 +506,7 @@ func (a App) handleResize(msg tea.WindowSizeMsg) App {
 	a.thread = a.thread.SetSize(threadW, paneH)
 	a.input = a.input.SetWidth(a.width)
 	a.search = a.search.SetSize(a.width, a.height)
+	a.palette = a.palette.SetSize(a.width, a.height)
 	return a
 }
 
@@ -427,11 +529,18 @@ func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 	// any non-filter Chats moment via the global chord on a future
 	// vim-style "ctrl+s" alias).
 	searchAllowed := a.focus != FocusInput && !a.chats.IsFilterActive() && a.focus != FocusChats
+	// The palette chord (default "ctrl+space") is non-printable so it
+	// is safe from input/chats consumption — but the chats filter is
+	// modal, and stealing keys from it mid-typed-filter would feel
+	// broken to the user.
+	paletteAllowed := !a.chats.IsFilterActive()
 	switch {
 	case helpAllowed && key.Matches(k, a.keymap.ToggleHelp):
 		return cmdToggleHelp(), true
 	case searchAllowed && key.Matches(k, a.keymap.Search):
 		return cmdOpenSearch(), true
+	case paletteAllowed && key.Matches(k, a.keymap.OpenPalette):
+		return cmdOpenPalette(), true
 	case key.Matches(k, a.keymap.FocusNext):
 		return cmdNextFocus(), true
 	case key.Matches(k, a.keymap.FocusPrev):

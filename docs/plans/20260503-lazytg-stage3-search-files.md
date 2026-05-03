@@ -143,54 +143,21 @@ Pitch продукта «Instant search across your entire Telegram history» с
 
 ### Task 5: Frecency store + Командная палитра L1 (Ctrl-Space) + Unicode-fuzzy
 
-- [ ] Добавить миграцию `internal/storage/sqlite/migrations/0006_frecency.sql`:
-  ```sql
-  CREATE TABLE IF NOT EXISTS chat_frecency (
-      chat_id INTEGER PRIMARY KEY REFERENCES chats(id),
-      visit_count INTEGER NOT NULL DEFAULT 0,
-      last_visit INTEGER NOT NULL DEFAULT 0,
-      score REAL NOT NULL DEFAULT 0
-  );
-  CREATE INDEX IF NOT EXISTS idx_chat_frecency_score ON chat_frecency(score DESC);
-  ```
-- [ ] Добавить в `internal/storage/sqlite/repo.go`: методы `RecordVisit(ctx, chatID int64, now time.Time) error` (UPSERT с обновлением `visit_count++`, `last_visit=now`, `score=calc`) и `TopFrecency(ctx, limit int) ([]int64, error)` (SELECT top N chat_id ORDER BY score DESC). Calculation формулы score: `frequency * recency_decay`, `recency_decay = exp(-age_days / 30)` (через cast в float). Обновлять score только в `RecordVisit` (не пересчитывать на каждый запрос)
-- [ ] Создать `internal/ui/palette/frecency.go` с типом `FrecencyStore` (интерфейс — `RecordVisit(ctx, chatID) error`, `Top(ctx, limit int) ([]int64, error)`) и реализацией поверх repo. Hot-set ограничение: limit=200 (защита от O(N log N) на 5000+ чатов)
-- [ ] Добавить зависимости: `go get github.com/sahilm/fuzzy`, `go get golang.org/x/text/unicode/norm`
-- [ ] Создать `internal/ui/palette/normalize.go` с функцией `Normalize(s string) string`:
-  1. NFKD нормализация (`norm.NFKD.String(s)`)
-  2. Drop diacritics: пройти по runes, отбросить те, у которых `unicode.Is(unicode.Mn, r)` (Mark, nonspacing — это диакритики)
-  3. Lowercase (`strings.ToLower`)
-  4. Возвратить
-- [ ] Создать `internal/ui/palette/normalize_test.go` с табличными тестами:
-  1. `"Алёна"` → `"алена"` (ё → е после NFKD без диакритик? — ВАЖНО: ё в NFKD это `е` + combining diaeresis U+0308; drop Mn убирает диакритику, остаётся "е")
-  2. `"Café"` → `"cafe"`
-  3. `"naïve"` → `"naive"`
-  4. `"Hello"` → `"hello"`
-  5. ASCII неизменён
-  6. Emoji 🚀 — должно остаться как есть (это не Mn)
-- [ ] Создать `internal/ui/palette/messages.go` с TUI-сообщениями: `PaletteOpenedMsg`, `PaletteClosedMsg`, `PaletteQueryChangedMsg{Query}`, `PaletteSelectedMsg{ChatID int64}`
-- [ ] Создать `internal/ui/palette/model.go` с `Model{input textinput.Model; items []PaletteItem; filtered []int; frecency FrecencyStore; chats []domain.Chat; visible bool}` где `PaletteItem{ChatID int64; Title string; NormalizedTitle string}`. Конструктор `New(frecency FrecencyStore, repo storage.Repo) Model`. Метод `Open(ctx) tea.Cmd` — загружает top-200 chats через FrecencyStore + дополняет недостающими из repo (если frecency пустая — покажем недавние по last_message_date)
-- [ ] Создать `internal/ui/palette/fuzzy.go` с функцией `Match(query string, items []PaletteItem) []int` (возвращает индексы matched items в порядке убывания score). Внутри:
-  1. Normalize(query)
-  2. Использовать `sahilm/fuzzy.Find(normalizedQuery, normalizedTitles)` где `normalizedTitles` = `[]string{item.NormalizedTitle for item in items}`
-  3. Вернуть индексы matched (`fuzzy.Match.Index`)
-- [ ] Создать `internal/ui/palette/update.go`:
-  - KeyMsg Esc → `PaletteClosedMsg`
-  - KeyMsg Enter → `PaletteSelectedMsg{ChatID: m.items[m.filtered[m.cursor]].ChatID}`
-  - KeyMsg Up/Down → cursor двигается
-  - Иначе → input.Update; после изменения query → `m.filtered = Match(input.Value(), m.items)`, cursor=0
-- [ ] Создать `internal/ui/palette/view.go` — overlay по центру: input строка + список filtered items, текущий highlighted
-- [ ] Подключить в `internal/ui/app/`: keymap binding `OpenPalette` (default `Ctrl-Space`), при `PaletteSelectedMsg` → переключить chat (как при Enter в chats pane) + вызвать `frecency.RecordVisit`
-- [ ] Создать `internal/ui/palette/model_test.go`:
-  1. Open → загружены top-50 chats через frecency
-  2. Query "ал" в items с titles ["Алёна", "Алексей", "Боб"] → filtered содержит индексы Алёна (0) и Алексей (1) (нормализованные titles "алена", "алексей" оба начинаются на "ал")
-  3. **Unicode test:** items с title "Алёна", query "Алена" → найден (после Normalize обе строки = "алена")
-  4. KeyMsg Down + Enter → PaletteSelectedMsg с правильным ChatID
-- [ ] Создать `internal/ui/palette/frecency_test.go`:
-  1. Пустой repo → Top возвращает []
-  2. RecordVisit для chat 1, потом для chat 2 (через час), Top(2) → [chat2, chat1] (recency)
-  3. RecordVisit для chat 1 трижды, для chat 2 один раз → Top(2) → [chat1, chat2] (frequency)
-- [ ] Запустить `go test -race ./internal/ui/palette/...` — зелёное
+- [x] Создана миграция `internal/storage/sqlite/migrations/0006_frecency.sql` с таблицей `chat_frecency(chat_id PK→chats(id) ON DELETE CASCADE, visit_count, last_visit, score REAL)` + индекс по `score DESC` для дешёвого ORDER BY DESC в `TopFrecency`.
+- [x] В `internal/storage/sqlite/frecency.go` (отдельный файл, чтобы repo.go не разрастался) методы `RecordVisit(ctx, chatID, now time.Time)` и `TopFrecency(ctx, limit) ([]int64, error)`. Алгоритм: BEGIN → читаем `priorLastVisit` → UPSERT `visit_count++, last_visit=now` → читаем новый `visit_count` → `score = visit_count * exp(-(now - priorLastVisit) / 30 days)` → UPDATE score → COMMIT. На первом визите `priorLastVisit = now` → decay = 1, score = 1 (плановая семантика, иначе пустая таблица никогда не получает score>0). `TopFrecency` clamp limit ≤ 0 → 1, ORDER BY `score DESC, last_visit DESC` (tie-breaker для одинаковых score).
+- [x] `internal/ui/palette/frecency.go` определяет `FrecencyStore` интерфейс (`Top` + `RecordVisit`) и адаптер `repoStore` через узкий `repoBackend` интерфейс — палитра не импортирует `internal/storage/sqlite` напрямую (тестовые бинари не тянут CGo-free SQLite, проще fake'ать). `HotSetLimit = 200`.
+- [x] Зависимости `golang.org/x/text/unicode/norm` и `github.com/sahilm/fuzzy` уже были `// indirect`; теперь стали direct после добавления импорта в палитре. `go mod tidy` промотал их в основную секцию.
+- [x] `internal/ui/palette/normalize.go::Normalize(s)` через NFKD → drop Mn-категория (combining marks) → ToLower. Headline-инвариант покрыт `TestNormalize_AlyonaRoundTrip`: `Normalize("Алёна") == Normalize("Алена")`. Дополнительные кейсы: Café→cafe, naïve→naive, ASCII passthrough, эмоджи unchanged, empty string. Сценарий с `ẞ`/`ß` пропущен — `unicode.ToLower(ẞ) = ß`, не `ss`; это поведение Go-stdlib, и для русско-английской аудитории не важно.
+- [x] `internal/ui/palette/messages.go` — `OpenedMsg`, `ClosedMsg`, `QueryChangedMsg{Query}`, `SelectedMsg{ChatID}`, `LoadedMsg{Items, Err}`. Имена без префикса `Palette` — пакет уже `palette`, повторение стертерило бы.
+- [x] `internal/ui/palette/model.go` — `Model{Width, Height, Visible, input, frecency, chats, log, items, filtered, cursor, loadErr}` с `Item{ChatID, Title, NormalizedTitle}`. `New(frecency, chats, log)` принимает обе зависимости как nil-safe (тесты создают модель без бэкенда). `Open()` возвращает `tea.Batch(focusCmd, loadCmd)`; `loadCandidates` запускает goroutine, которая пуллит top-200 из FrecencyStore + полный chats list, и через `mergeCandidates` склеивает в порядке (frecency-known first → alphabetical tail). Чаты без title скипаются (нечего показывать); chat_id известен в frecency, но title неизвестен → fallback `chat <id>`. Размер модала: ширина клампится 10..80, центрируется через `lipgloss.Place`.
+- [x] `internal/ui/palette/fuzzy.go::Match(query, items)` нормализует query, делает `fuzzy.FindFrom` через адаптер `titleSource` (`Len`/`String`) — без аллокации intermediate `[]string`. Empty/whitespace query → identity slice (полный список в исходном frecency-порядке).
+- [x] `internal/ui/palette/update.go` — модальная диспетчеризация: `OpenedMsg`/`ClosedMsg` от app, `LoadedMsg` пишет items+filtered+loadErr. Esc → Close + ClosedMsg cmd. Enter на пустом filtered → noop; иначе Close + SelectedMsg{ChatID}. Up/Down с clamp на границах. Любая другая клавиша → forward в textinput; если value изменилось → `m.filtered = Match(...)`, cursor=0. Hidden palette глотает все keys кроме OpenedMsg.
+- [x] `internal/ui/palette/view.go` — lipgloss centred modal с rounded border. Состояния: error / no items / no matches / список. Cursor row подсвечен `lipgloss.Color("12")` (bright blue), мета-колонка `chat=N` через grey foreground (color 8). Window scroll при `len(filtered) > maxVisibleRows=12` — окно центрируется на cursor.
+- [x] Wiring overlay в `internal/ui/app/`: добавлен keymap binding `OpenPalette` (default `["ctrl+space", "ctrl+@"]` — bubbletea v2 на одних терминалах эмитит первое, на других — второе). `loader.go::bindingFields` принимает TOML-ключ `open_palette`. `app/keys.go::cmdOpenPalette` эмитит `palette.OpenedMsg`. `app/update.go::handleGlobalKey` блокирует chord, пока chats filter активен (модальный конфликт). `openPalette/closePalette` хранят `prePaletteFocus`. `handlePaletteSelected` → close palette → thread.OpenChat(chatID) → input.SetChatMsg → status.ChatTitle обновляется через `chatTitle()` → fire-and-forget goroutine с `recordVisitTimeout=2s` зовёт `paletteFrecency.RecordVisit` (если deps выставил). `app/view.go` отрисовывает overlay поверх 2-pane: priority order help > palette > search > body. Routing для всех `palette.*Msg` в `Update` switch + fallback `if a.palette.Visible → palette.Update(msg)`.
+- [x] `internal/ui/palette/normalize_test.go` — табличные тесты + headline `TestNormalize_AlyonaRoundTrip`.
+- [x] `internal/ui/palette/model_test.go` — 9 тестов: defaults, Open с загрузкой topResult+rest sorted, фильтр "ал" → 2 матча, **Unicode test "Алёна"+query "Алена" → match**, Down+Enter → SelectedMsg правильный chat, Esc → ClosedMsg cmd, load error surfaced, hidden palette drops keys, Match(empty) → identity slice. fakeFrecency / fakeChats имитируют бэкенды без SQLite.
+- [x] `internal/storage/sqlite/frecency_test.go` (вместо `palette/frecency_test.go` — тестируем именно SQL-логику): 5 тестов: empty repo → empty Top, recency wins (chat2 после chat1 → [2,1]), frequency wins (3 visits chat1 vs 1 visit chat2 → [1,2]), decay shrinks score after gap (chat1 visited then again 60d later → score = 2*exp(-2) ≈ 0.27 < 1.0 fresh chat2), limit ≤ 0 clamps to 1, validation chat_id == 0 → error.
+- [x] Полный `go test -race ./...` (24 пакета) — зелёное. `golangci-lint run` — 0 issues. `go build ./...` — чистая сборка. Wiring в `cmd/lazytg/cmd/tui.go` (production-конструктор палитры с реальным FrecencyStore) отнесён к Task 10 — там единый wiring для всех stage 3 компонентов (search, palette, downloads). Сейчас в production-сборке палитра существует с nil-deps и не активна — keymap binding есть, но Top/GetChats возвращают пусто.
 
 ### Task 6: Files: download (Ctrl-D)
 

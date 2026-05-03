@@ -37,17 +37,18 @@ type fileFormat struct {
 // same user-facing description.
 func bindingFields(km *Keymap) map[string]*key.Binding {
 	return map[string]*key.Binding{
-		"send":        &km.Send,
-		"newline":     &km.Newline,
-		"reply":       &km.Reply,
-		"open_editor": &km.OpenEditor,
-		"toggle_help": &km.ToggleHelp,
-		"focus_next":  &km.FocusNext,
-		"focus_prev":  &km.FocusPrev,
-		"scroll_up":   &km.ScrollUp,
-		"scroll_down": &km.ScrollDown,
-		"search":      &km.Search,
-		"quit":        &km.Quit,
+		"send":         &km.Send,
+		"newline":      &km.Newline,
+		"reply":        &km.Reply,
+		"open_editor":  &km.OpenEditor,
+		"toggle_help":  &km.ToggleHelp,
+		"focus_next":   &km.FocusNext,
+		"focus_prev":   &km.FocusPrev,
+		"scroll_up":    &km.ScrollUp,
+		"scroll_down":  &km.ScrollDown,
+		"search":       &km.Search,
+		"open_palette": &km.OpenPalette,
+		"quit":         &km.Quit,
 	}
 }
 

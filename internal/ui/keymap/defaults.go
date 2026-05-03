@@ -15,17 +15,18 @@ import "charm.land/bubbles/v2/key"
 // the snake_case mapping table in loader.go. New bindings must be registered
 // in three places: this struct, defaults(), and bindingFields() in loader.go.
 type Keymap struct {
-	Send       key.Binding
-	Newline    key.Binding
-	Reply      key.Binding
-	OpenEditor key.Binding
-	ToggleHelp key.Binding
-	FocusNext  key.Binding
-	FocusPrev  key.Binding
-	ScrollUp   key.Binding
-	ScrollDown key.Binding
-	Search     key.Binding
-	Quit       key.Binding
+	Send        key.Binding
+	Newline     key.Binding
+	Reply       key.Binding
+	OpenEditor  key.Binding
+	ToggleHelp  key.Binding
+	FocusNext   key.Binding
+	FocusPrev   key.Binding
+	ScrollUp    key.Binding
+	ScrollDown  key.Binding
+	Search      key.Binding
+	OpenPalette key.Binding
+	Quit        key.Binding
 }
 
 // Default returns the built-in emacs-flavoured keymap.
@@ -73,6 +74,14 @@ func Default() Keymap {
 		Search: key.NewBinding(
 			key.WithKeys("/"),
 			key.WithHelp("/", "search"),
+		),
+		// "ctrl+space" is the canonical name bubbletea v2 emits for
+		// Ctrl-Space on most terminals. Some older terminals report it
+		// as the NUL byte (canonical "ctrl+@") so the binding lists
+		// both spellings; key.Matches compares against every entry.
+		OpenPalette: key.NewBinding(
+			key.WithKeys("ctrl+space", "ctrl+@"),
+			key.WithHelp("ctrl+space", "command palette"),
 		),
 		Quit: key.NewBinding(
 			key.WithKeys("ctrl+c", "ctrl+q"),

@@ -17,6 +17,7 @@ import (
 	"github.com/pgmac/lazytg/internal/ui/input"
 	"github.com/pgmac/lazytg/internal/ui/keymap"
 	"github.com/pgmac/lazytg/internal/ui/overlay"
+	"github.com/pgmac/lazytg/internal/ui/palette"
 	"github.com/pgmac/lazytg/internal/ui/panes/chats"
 	uisearch "github.com/pgmac/lazytg/internal/ui/panes/search"
 	"github.com/pgmac/lazytg/internal/ui/panes/thread"
@@ -74,29 +75,48 @@ type Deps struct {
 	Log    *slog.Logger
 	Keymap keymap.Keymap
 
-	Chats  *chats.Model
-	Thread *thread.Model
-	Input  *input.Model
-	Status *statusbar.Model
-	Search *uisearch.Model
+	Chats   *chats.Model
+	Thread  *thread.Model
+	Input   *input.Model
+	Status  *statusbar.Model
+	Search  *uisearch.Model
+	Palette *palette.Model
+
+	// PaletteFrecency, if set, is invoked by the app on every
+	// SelectedMsg so the just-visited chat ranks higher in the
+	// next palette open. Tests typically leave it nil; production
+	// passes the same FrecencyStore the palette itself reads from.
+	PaletteFrecency palette.FrecencyStore
 }
 
 // App is the root Bubble Tea model. Sub-pane fields are concrete types
 // rather than interfaces so the depguard rule (ui ⊥ gotd) stays trivially
 // satisfied without interface plumbing.
 type App struct {
-	chats  chats.Model
-	thread thread.Model
-	input  input.Model
-	status statusbar.Model
-	help   overlay.Help
-	search uisearch.Model
+	chats   chats.Model
+	thread  thread.Model
+	input   input.Model
+	status  statusbar.Model
+	help    overlay.Help
+	search  uisearch.Model
+	palette palette.Model
+
+	// paletteFrecency mirrors Deps.PaletteFrecency so
+	// handlePaletteSelected can call RecordVisit without a
+	// separate plumb. nil means "no frecency wired" — the chat
+	// switch still happens but visit counts are not updated.
+	paletteFrecency palette.FrecencyStore
 
 	// preSearchFocus remembers the focus target the user was on
 	// before opening the search overlay so Esc / SearchJump can
 	// restore it. -1 means "no overlay open" so the field is
 	// effectively ignored.
 	preSearchFocus FocusTarget
+
+	// prePaletteFocus is the same idea for the command palette so
+	// closing it (Esc / SelectedMsg) can restore the prior focus
+	// target. -1 means "no palette open".
+	prePaletteFocus FocusTarget
 
 	// pendingScroll holds a deferred ScrollTo target produced by
 	// handleSearchJump. The thread pane's applyLoaded calls
@@ -122,17 +142,20 @@ type App struct {
 // "(unfocused)" body, focus starts on Chats.
 func New(deps Deps) App {
 	app := App{
-		chats:          chooseModel(deps.Chats, chats.New),
-		thread:         chooseModel(deps.Thread, thread.New),
-		input:          chooseModel(deps.Input, input.New),
-		status:         chooseStatus(deps.Status),
-		help:           overlay.New(deps.Keymap),
-		search:         chooseSearch(deps.Search),
-		preSearchFocus: -1,
-		focus:          FocusChats,
-		keymap:         deps.Keymap,
-		bus:            deps.Bus,
-		log:            deps.Log,
+		chats:           chooseModel(deps.Chats, chats.New),
+		thread:          chooseModel(deps.Thread, thread.New),
+		input:           chooseModel(deps.Input, input.New),
+		status:          chooseStatus(deps.Status),
+		help:            overlay.New(deps.Keymap),
+		search:          chooseSearch(deps.Search),
+		palette:         choosePalette(deps.Palette),
+		paletteFrecency: deps.PaletteFrecency,
+		preSearchFocus:  -1,
+		prePaletteFocus: -1,
+		focus:           FocusChats,
+		keymap:          deps.Keymap,
+		bus:             deps.Bus,
+		log:             deps.Log,
 	}
 	app.chats = app.chats.SetFocus(true)
 	return app
@@ -147,6 +170,17 @@ func chooseSearch(src *uisearch.Model) uisearch.Model {
 		return *src
 	}
 	return uisearch.New(nil, 0, nil)
+}
+
+// choosePalette returns *src if non-nil, else a no-deps palette.
+// The placeholder behaves as "always empty" (frecency / chats both
+// nil → loadCandidates returns an empty slice) — fine for app/View
+// tests that never open the palette.
+func choosePalette(src *palette.Model) palette.Model {
+	if src != nil {
+		return *src
+	}
+	return palette.New(nil, nil, nil)
 }
 
 // pendingThreadScroll is the deferred scroll target produced by
@@ -199,6 +233,14 @@ func (a App) SearchVisible() bool { return a.search.Visible }
 // model is value-copied; mutating the returned value does not affect
 // the App.
 func (a App) SearchModel() uisearch.Model { return a.search }
+
+// PaletteVisible reports whether the command palette overlay is
+// currently shown. Exposed for tests.
+func (a App) PaletteVisible() bool { return a.palette.Visible }
+
+// PaletteModel returns the embedded palette overlay (test helper).
+// Value-copied; mutating it does not affect the App.
+func (a App) PaletteModel() palette.Model { return a.palette }
 
 // TooSmall reports whether the last WindowSize was below MinWidth/MinHeight.
 // Exposed for tests so they can assert without parsing the rendered View.

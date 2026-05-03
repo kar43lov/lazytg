@@ -3,6 +3,7 @@ package app
 import (
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/pgmac/lazytg/internal/ui/palette"
 	uisearch "github.com/pgmac/lazytg/internal/ui/panes/search"
 )
 
@@ -37,6 +38,14 @@ func cmdToggleHelp() tea.Cmd {
 // Cmd path keeps the open behaviour observable from tests.
 func cmdOpenSearch() tea.Cmd {
 	return func() tea.Msg { return uisearch.OpenedMsg{} }
+}
+
+// cmdOpenPalette emits a palette.OpenedMsg the command palette
+// reacts to by becoming Visible, focusing its textinput, and
+// scheduling the candidate-list refresh. Same Cmd-path rationale as
+// cmdOpenSearch.
+func cmdOpenPalette() tea.Cmd {
+	return func() tea.Msg { return palette.OpenedMsg{} }
 }
 
 // cmdQuit is tea.Quit — re-exported under our naming convention so call
