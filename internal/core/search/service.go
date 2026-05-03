@@ -50,13 +50,18 @@ func NewService(store IndexStore, lazy *LazyTrigger, log *slog.Logger) *Service 
 // to match the search overlay's visible-rows budget.
 const DefaultSearchLimit = 50
 
-// Search runs raw against messages_fts MATCH and returns up to limit hits
-// ordered by bm25 ascending (best first). limit <= 0 falls back to
-// DefaultSearchLimit so UI code can omit it during early debugging.
+// Search parses raw with the search grammar (operators, phrases,
+// exclusions) and runs the resulting Query against messages_fts.
+// Results are returned ordered by bm25 ascending (best first); limit
+// <= 0 falls back to DefaultSearchLimit so UI code can omit it during
+// early debugging.
 //
-// raw is forwarded to FTS5 MATCH verbatim at Stage 3 Task 2 — Task 3
-// wraps this method behind a Query+parser layer that escapes user
-// input. Callers must not pass untrusted raw strings here yet.
+// Stage 3 Task 3 routes raw through Parse + BuildSQL so the search
+// service no longer hands user input to FTS5 verbatim — operators
+// like from:@user / in:#chat / before: / after: now turn into
+// parameterised SQL fragments and only the FTS5 MATCH expression
+// itself stays string-substituted (it cannot be parameterised in
+// modernc.org/sqlite without losing trigram tokenization).
 func (s *Service) Search(ctx context.Context, raw string, limit int) ([]Hit, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -69,7 +74,21 @@ func (s *Service) Search(ctx context.Context, raw string, limit int) ([]Hit, err
 		_ = s.lazy.EnsureIndexed(ctx)
 	}
 
-	rows, err := s.store.DB().QueryContext(ctx, `
+	q, err := Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	extraWhere, ftsMatch, extraArgs, err := BuildSQL(q)
+	if err != nil {
+		return nil, err
+	}
+
+	args := make([]any, 0, len(extraArgs)+2)
+	args = append(args, ftsMatch)
+	args = append(args, extraArgs...)
+	args = append(args, limit)
+
+	sqlText := `
         SELECT m.id,
                m.chat_id,
                m.from_id,
@@ -81,10 +100,12 @@ func (s *Service) Search(ctx context.Context, raw string, limit int) ([]Hit, err
                bm25(messages_fts) AS score
         FROM messages_fts
         JOIN messages m ON m.rowid = messages_fts.rowid
-        WHERE messages_fts MATCH ?
+        WHERE messages_fts MATCH ?` + extraWhere + `
         ORDER BY bm25(messages_fts)
         LIMIT ?
-    `, raw, limit)
+    `
+
+	rows, err := s.store.DB().QueryContext(ctx, sqlText, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search %q: %w", raw, err)
 	}

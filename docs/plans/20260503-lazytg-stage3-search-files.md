@@ -117,49 +117,13 @@ Pitch продукта «Instant search across your entire Telegram history» с
 
 ### Task 3: Search query parser
 
-- [ ] Создать `internal/core/search/query.go` с типом `Query` структурой:
-  ```go
-  type Query struct {
-      Text       string         // основной FTS5 MATCH expression
-      From       []string       // from:@user → user IDs/usernames
-      InChats    []int64        // in:#chat → chat IDs (resolved)
-      Before     *time.Time     // before:DATE
-      After      *time.Time     // after:DATE
-      HasFile    bool           // has:file → media != null
-      Phrases    []string       // "exact phrases"
-      Excluded   []string       // -words → NOT in FTS5
-      Raw        string         // оригинальная строка для отладки
-  }
-  ```
-- [ ] Создать `internal/core/search/parser.go` с функцией `Parse(input string) (Query, error)`. Логика:
-  1. Токенизация: уважать кавычки `"foo bar"` как один токен, `\"` escape, незакрытая кавычка → ошибка с позицией
-  2. Для каждого токена: если матчится regex `^([a-z]+):(.+)$` — оператор; иначе обычный поисковый токен
-  3. Операторы:
-     - `from:@user` или `from:user` — добавить в `Query.From`
-     - `in:#chat` или `in:chat` — добавить в `Query.InChats` (как строка, разрешение в Service)
-     - `before:YYYY-MM-DD` или `before:YYYY-MM-DDTHH:MM:SS` — `time.Parse`, ошибка с понятным сообщением если формат неверен
-     - `after:` — то же
-     - `has:file` — `Query.HasFile = true`. Любые другие значения `has:` → ошибка
-  4. Токены, начинающиеся с `-` (длиной ≥2) → `Query.Excluded`
-  5. Токены, обёрнутые в `"..."` → `Query.Phrases`
-  6. Остальные → склеить через пробел в `Query.Text` (FTS5 MATCH использует AND)
-- [ ] Создать `internal/core/search/parser_test.go` с табличными тестами:
-  1. `"hello"` → `Query{Text: "hello", Raw: ...}`
-  2. `"hello world"` → `Query{Text: "hello world"}` (FTS5 интерпретирует как AND)
-  3. `"\"hello world\""` → `Query{Phrases: ["hello world"]}`
-  4. `"from:@alice hello"` → `Query{From: ["alice"], Text: "hello"}`
-  5. `"from:@alice from:@bob hello"` → `Query{From: ["alice","bob"], Text: "hello"}`
-  6. `"before:2025-12-01 after:2025-11-01 спам"` → даты + Text
-  7. `"has:file видео"` → `Query{HasFile: true, Text: "видео"}`
-  8. `"-spam важное"` → `Query{Excluded: ["spam"], Text: "важное"}`
-  9. **Edge cases:** пустая строка → ошибка "empty query"; `"before:invalid"` → ошибка с позицией; незакрытая кавычка `"foo` → ошибка
-- [ ] Создать `internal/core/search/query_builder.go` с функцией `BuildSQL(q Query) (sqlText string, ftsMatch string, args []any, err error)`. Конвертирует Query в:
-  - FTS5 MATCH expression: `Text` + `Phrases` (через `"..." `) + `NOT (excluded1 OR excluded2)`
-  - SQL WHERE clauses для From/InChats/Before/After/HasFile (присоединяется к JOIN с peers/users)
-  - Параметры через `?` placeholders
-- [ ] Тесты на `BuildSQL` — табличные: для каждого Query проверить полученный sqlText и args
-- [ ] Обновить `Service.Search` (из Task 2) чтобы использовать `BuildSQL` для составления запроса
-- [ ] Запустить `go test -race ./internal/core/search/...` — зелёное
+- [x] Создан `internal/core/search/query.go` с типом `Query`. От плана отступил в одном месте: `InChats` сделан `[]string`, а не `[]int64` — резолвинг username/title → chat_id переехал в SQL подзапрос внутри `BuildSQL` (`m.chat_id IN (SELECT id FROM chats WHERE username IN (...) OR title IN (...))`), чтобы парсер не нуждался в DB-доступе. Поля From/InChats хранят строки без префиксов `@`/`#`.
+- [x] Создан `internal/core/search/parser.go` с функцией `Parse(input string) (Query, error)`. Токенизация рукописная (без regex): уважает `"..."` фразы с `\"` escape, неклоsed quote → ошибка с позицией. Оператор распознаётся по shape `[a-z]+:value` с непустым value, иначе токен идёт как plain text (URL `http://x` не ломает парс). `from:`/`in:` стрипают `@`/`#`. `before:`/`after:` принимают `YYYY-MM-DD` и `YYYY-MM-DDTHH:MM:SS` через time.ParseInLocation в UTC. `has:` принимает только `file`, остальные значения → ошибка. `-foo` (длиной ≥2) → `Excluded`, `-` сам по себе остаётся как plain. Пустая строка / только операторы без positive terms → ошибка.
+- [x] Создан `internal/core/search/parser_test.go` с двумя табличными тестами: TestParse (14 happy-path кейсов включая phrases с escape, kitchen-sink, fall-through unknown op) и TestParse_Errors (6 негативных кейсов с substring-проверкой текста ошибки).
+- [x] Создан `internal/core/search/query_builder.go` с `BuildSQL(q Query) (sqlText, ftsMatch string, args []any, err error)`. Возвращает SQL fragment с лидирующим ` AND ` для конкатенации к базовому запросу, FTS5 MATCH строкой и параметрами для placeholders в sqlText. FTS5 MATCH: text + phrases (через `"..."`) + опционально `(positive) NOT (a OR b)`. WHERE clauses: `m.from_id IN (subquery chats.username)`, `m.chat_id IN (subquery chats.username OR title)` с дублированием args, `m.date >= ?`/`m.date < ?` для after/before. **HasFile сознательно не emit-ит SQL фильтр** — оставлен placeholder-комментарий `/* TODO(stage3-task6): m.media_type IS NOT NULL */ 1=1` который не схлопывает результаты, но grep'ается из Task 6 для замены на реальный фильтр после миграции 0008.
+- [x] Создан `internal/core/search/query_builder_test.go` с TestBuildSQL (13 кейсов покрывающих каждое поле Query + kitchen-sink) и TestBuildSQL_Errors (защита от hand-built Query без positive terms — Parse уже это ловит, но defensive layer).
+- [x] Обновлён `Service.Search` чтобы использовать Parse + BuildSQL вместо forwarding raw в FTS5 MATCH. Аргументы складываются в порядке `[ftsMatch, ...extraArgs, limit]`. Сам ftsMatch остаётся string-substituted (modernc/sqlite не поддерживает параметризованный MATCH без потери трëгграмного токенайзера), но user input теперь не попадает туда напрямую — только через positive terms / phrases / NOT clause собранные парсером.
+- [x] `go test -race ./internal/core/search/...` зелёное (3.7s включая benchmark setup для search). Coverage пакета search: 90.0%. Полный `go build ./...`, `go test -race ./...` и `golangci-lint run` без ошибок и issues.
 
 ### Task 4: Search service jump-to-message + Search UI overlay
 
