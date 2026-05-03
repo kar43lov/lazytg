@@ -11,7 +11,9 @@ import (
 	"github.com/pgmac/lazytg/internal/core/events"
 	uiapp "github.com/pgmac/lazytg/internal/ui/app"
 	"github.com/pgmac/lazytg/internal/ui/input"
+	"github.com/pgmac/lazytg/internal/ui/palette"
 	"github.com/pgmac/lazytg/internal/ui/panes/chats"
+	uisearch "github.com/pgmac/lazytg/internal/ui/panes/search"
 	"github.com/pgmac/lazytg/internal/ui/panes/thread"
 )
 
@@ -71,14 +73,33 @@ func runTUI(cmd *cobra.Command, _ []string) error {
 	threadModel := thread.NewWithRepo(runtime.Repo, nil, logger)
 	inputModel := input.NewWithDeps(nil, runtime.Keymap, logger)
 
-	uiModel := uiapp.New(uiapp.Deps{
-		Bus:    runtime.Bus,
-		Log:    logger,
-		Keymap: runtime.Keymap,
-		Chats:  &chatsModel,
-		Thread: &threadModel,
-		Input:  &inputModel,
-	})
+	// Stage 3 overlays: search runs on the lazy-indexed FTS pipeline,
+	// palette feeds from the frecency store, attach is folded in via
+	// the Ctrl-U chord. The download/upload services are nil until
+	// AttachClient runs — the UI app treats nil as "chord becomes a
+	// quiet no-op" so a logged-out session does not crash on Ctrl-D
+	// or Ctrl-U.
+	searchModel := uisearch.New(runtime.SearchSvc, 0, logger)
+	paletteModel := palette.New(runtime.Frecency, runtime.Repo, logger)
+
+	deps := uiapp.Deps{
+		Bus:             runtime.Bus,
+		Log:             logger,
+		Keymap:          runtime.Keymap,
+		Chats:           &chatsModel,
+		Thread:          &threadModel,
+		Input:           &inputModel,
+		Search:          &searchModel,
+		Palette:         &paletteModel,
+		PaletteFrecency: runtime.Frecency,
+	}
+	if runtime.DownloadSvc != nil {
+		deps.Downloader = runtime.DownloadSvc
+	}
+	if runtime.UploadSvc != nil {
+		deps.Uploader = runtime.UploadSvc
+	}
+	uiModel := uiapp.New(deps)
 
 	// Bubble Tea v2 uses declarative view fields for alt-screen / mouse
 	// mode; both are set inside the App.View body. The only Program-level

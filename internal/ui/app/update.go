@@ -100,6 +100,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		events.FileUploadFailed,
 		events.FileUploadWarning:
 		return a.broadcastBusEvent(msg)
+	case events.ReindexProgress, events.SearchJumpRequested:
+		// Bus events that have no UI consumer in v0.1 — declared
+		// here so they don't fall through into broadcastToPanes
+		// (which would forward them to every pane's Update) and so
+		// future stages can plug a status-bar / overlay handler in
+		// without a routing change.
+		return a, nil
 	case thread.DownloadRequestedMsg:
 		return a.handleDownloadRequest(m)
 	case uisearch.OpenedMsg:

@@ -52,6 +52,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newAccountsCmd())
 	root.AddCommand(newVersionCmd())
 	root.AddCommand(newDebugBundleCmd())
+	root.AddCommand(newReindexCmd())
 	root.AddCommand(newTuiCmd())
 
 	return root

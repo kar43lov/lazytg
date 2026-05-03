@@ -1,4 +1,4 @@
-# Stage 2 — Manual Smoke Checklist
+# Manual Smoke Checklist (Stages 2 + 3)
 
 Этот чек-лист дополняет автоматизированные unit/integration/e2e тесты в `internal/...` и `test/...` ручной проверкой UX-аспектов TUI, которые невозможно адекватно покрыть headless-тестами (визуальный рендер, latency восприятия, поведение в реальном терминале).
 
@@ -137,6 +137,87 @@
 - [ ] `Ctrl+C` или `Ctrl+Q` — TUI завершается чисто
 - [ ] Терминал восстанавливается (alt-screen exit)
 - [ ] `goroutine leak` отсутствует (можно проверить через `lsof | grep lazytg` после `kill`)
+
+## Stage 3 — Search, Files, Палитра, Безопасность
+
+### 17. Search overlay
+
+- [ ] `/` (когда фокус не в Input/Chats-filter) — открывается search overlay поверх 2-pane
+- [ ] Печатаете `привет` → через ≤200ms появляются результаты с подсветкой совпадений
+- [ ] `↑/↓` — переключают cursor по результатам
+- [ ] `Enter` на результате → переход в нужный чат + viewport позиционирован на сообщение с контекстом ±5
+- [ ] `Esc` — overlay закрывается, фокус восстанавливается на исходный pane
+- [ ] Operators работают:
+  - [ ] `from:@username` — только сообщения от пользователя
+  - [ ] `in:#chat` — только в указанном чате
+  - [ ] `before:2026-01-01` / `after:2025-12-01` — фильтр по дате
+  - [ ] `has:file` — только сообщения с media
+  - [ ] `"точная фраза"` — phrase search
+  - [ ] `-слово` — exclusion
+
+### 18. Командная палитра L1
+
+- [ ] `Ctrl+Space` (или `Ctrl+@`) — открывается палитра по центру экрана
+- [ ] Пустой query → top-50 чатов в порядке frecency (свежие × частые)
+- [ ] Печатаете `Алёна` → находит чат "Алена" (Unicode normalize: ё → е)
+- [ ] `↑/↓` + `Enter` — переход в чат
+- [ ] `Esc` — закрытие
+- [ ] После выбора чата frecency обновляется (закрыть-открыть палитру → выбранный чат поднялся вверх)
+
+### 19. Files: download (Ctrl-D)
+
+- [ ] Откройте чат с сообщением, содержащим фото или документ
+- [ ] Status-bar в Thread показывает badge типа `[📎 report.pdf, 229.1 KiB] ctrl+d to save`
+- [ ] `Ctrl+D` — в status-bar появляется ⬇ chip с прогрессом
+- [ ] По завершении файл лежит в `~/Downloads/lazytg/<chat-title>/<filename>` (sanitized: слеши заменены на `_`)
+- [ ] Permissions файла = `0600`
+- [ ] Повторный `Ctrl+D` на том же сообщении → instant complete (dedup hit)
+- [ ] Удалите файл, повторный `Ctrl+D` → перезакачка (stale dedup honoured)
+
+### 20. Files: upload (Ctrl-U)
+
+- [ ] Откройте любой чат, поставьте фокус в Input
+- [ ] `Ctrl+U` — открывается attach overlay с file picker (path + caption)
+- [ ] `Tab` — переключает между path и caption полями
+- [ ] Навигация по директориям через `Enter` на папке
+- [ ] `Enter` на regular file → overlay закрывается, в status-bar появляется ⬆ chip
+- [ ] По завершении сообщение появляется в треде
+- [ ] Большой файл (>50 MiB) — в логах warning, но загрузка продолжается
+- [ ] Очень большой файл (>2 GiB) — отказ с понятной ошибкой
+
+### 21. DB size warning
+
+- [ ] При размере `~/.local/share/lazytg/lazytg.db` (Linux) / `~/Library/Application Support/lazytg/lazytg.db` (macOS) > 1 GiB → в status-bar появляется yellow chip типа `⚠ DB 1.2 GB`
+- [ ] Возврат под порог — chip исчезает (через ≤60 секунд)
+
+### 22. debug-bundle без секретов
+
+- [ ] `./bin/lazytg debug-bundle` → создаёт `lazytg-bundle-<timestamp>.tar.gz` в cwd
+- [ ] Распакуйте: `tar -xzf lazytg-bundle-*.tar.gz -C /tmp/bundle/`
+- [ ] `grep -ER "api_hash|^[A-Za-z0-9+/=]{32,}$|<phone>" /tmp/bundle/` → 0 матчей (грэп-тест автоматизирован, но визуальная проверка не повредит)
+- [ ] Файл tar.gz имеет permissions `0600`
+- [ ] Внутри: `version.txt`, `config.toml` (или placeholder), `logs.txt`, `db_stats.txt`, `goroutines.txt`
+
+### 23. Permission check fail-fast
+
+- [ ] Закройте TUI
+- [ ] `chmod 0644 ~/.config/lazytg/secrets.age` (Linux) или эквивалент на macOS
+- [ ] Запустите `./bin/lazytg` → fail с понятным сообщением «security: startup audit ... permissions ... actual_mode 0644» и невыходом в TUI
+- [ ] `chmod 0600` обратно — TUI запускается нормально
+
+### 24. Send rate-limit (manual stress test)
+
+- [ ] Отправьте 30 сообщений подряд через Input pane (зажав Enter с paste-buffer'ом)
+- [ ] Первые ~30 уходят без задержки (burst capacity)
+- [ ] Последующие сообщения (31+) уходят со скоростью ~10 msg/sec — заметная задержка между каждой отправкой
+- [ ] В логах нет flood-wait ошибок от MTProto
+
+### 25. lazytg reindex
+
+- [ ] `./bin/lazytg reindex --chat 12345` → stderr: `reindexing chat 12345…` → `chat 12345 · N rows · cumulative N` → `done · total N rows indexed`
+- [ ] `./bin/lazytg reindex --all` — то же для всех чатов
+- [ ] `./bin/lazytg reindex` без флагов → понятная ошибка
+- [ ] `./bin/lazytg reindex --all --chat 12345` → понятная ошибка (mutually exclusive)
 
 ## Запись результатов
 

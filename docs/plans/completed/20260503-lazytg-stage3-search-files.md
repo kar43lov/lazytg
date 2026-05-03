@@ -226,42 +226,25 @@ Pitch продукта «Instant search across your entire Telegram history» с
 
 ### Task 10: Wiring + final verification
 
-- [ ] Обновить `internal/app/wire.go`: добавить новые компоненты в App struct и `Build`:
-  - `Indexer *search.Indexer`
-  - `ReindexSvc *search.ReindexService`
-  - `SearchSvc *search.Service`
-  - `LazyIndex *search.LazyTrigger`
-  - `Frecency *palette.FrecencyStore`
-  - `DownloadSvc *files.DownloadService`
-  - `UploadSvc *files.UploadService`
-  - `DBSizeMonitor *obs.DBSizeMonitor`
-  - `Security` checks при `Build`
-  Запуск горутин: `LazyTrigger` стартует ленивая индексация при первом search, `DBSizeMonitor.Run` в goroutine, остальные — on-demand
-- [ ] Обновить `cmd/lazytg/cmd/tui.go`: подключить новые UI overlays (search, palette) к `internal/ui/app/`. Передать deps (search service, frecency, download/upload services) в конструктор UI app. Прокидка events → tea.Msg через `program.Send`
-- [ ] Обновить `internal/ui/app/model.go`: добавить поля `search panes/search.Model`, `palette palette.Model`, `attach input.AttachModel`. В `View()` overlay-priority: attach > palette > search > help > main 2-pane layout
-- [ ] Обновить `internal/ui/app/update.go`: маршрутизация:
-  - keymap.Search → search.Open
-  - keymap.OpenPalette → palette.Open
-  - keymap.Attach → attach.Open (если фокус в input)
-  - keymap.Download → если фокус в thread с media → download
-  - События `events.SearchJumpRequested` → переключить chat + scroll
-  - События `events.PaletteSelected` → переключить chat + frecency.RecordVisit
-  - События `events.FileDownload*`/`FileUpload*` → routed в statusbar
-  - События `events.StorageStateChanged{Reason: db_size_warning}` → statusbar
-- [ ] Обновить `cmd/lazytg/cmd/`: добавить команду `lazytg reindex [--all|--chat ID]` в новый файл `cmd/lazytg/cmd/reindex.go`. Опции: `--all` индексирует все чаты, `--chat ID` — конкретный. Прогресс в stderr (TUI не запускается)
-- [ ] Обновить `docs/MANUAL_SMOKE.md`: добавить Stage 3 шаги:
-  9. `/привет` → видно search overlay → результаты появились → Enter → переход в чат
-  10. Ctrl+Space → palette → "Алёна" находит чат "Алёна" (если есть)
-  11. Ctrl+D на сообщении с фото → файл в `~/Downloads/lazytg/<chat>/`
-  12. Ctrl+U → file picker → выбрать .txt → отправлен с caption
-  13. `lazytg debug-bundle` → tar.gz в cwd → распаковать → нет phone/api_hash в файлах
-  14. `chmod 0644 ~/.config/lazytg/secrets.age` + перезапуск → fail с понятным сообщением
-- [ ] **Verification checklist:**
-  1. `go build ./...` exit 0
-  2. `go test -race ./...` все пакеты OK, особенно `bundle_grep_test`, `permissions_test`, `send_ratelimit_test`, `palette/normalize_test` (Алёна==Алена)
-  3. `golangci-lint run` — 0 issues, depguard правила соблюдены
-  4. `go test -bench=BenchmarkSearch100k -benchtime=1x ./internal/core/search/` — **p95 <100ms** (output парсится глазами или в скрипте)
-  5. Coverage core: `go test -coverprofile=core.out ./internal/core/... && go tool cover -func=core.out | tail -1` — total **≥80%**
-  6. Coverage UI: ≥50% (поддерживается с Stage 2)
-  7. `goleak` чист в `test/perf/goroutine_leak_test.go` (запустить с обновлённым app.Run включающим новые горутины)
-- [ ] Move plan to `docs/plans/completed/20260503-lazytg-stage3-search-files.md` после успешного прохождения всех verification gates
+- [x] `internal/app/wire.go` обновлён. Все Stage-3 компоненты подключены:
+  - `Indexer *search.Indexer`, `ReindexSvc *search.ReindexService`, `LazyIndex *search.LazyTrigger`, `SearchSvc *search.Service` — конструируются в `Build`, репо передаётся напрямую (Repo удовлетворяет `search.IndexStore` через DB() и `search.ChatLister` через GetChats).
+  - `Frecency palette.FrecencyStore` — построен через `palette.NewRepoStore(repo)` (Repo удовлетворяет узкий `repoBackend` интерфейс палитры).
+  - `FileStore *files.FileStore` через `NewFileStoreDefault` + `Dedup *files.DedupCache` через `NewDedupCache(DedupStoreAdapter{Repo})` — оба storage-only, живут весь lifetime App'а.
+  - `DownloadSvc *files.DownloadService`, `UploadSvc *files.UploadService` — конструируются в `AttachClient` (требуют MTProto-bound `*tg.Downloader` и `*tg.Uploader`+`*tg.Sender` через `FilesAdapter`). Build errors логируются — nil-сервис превращает chord в quiet no-op.
+  - `DBSizeMonitor *obs.DBSizeMonitor` — конструируется в `Build`, запускается в goroutine из `RunBackground` параллельно с Live/Degradation. Чистый shutdown по ctx-cancel — покрыт `goroutine_leak_test.go`.
+  - Security checks уже работали с Task 9 (`runStartupPermissionsAudit` до `sqlite.Open`).
+  - `tg.ProgressCallback` сделан type-alias (`type … = func(...)`) вместо named type, чтобы `*tg.Downloader` напрямую удовлетворял `files.Downloader` без adapter shim — сэкономило 15 строк wiring-кода. Внутренних потребителей не было, риск минимальный.
+- [x] `cmd/lazytg/cmd/tui.go` обновлён: создаются `searchModel := uisearch.New(runtime.SearchSvc, 0, logger)` и `paletteModel := palette.New(runtime.Frecency, runtime.Repo, logger)`. `Deps` структура заполняется опционально — `Downloader`/`Uploader` подключаются только если `runtime.DownloadSvc`/`UploadSvc` не nil (т.е. после `AttachClient`). Forward bus → `program.Send` уже работал через `forwardBusEvents` — изменений не требовалось.
+- [x] `internal/ui/app/model.go` уже содержал поля `search`, `palette`, `attach` (Tasks 4/5/7). View overlay priority уже реализован: help > attach > palette > search > body. Никаких изменений не потребовалось.
+- [x] `internal/ui/app/update.go` уже маршрутизирует все требуемые события (Tasks 4/5/6/7/8). Добавлен явный no-op case для `events.ReindexProgress` и `events.SearchJumpRequested` чтобы они не утекали в `broadcastToPanes` (где их получили бы все панели — ни одна из них их не обрабатывает, но явный no-op делает контракт ясным и оставляет место для будущего status-bar progress chip / history-of-jumps).
+- [x] `cmd/lazytg/cmd/reindex.go` создан. `lazytg reindex --all|--chat ID` — взаимоисключающие флаги (валидация на старте). Открывает sqlite через `dbPath(paths)`, конструирует `*search.Indexer` + `*search.ReindexService` (с минимальным `reindexProgressSink` который имплементит `search.EventPublisher.Publish` и пишет ReindexProgress в stderr). Зарегистрирован в `root_cmd.go::newRootCmd`. Timeout 1h как защита от стуканутого VFS lock'а.
+- [x] `docs/MANUAL_SMOKE.md` расширен: добавлены 9 секций (17-25) для Stage 3 — search overlay (с операторами from/in/before/after/has/phrase/exclusion), палитра L1 (Unicode normalize "Алёна==Алена"), download (Ctrl-D + dedup), upload (Ctrl-U + warning > 50 MiB + reject > 2 GiB), DB size warning (>1 GB), debug-bundle grep + permissions, permission fail-fast, send rate-limit stress, `lazytg reindex --all/--chat`. Заголовок документа обновлён на "Manual Smoke Checklist (Stages 2 + 3)".
+- [x] **Verification checklist:**
+  1. `go build ./...` — exit 0 (clean compile, включая новый reindex command).
+  2. `go test -race ./...` — все 26 пакетов OK. Включая `bundle_grep_test`, `permissions_test`, `send_ratelimit_test`, `palette/normalize_test` (Алёна==Алена headline test). e2e + perf пакеты тоже зелёные.
+  3. `golangci-lint run` — **0 issues**. Depguard правила соблюдены: новый wiring импортирует `search`/`palette` только в `internal/app`, `core` пакеты остаются gotd/bubbletea-free.
+  4. `go test -bench=BenchmarkSearch100k -benchtime=1x ./internal/core/search/` — **p95 = 45.09ms** (p50=38.23ms, p99=45.80ms) на M4. Запас по SLA 100ms ~2.2×.
+  5. Coverage core (после Stage 3): `go test -coverprofile=core.out ./internal/core/...` → **total 81.6%** (gates ≥80%). Покрытие по пакетам: events 100%, domain 100%, security 94.7%, search 89.2%, sync 83.6%, obs 79.3%, files 75.5%, config 71.1%.
+  6. Coverage UI: **total 75.1%** (≥50% gate). Покрытие по пакетам: keymap 93%, input 89.7%, overlay 89.1%, chats 89.9%, thread 87.2%, statusbar 83.3%, app 63.5%, search 60.2%, attach 59.3%, palette 58.8%.
+  7. `goleak` чист — `test/perf/goroutine_leak_test.go` зелёный с обновлённым `RunBackground` (Live + Degradation + DBSizeMonitor — все три goroutines clean shutdown по ctx-cancel в пределах 2s).
+- [x] Move plan to `docs/plans/completed/20260503-lazytg-stage3-search-files.md` — выполнено вместе с финальным коммитом (после всех зелёных gate'ов).

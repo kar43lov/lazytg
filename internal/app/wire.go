@@ -24,11 +24,14 @@ import (
 	"github.com/pgmac/lazytg/internal/core/domain"
 	"github.com/pgmac/lazytg/internal/core/events"
 	"github.com/pgmac/lazytg/internal/core/files"
+	"github.com/pgmac/lazytg/internal/core/obs"
+	"github.com/pgmac/lazytg/internal/core/search"
 	"github.com/pgmac/lazytg/internal/core/security"
 	coresync "github.com/pgmac/lazytg/internal/core/sync"
 	"github.com/pgmac/lazytg/internal/storage/sqlite"
 	tgclient "github.com/pgmac/lazytg/internal/tg"
 	"github.com/pgmac/lazytg/internal/ui/keymap"
+	"github.com/pgmac/lazytg/internal/ui/palette"
 )
 
 // dbFileName is the SQLite filename inside Paths.Data. Mirrors the constant
@@ -118,15 +121,41 @@ type App struct {
 	// (e.g. file-upload throttling).
 	SendGuard *security.SendGuard
 
+	// Stage 3 search pipeline. All four are storage-only and live for
+	// the lifetime of the App so the TUI can keep a long-lived service
+	// instance: Indexer rebuilds on demand, ReindexSvc walks the chat
+	// list, LazyIndex fires the first-search trigger, SearchSvc
+	// answers queries.
+	Indexer    *search.Indexer
+	ReindexSvc *search.ReindexService
+	LazyIndex  *search.LazyTrigger
+	SearchSvc  *search.Service
+
+	// Frecency feeds the command palette (top chats by recency × visit
+	// count) and is updated on every palette-driven chat switch.
+	Frecency palette.FrecencyStore
+
+	// FileStore + DedupCache live for the lifetime of the App so the
+	// download/upload services can be rebuilt on AttachClient without
+	// reallocating disk-state.
+	FileStore *files.FileStore
+	Dedup     *files.DedupCache
+
+	// DBSizeMonitor warns the UI through the bus when the SQLite file
+	// crosses the 1 GiB threshold. Started by RunBackground.
+	DBSizeMonitor *obs.DBSizeMonitor
+
 	// MTProto-aware services. Populated by AttachClient. Nil-checked at
 	// every consumer (cmd/tui.go falls back to a stubbed sender / history
 	// when no client is attached, which is what the e2e tests rely on).
-	Client    *tgclient.Client
-	Sender    *coresync.SendService
-	History   *coresync.HistoryService
-	Backfill  *coresync.BackfillService
-	Updates   *tgclient.UpdatesDispatcher
-	Reconnect *coresync.ReconnectManager
+	Client      *tgclient.Client
+	Sender      *coresync.SendService
+	History     *coresync.HistoryService
+	Backfill    *coresync.BackfillService
+	Updates     *tgclient.UpdatesDispatcher
+	Reconnect   *coresync.ReconnectManager
+	DownloadSvc *files.DownloadService
+	UploadSvc   *files.UploadService
 
 	// Polling controls whether the cmd layer should engage PollingFallback
 	// instead of subscribing to UpdatesDispatcher. The fallback itself is
@@ -194,19 +223,55 @@ func Build(ctx context.Context, cfg Config) (*App, error) {
 		return nil, fmt.Errorf("app.Build: keymap: %w", err)
 	}
 
+	// Stage 3 search pipeline: Indexer is the dumb sql writer, Reindex
+	// walks chat ids through it, LazyIndex fires the first-search
+	// background pass, Service answers queries. NewIndexer takes the
+	// repo directly because *sqlite.Repo satisfies search.IndexStore via
+	// DB().
+	indexer := search.NewIndexer(repo, cfg.Logger)
+	reindexSvc := search.NewReindexService(indexer, repo, bus, cfg.Logger, search.DefaultPerChatLimit)
+	lazyIndex := search.NewLazyTrigger(reindexSvc, cfg.Logger)
+	searchSvc := search.NewService(repo, lazyIndex, cfg.Logger)
+
+	frecency := palette.NewRepoStore(repo)
+
+	// FileStore + DedupCache: both are storage-only so they live in
+	// Build. The download / upload services need the gotd Downloader /
+	// Uploader and are deferred to AttachClient.
+	fileStore, err := files.NewFileStoreDefault(cfg.Logger)
+	if err != nil {
+		_ = repo.Close()
+		return nil, fmt.Errorf("app.Build: file store: %w", err)
+	}
+	dedup, err := files.NewDedupCache(DedupStoreAdapter{Repo: repo})
+	if err != nil {
+		_ = repo.Close()
+		return nil, fmt.Errorf("app.Build: dedup cache: %w", err)
+	}
+
+	dbSizeMonitor := obs.NewDBSizeMonitor(repo, bus, cfg.Logger, obs.DBSizeConfig{})
+
 	return &App{
-		Bus:         bus,
-		Repo:        repo,
-		Peers:       peers,
-		StateRepo:   stateRepo,
-		Live:        live,
-		Degradation: degradation,
-		Keymap:      km,
-		Log:         cfg.Logger,
-		Phone:       cfg.Phone,
-		Paths:       paths,
-		SendGuard:   guard,
-		Polling:     cfg.Polling,
+		Bus:           bus,
+		Repo:          repo,
+		Peers:         peers,
+		StateRepo:     stateRepo,
+		Live:          live,
+		Degradation:   degradation,
+		Keymap:        km,
+		Log:           cfg.Logger,
+		Phone:         cfg.Phone,
+		Paths:         paths,
+		SendGuard:     guard,
+		Indexer:       indexer,
+		ReindexSvc:    reindexSvc,
+		LazyIndex:     lazyIndex,
+		SearchSvc:     searchSvc,
+		Frecency:      frecency,
+		FileStore:     fileStore,
+		Dedup:         dedup,
+		DBSizeMonitor: dbSizeMonitor,
+		Polling:       cfg.Polling,
 	}, nil
 }
 
@@ -300,6 +365,31 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client) {
 
 	a.Updates = tgclient.NewUpdatesDispatcher(a.Bus, a.Log)
 	a.Reconnect = coresync.NewReconnectManager(reconnectAdapter{client: client}, a.Bus, a.Log, coresync.ReconnectConfig{})
+
+	// Stage 3 file pipelines: tg.Downloader streams bytes, tg.Uploader
+	// + Sender feed the FilesAdapter that satisfies both files.TGUploader
+	// and files.SendMediaSender contracts. Build errors are logged-and-
+	// swallowed because a nil DownloadSvc/UploadSvc just makes the
+	// corresponding hotkey a quiet no-op (the same fallback the UI app
+	// honours when no client is attached at all).
+	tgDownloader := tgclient.NewDownloader(client.API(), a.Log)
+	if dl, err := files.NewDownloadService(tgDownloader, a.FileStore, a.Dedup, a.Bus, a.Log); err != nil {
+		a.Log.Warn("attach: download service init failed", "err", err)
+	} else {
+		a.DownloadSvc = dl
+	}
+
+	tgUploader := tgclient.NewUploader(client.API(), a.Log)
+	filesAdapter, err := tgclient.NewFilesAdapter(tgUploader, sender)
+	if err != nil {
+		a.Log.Warn("attach: files adapter init failed", "err", err)
+		return
+	}
+	if up, err := files.NewUploadService(filesAdapter, filesAdapter, a.Bus, a.Log); err != nil {
+		a.Log.Warn("attach: upload service init failed", "err", err)
+	} else {
+		a.UploadSvc = up
+	}
 }
 
 // RunBackground spawns the long-running goroutines that don't need the
@@ -329,6 +419,15 @@ func (a *App) RunBackground(ctx context.Context) <-chan struct{} {
 			defer wg.Done()
 			if err := a.Degradation.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				a.Log.Warn("degradation: run exited", "err", err)
+			}
+		}()
+	}
+	if a.DBSizeMonitor != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := a.DBSizeMonitor.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				a.Log.Warn("dbsize: run exited", "err", err)
 			}
 		}()
 	}

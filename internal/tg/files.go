@@ -64,7 +64,12 @@ func NewDownloader(api downloaderClient, log *slog.Logger) *Downloader {
 // (totalBytes, totalBytes) on a successful download so consumers can
 // always treat "callback fired with bytesSoFar==totalBytes" as
 // completion.
-type ProgressCallback func(bytesSoFar, totalBytes int64)
+//
+// Declared as a type alias (not a named type) so files.ProgressCallback
+// — which has the same shape — is exchangeable at the type level. That
+// keeps the wiring layer (internal/app/wire.go) free of an adapter
+// shim when constructing files.DownloadService against tg.Downloader.
+type ProgressCallback = func(bytesSoFar, totalBytes int64)
 
 // Download streams the media described by info into w. Returns the
 // number of bytes written and any error from the underlying gotd
