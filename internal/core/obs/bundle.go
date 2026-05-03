@@ -301,7 +301,12 @@ func (b *Bundle) collectDBStats(ctx context.Context) ([]byte, error) {
 
 	var sb strings.Builder
 	if path := b.Store.DBPath(); path != "" {
-		fmt.Fprintf(&sb, "db_path: %s\n", path)
+		// Replace the user's home prefix with `~` so the bundle does
+		// not leak the OS username via the absolute db path. The bundle
+		// is meant for sharing in bug reports — the path itself is not
+		// a Telegram secret but the username is unrelated PII the
+		// triager does not need.
+		fmt.Fprintf(&sb, "db_path: %s\n", redactHomePrefix(path))
 		if info, err := os.Stat(path); err == nil {
 			fmt.Fprintf(&sb, "db_size_bytes: %d\n", info.Size())
 		} else if errors.Is(err, os.ErrNotExist) {
@@ -347,14 +352,45 @@ func (b *Bundle) collectDBStats(ctx context.Context) ([]byte, error) {
 	return []byte(sb.String()), nil
 }
 
+// redactHomePrefix replaces the leading user-home directory with the
+// literal `~` so on-disk paths in the bundle do not leak the OS
+// username. The substitution is purely textual: empty home or paths
+// outside it pass through unchanged.
+func redactHomePrefix(p string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	if p == home {
+		return "~"
+	}
+	if strings.HasPrefix(p, home+string(os.PathSeparator)) {
+		return "~" + p[len(home):]
+	}
+	return p
+}
+
 // captureGoroutines returns the runtime goroutine dump. It is large
 // (~10–50 KiB on a typical session) but compresses very well in the
 // gzip layer and is the single highest-signal piece of data for
 // diagnosing deadlocks. The dump never contains user data — only Go
 // stack frames and goroutine ids.
+//
+// Buffer grows until runtime.Stack reports a non-truncating fill so a
+// busy app with thousands of goroutines does not silently lose frames
+// past a fixed ceiling — the bundle's primary use case is exactly the
+// pathological "what is everyone waiting on" scenario.
 func captureGoroutines() string {
-	const stackBufCap = 1 << 20 // 1 MiB ceiling
-	buf := make([]byte, stackBufCap)
-	n := runtime.Stack(buf, true)
-	return string(buf[:n])
+	const captureGoroutinesCeiling = 64 << 20 // safety bound: 64 MiB
+	buf := make([]byte, 64<<10)               // 64 KiB initial
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return string(buf[:n])
+		}
+		if len(buf) >= captureGoroutinesCeiling {
+			return string(buf[:n]) + "\n# TRUNCATED at 64 MiB — too many goroutines\n"
+		}
+		buf = make([]byte, len(buf)*2)
+	}
 }

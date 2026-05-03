@@ -121,6 +121,12 @@ func (m *DBSizeMonitor) Run(ctx context.Context) error {
 // currently above the threshold?" flag; it is updated in-place so the
 // caller's loop carries state across iterations without exposing the
 // private bool to the public surface.
+//
+// SQLite WAL mode keeps two side files (`-wal` and `-shm`) next to the
+// main DB; their on-disk size legitimately grows to 100+ MiB during
+// heavy write bursts before checkpoint. We sum all three so a 1 GiB
+// total footprint trips the warning even when the main file alone is
+// still well under threshold.
 func (m *DBSizeMonitor) tick(_ context.Context, warned *bool) {
 	path := m.repo.DBPath()
 	if path == "" {
@@ -138,6 +144,15 @@ func (m *DBSizeMonitor) tick(_ context.Context, warned *bool) {
 		return
 	}
 	size := info.Size()
+	for _, suffix := range []string{"-wal", "-shm"} {
+		sideInfo, sideErr := m.stat(path + suffix)
+		if sideErr != nil {
+			// Side files are absent in non-WAL setups and during
+			// idle periods after checkpoint — silent skip is correct.
+			continue
+		}
+		size += sideInfo.Size()
+	}
 	above := size >= m.threshold
 	switch {
 	case above && !*warned:

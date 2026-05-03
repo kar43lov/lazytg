@@ -49,6 +49,16 @@ func (l *LazyTrigger) EnsureIndexed(ctx context.Context) error {
 
 	go func() {
 		defer close(l.done)
+		// A panic inside the background reindex would otherwise vanish
+		// silently — the goroutine has no parent that ever waits on a
+		// returned error. Recover and log so triages can correlate a
+		// missing FTS index with the actual failure mode.
+		defer func() {
+			if r := recover(); r != nil {
+				l.log.LogAttrs(ctx, slog.LevelError, "lazy reindex panic",
+					slog.Any("panic", r))
+			}
+		}()
 		if err := l.reindex.RunAll(ctx); err != nil {
 			l.log.LogAttrs(ctx, slog.LevelWarn, "lazy reindex run failed",
 				slog.String("err", err.Error()))

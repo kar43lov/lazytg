@@ -150,6 +150,43 @@ default_account = "+79991234567"
 	}
 }
 
+// TestBundle_DBStatsRedactsHomePrefix asserts that the db_stats.txt
+// entry does NOT include the user's absolute home directory — the
+// path is rewritten to start with `~` so the bundle cannot leak the
+// OS username through the db_path line. Other entries (e.g.
+// goroutines.txt) legitimately contain Go import paths that happen
+// to embed the project owner's username, so we constrain the
+// assertion to db_stats.txt where the redaction lives.
+func TestBundle_DBStatsRedactsHomePrefix(t *testing.T) {
+	t.Parallel()
+
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" || home == "/" {
+		t.Skip("user home not resolvable — skipping path-redaction assertion")
+	}
+
+	dir := filepath.Join(home, ".cache", "lazytg-test-bundle-"+t.Name())
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir under home: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	repo, ctx := openSeededRepo(t, dir)
+	bundle := &obs.Bundle{Store: repo}
+	outPath := filepath.Join(dir, "bundle.tar.gz")
+	if _, err := bundle.Create(ctx, outPath); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	entries := readTarGz(t, outPath)
+	stats := entries["db_stats.txt"]
+	if bytes.Contains(stats, []byte(home)) {
+		t.Fatalf("db_stats.txt contains absolute home prefix %q (must be replaced with ~):\n%s", home, stats)
+	}
+	if !bytes.Contains(stats, []byte("~")) {
+		t.Fatalf("db_stats.txt should reference db_path via ~-prefix, got:\n%s", stats)
+	}
+}
+
 func TestBundle_MissingPaths_DegradesGracefully(t *testing.T) {
 	t.Parallel()
 

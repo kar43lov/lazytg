@@ -71,6 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `TokenBucket.Wait` no longer leaks short-lived timers on ctx cancellation; switched from `time.After` to `time.NewTimer` + `Stop`.
 - Send retry loop clamps FloodWait `retry_after` to a 1 s floor so a server (or buggy mock) returning 0 cannot spin the loop at the SendGuard ceiling.
 - `progressThrottler` and `uploadProgressThrottler` now drop their per-id state on each transfer's terminal event — long-running TUI sessions no longer leak one map entry per completed file.
+- Debug-bundle `goroutines.txt` no longer truncates at a fixed 1 MiB cap — the buffer doubles up to a 64 MiB safety bound so a busy app with thousands of goroutines does not silently lose frames mid-trace.
+- Debug-bundle `db_stats.txt` rewrites the user's home prefix to `~` so the bundle does not leak the OS username via the absolute db path.
+- `DBSizeMonitor` now sums the SQLite WAL/SHM side files into the threshold check — a heavy live-update session whose total footprint crosses 1 GiB no longer escapes the warning because the main `lazytg.db` file alone stayed under cap.
+- Lazy reindex goroutine now recovers from panics and logs them at error level instead of vanishing silently — failures are still surfaced via bus events for normal errors, but a programmer mistake (nil deref, etc.) is no longer invisible.
 - `TestDownloadService_Failure` glob now walks the actual store root instead of a fresh `t.TempDir()` — earlier the assertion was vacuous.
 - Optimistic-UI flicker race: `applyOutgoingState{Pending}` is now a no-op so the bus event cannot insert an empty `[⏳]` row before `SendDispatchedMsg` (carrying the message body) lands.
 - `SendFailedMsg` no longer clobbers a fresher draft or retargeted reply pointer when the user moved on while the failed send was in flight — the failure is dropped and surfaced as a warn log.
@@ -82,9 +86,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Inverted-race guard: a `SendDispatchedMsg` arriving after a terminal `Sent` or `Failed` bus event no longer re-creates a Pending row. The thread now records every finalised localID and short-circuits the late insert that would otherwise leave a phantom `[⏳]` no future event could resolve.
 - Async send failures (FloodWait, validation, network retries exhausted) now restore the textarea body and reply pointer just like the synchronous-error path. The input pane stashes the dispatched body keyed by `LocalID` and reacts to `OutgoingMessageStateChanged{Failed}` on the bus; previously the CHANGELOG promise of "Failed sends restore the draft" only held when SendService returned an error before publishing — i.e. for the rare optimistic-store-write failure surface.
 
-### Known gaps (Stage 2 follow-up)
+### Known gaps (Stage 2 + Stage 3 follow-up)
 
-- `runTUI` in `cmd/lazytg/cmd/tui.go` does not yet call `App.AttachClient` and does not start a `tg.Client.Run` loop. The TUI binary therefore renders the local SQLite cache only — sends, live updates, history backfill, and reconnect orchestration require this wiring to be added before the Stage 2 acceptance criteria are met against a real Telegram session.
+- `runTUI` in `cmd/lazytg/cmd/tui.go` does not yet call `App.AttachClient` and does not start a `tg.Client.Run` loop. The TUI binary therefore renders the local SQLite cache only — sends, live updates, history backfill, reconnect orchestration **and Stage 3 file download/upload (Ctrl-D / Ctrl-U)** require this wiring to be added before either stage's acceptance criteria are met against a real Telegram session. The UI app already nil-checks `Downloader`/`Uploader` so the chords degrade to quiet no-ops instead of crashing.
+- `Service.JumpContext` is implemented and tested but no caller routes its window into `thread.OpenChat`. Search overlay `Enter` opens the target chat at the latest page; jumping to an old hit (the prime FTS5 use case) drops the user at the bottom without scrolling to the match. Wiring belongs in `internal/ui/app/update.go::handleSearchJump` next to the AttachClient follow-up.
+- Search overlay renders `chat=<id>` instead of the chat title — the overlay does not yet take a chat-title source. Cosmetic but UX-degrading on the killer feature.
+- `from:@username` resolves through `chats.username` — a user whose row is not in `chats` (most group/channel senders) silently produces zero hits. Documented in `docs/SEARCH.md`; full fix needs a peer-username index.
 - `BackfillService.Start` is constructed by `AttachClient` but never invoked. Once `runTUI` wires the gotd Run loop, the cmd layer must call `app.Backfill.Start(bgCtx)` to drain the enqueue channel.
 - `--polling` flag is plumbed into `App.Polling` but no consumer reads it: `PollingFallback` is constructed nowhere outside its tests. Wire-up belongs in `runTUI` next to `AttachClient`.
 - `reconnectAdapter.Connect` in `internal/app/wire.go` is a deliberate no-op stub. Real reconnect orchestration (re-running `Client.Run` with the saved session) lives in the same follow-up as the MTProto wiring above.

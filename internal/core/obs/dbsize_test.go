@@ -34,6 +34,20 @@ func (f fakeFileInfo) ModTime() time.Time { return time.Time{} }
 func (f fakeFileInfo) IsDir() bool        { return false }
 func (f fakeFileInfo) Sys() any           { return nil }
 
+// mainOnlyStat returns a stat hook that reports `size` for the
+// configured main-DB path and ErrNotExist for everything else (i.e.
+// the `-wal` and `-shm` side-files). Tests that only want to drive
+// the main-file branch use this helper to avoid the WAL summation
+// double-counting their fixture size.
+func mainOnlyStat(path string, size int64) func(string) (os.FileInfo, error) {
+	return func(p string) (os.FileInfo, error) {
+		if p != path {
+			return nil, os.ErrNotExist
+		}
+		return fakeFileInfo{size: size}, nil
+	}
+}
+
 // drainWithTimeout pulls an event from sub or fails after timeout.
 // Test-helper for TestDBSizeMonitor_* — keeps each test free of
 // repeating select-with-timeout boilerplate.
@@ -57,9 +71,7 @@ func TestDBSizeMonitor_BelowThresholdEmitsNothing(t *testing.T) {
 
 	repo := fakeRepo{path: "/tmp/lazytg.db"}
 	m := NewDBSizeMonitor(repo, bus, nil, DBSizeConfig{Threshold: 1 << 30, Interval: 50 * time.Millisecond})
-	m.stat = func(string) (os.FileInfo, error) {
-		return fakeFileInfo{size: 100 << 20}, nil // 100 MiB, well under threshold
-	}
+	m.stat = mainOnlyStat("/tmp/lazytg.db", 100<<20)
 	// Synchronous tick instead of running the loop — avoids racing
 	// against the deferred cancel.
 	var warned bool
@@ -83,9 +95,7 @@ func TestDBSizeMonitor_AboveThresholdEmitsWarning(t *testing.T) {
 
 	repo := fakeRepo{path: "/tmp/lazytg.db"}
 	m := NewDBSizeMonitor(repo, bus, nil, DBSizeConfig{Threshold: 1 << 30, Interval: time.Hour})
-	m.stat = func(string) (os.FileInfo, error) {
-		return fakeFileInfo{size: 1500 << 20}, nil // 1500 MiB, above threshold
-	}
+	m.stat = mainOnlyStat("/tmp/lazytg.db", 1500<<20) // 1500 MiB main, no WAL/SHM
 
 	var warned bool
 	m.tick(ctx, &warned)
@@ -122,9 +132,7 @@ func TestDBSizeMonitor_OnlyEmitsOnTransition(t *testing.T) {
 
 	repo := fakeRepo{path: "/tmp/lazytg.db"}
 	m := NewDBSizeMonitor(repo, bus, nil, DBSizeConfig{Threshold: 1 << 30, Interval: time.Hour})
-	m.stat = func(string) (os.FileInfo, error) {
-		return fakeFileInfo{size: 1500 << 20}, nil
-	}
+	m.stat = mainOnlyStat("/tmp/lazytg.db", 1500<<20)
 
 	var warned bool
 	m.tick(ctx, &warned)
@@ -153,7 +161,10 @@ func TestDBSizeMonitor_TransitionBackEmitsClearedEvent(t *testing.T) {
 	m := NewDBSizeMonitor(repo, bus, nil, DBSizeConfig{Threshold: 1 << 30, Interval: time.Hour})
 
 	var size int64 = 1500 << 20
-	m.stat = func(string) (os.FileInfo, error) {
+	m.stat = func(p string) (os.FileInfo, error) {
+		if p != "/tmp/lazytg.db" {
+			return nil, os.ErrNotExist
+		}
 		return fakeFileInfo{size: size}, nil
 	}
 
@@ -197,9 +208,7 @@ func TestDBSizeMonitor_ThresholdConfigurable(t *testing.T) {
 
 	repo := fakeRepo{path: "/tmp/lazytg.db"}
 	m := NewDBSizeMonitor(repo, bus, nil, DBSizeConfig{Threshold: 50 << 20, Interval: time.Hour})
-	m.stat = func(string) (os.FileInfo, error) {
-		return fakeFileInfo{size: 64 << 20}, nil
-	}
+	m.stat = mainOnlyStat("/tmp/lazytg.db", 64<<20)
 
 	var warned bool
 	m.tick(ctx, &warned)
@@ -276,6 +285,49 @@ func TestDBSizeMonitor_RunIntegratesWithRealLoop(t *testing.T) {
 
 	cancel()
 	wg.Wait()
+}
+
+func TestDBSizeMonitor_SumsWALAndSHM(t *testing.T) {
+	t.Parallel()
+
+	bus := events.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sub := bus.Subscribe(ctx)
+
+	repo := fakeRepo{path: "/tmp/lazytg.db"}
+	m := NewDBSizeMonitor(repo, bus, nil, DBSizeConfig{Threshold: 1 << 30, Interval: time.Hour})
+	// Main file alone (800 MiB) is below the 1 GiB threshold; total
+	// with WAL (300 MiB) + SHM (1 MiB) crosses it.
+	m.stat = func(p string) (os.FileInfo, error) {
+		switch p {
+		case "/tmp/lazytg.db":
+			return fakeFileInfo{size: 800 << 20}, nil
+		case "/tmp/lazytg.db-wal":
+			return fakeFileInfo{size: 300 << 20}, nil
+		case "/tmp/lazytg.db-shm":
+			return fakeFileInfo{size: 1 << 20}, nil
+		default:
+			return nil, os.ErrNotExist
+		}
+	}
+
+	var warned bool
+	m.tick(ctx, &warned)
+	if !warned {
+		t.Fatalf("warned should flip true once main + WAL + SHM cross 1 GiB")
+	}
+	e, ok := drainWithTimeout(t, sub, 100*time.Millisecond)
+	if !ok {
+		t.Fatalf("expected warning event")
+	}
+	got := e.(events.StorageStateChanged)
+	// 800 + 300 + 1 = 1101 MiB, which exceeds 1024 (1 GiB) by enough
+	// that the threshold check fires even though the main file alone
+	// (800 MiB) would not.
+	if got.DBSizeMB != 1101 {
+		t.Fatalf("DBSizeMB: got %d, want 1101 (sum of main + WAL + SHM)", got.DBSizeMB)
+	}
 }
 
 func TestBytesToMB_RoundsUp(t *testing.T) {

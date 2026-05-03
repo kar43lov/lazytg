@@ -163,6 +163,7 @@ Benchmark создаёт реалистичный корпус (20 чатов ×
 | Нет saved searches / smart folders           | v0.5+; пока — alias на shell-команду через query string    |
 | Нет OR-оператора                             | Два запроса в v0.1; v0.2 даст native FTS5 OR               |
 | Reactions / edits / forwards не индексируются| Только `text` в `messages` попадает в `messages_fts`       |
+| `from:@user` находит только тех, чей peer записан в таблицу `chats` с заполненным `username` | В v0.1 это работает для приватных диалогов и ботов с username; отправители в группах/каналах без отдельного user-индекса не находятся (тихий 0 результатов). Полный фикс — отдельная таблица `users` в Stage 4+. |
 
 ---
 
