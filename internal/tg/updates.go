@@ -130,6 +130,7 @@ func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass) {
 		Text:      m.Message,
 		FromID:    fromID,
 		Date:      time.Unix(int64(m.Date), 0).UTC(),
+		Media:     MediaFromMessage(m),
 	})
 }
 

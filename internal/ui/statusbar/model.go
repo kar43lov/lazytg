@@ -28,6 +28,46 @@ const (
 	StateFloodWait  = "floodwait"
 )
 
+// Download is one in-flight (or just-finished) download row the status
+// bar can show as `⬇ filename 47%`. The status bar holds an internal
+// map keyed by FileID so concurrent downloads each get their own row;
+// the renderer picks the most-recent one for display because a
+// 1-line status bar cannot show many at once.
+//
+// Fields are exported so app/update.go can construct values without an
+// extra adapter layer; the sb model itself never mutates them.
+type Download struct {
+	fileID   int64
+	filename string
+	bytes    int64
+	total    int64
+}
+
+// NewDownload constructs a Download row. Exposed so app/update.go can
+// build typed values without poking at unexported fields. fileID is
+// the dedup key the status bar uses to merge the same download's
+// progress events; filename / bytes / total drive the on-screen
+// rendering.
+func NewDownload(fileID int64, filename string, bytes, total int64) Download {
+	return Download{fileID: fileID, filename: filename, bytes: bytes, total: total}
+}
+
+// FileID returns the Telegram file id this download row tracks. It
+// doubles as the dedup key inside Model.downloads. Together with the
+// other Download accessors below, the unexported fields stay
+// invariant from the consumer's perspective — UpsertDownload is the
+// only legitimate path to mutate status-bar state.
+func (d Download) FileID() int64 { return d.fileID }
+
+// Filename returns the user-visible name shown in the status bar.
+func (d Download) Filename() string { return d.filename }
+
+// Bytes returns the bytes downloaded so far.
+func (d Download) Bytes() int64 { return d.bytes }
+
+// Total returns the total byte size; 0 when unknown.
+func (d Download) Total() int64 { return d.total }
+
 // Model is the immutable view-state of the status bar.
 //
 // Mutations happen by returning a new Model from each setter so callers can
@@ -42,6 +82,12 @@ type Model struct {
 	ConnState    string
 	StorageMode  string
 	FloodWait    time.Duration
+
+	// downloads tracks active file downloads keyed by FileID. The map
+	// is copied on every Upsert/Remove so the value-semantics promise
+	// of every other Model setter holds — callers never observe a
+	// partially-mutated map across goroutine boundaries.
+	downloads map[int64]Download
 }
 
 // New returns a Model with sensible "no data yet" defaults — placeholder
@@ -116,15 +162,126 @@ func (m Model) renderLeft(budget int) string {
 
 // renderRight composes "unread N | conn[: reason] | storage" with colour on
 // the conn cell. FloodWait, when non-zero, replaces conn with "floodwait Xs".
+//
+// When at least one download is active, the conn cell is replaced with
+// `⬇ filename N%` so the user sees ongoing progress in the bottom strip
+// without a separate notification widget. Multi-download cases pick the
+// download with the smallest fileID to keep the rendering deterministic
+// across re-orders of the underlying map.
 func (m Model) renderRight() string {
 	unread := fmt.Sprintf("unread %d", m.UnreadTotal)
-	conn := m.renderConn()
+	connOrDl := m.renderConn()
+	if d, ok := m.activeDownload(); ok {
+		connOrDl = downloadStyle.Render(formatDownloadCell(d))
+	}
 	storage := m.StorageMode
 	if storage == "" {
 		storage = events.StorageModeReadWrite
 	}
-	return unread + " | " + conn + " | " + storage
+	return unread + " | " + connOrDl + " | " + storage
 }
+
+// UpsertDownload inserts or updates the in-progress download row keyed
+// by d.FileID. The previous filename is preserved when d.filename is
+// empty so a Progress event (which does not carry a filename) does not
+// blank the status row mid-flight.
+func (m Model) UpsertDownload(d Download) Model {
+	out := m
+	out.downloads = make(map[int64]Download, len(m.downloads)+1)
+	for k, v := range m.downloads {
+		out.downloads[k] = v
+	}
+	if d.filename == "" {
+		if prev, ok := m.downloads[d.fileID]; ok {
+			d.filename = prev.filename
+			if d.total == 0 {
+				d.total = prev.total
+			}
+		}
+	}
+	out.downloads[d.fileID] = d
+	return out
+}
+
+// RemoveDownload drops the row for fileID. Idempotent — used by both
+// completed and failed paths so the status bar stops showing finished
+// downloads.
+func (m Model) RemoveDownload(fileID int64) Model {
+	if _, ok := m.downloads[fileID]; !ok {
+		return m
+	}
+	out := m
+	out.downloads = make(map[int64]Download, len(m.downloads))
+	for k, v := range m.downloads {
+		if k == fileID {
+			continue
+		}
+		out.downloads[k] = v
+	}
+	if len(out.downloads) == 0 {
+		out.downloads = nil
+	}
+	return out
+}
+
+// ActiveDownloads returns a snapshot of in-flight downloads. Test
+// helper: lets unit tests assert on the map without a separate
+// renderer round-trip.
+func (m Model) ActiveDownloads() map[int64]Download {
+	if len(m.downloads) == 0 {
+		return nil
+	}
+	out := make(map[int64]Download, len(m.downloads))
+	for k, v := range m.downloads {
+		out[k] = v
+	}
+	return out
+}
+
+// activeDownload picks one of the currently-running downloads to
+// surface in the status bar. Multi-download UX is intentionally
+// minimal in v0.1 (one cell, one row); v0.2 plans to render an
+// expanded `⬇ 3 files` chip the user can drill into.
+func (m Model) activeDownload() (Download, bool) {
+	if len(m.downloads) == 0 {
+		return Download{}, false
+	}
+	var (
+		out  Download
+		seen bool
+	)
+	for _, d := range m.downloads {
+		if !seen || d.fileID < out.fileID {
+			out = d
+			seen = true
+		}
+	}
+	return out, seen
+}
+
+// formatDownloadCell renders a single Download into the
+// "⬇ filename 47%" form. When total bytes are unknown (gotd has not
+// yet seen the file size) the percentage drops out and the cell shows
+// only "⬇ filename".
+func formatDownloadCell(d Download) string {
+	name := d.filename
+	if name == "" {
+		name = "file"
+	}
+	if d.total > 0 {
+		pct := int(d.bytes * 100 / d.total)
+		if pct > 100 {
+			pct = 100
+		}
+		return fmt.Sprintf("⬇ %s %d%%", name, pct)
+	}
+	return "⬇ " + name
+}
+
+// downloadStyle paints the download cell so it reads as a
+// "transient activity" indicator rather than the steady
+// connection/floodwait colours.
+var downloadStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6")) // ANSI cyan
 
 // renderConn returns the colourised connection cell. Colour values are
 // ANSI-256 indices so the output renders identically across truecolor /

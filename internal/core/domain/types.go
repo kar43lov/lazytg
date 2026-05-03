@@ -82,7 +82,8 @@ type Chat struct {
 
 // Message is a stored message belonging to a Chat. RawBlob holds the
 // serialised gotd payload so the UI can re-render rich content without a
-// round-trip to Telegram.
+// round-trip to Telegram. Media is optional; a nil pointer means the
+// message is plain text.
 type Message struct {
 	ID      int64
 	ChatID  int64
@@ -91,6 +92,49 @@ type Message struct {
 	Text    string
 	ReplyTo int64
 	RawBlob []byte
+	Media   *MediaInfo
+}
+
+// MediaKind discriminates the variant of a Telegram media object so the
+// download pipeline can build the right gotd InputFileLocation. Stored as
+// a short string in the database so sqlite3 CLI inspection stays
+// human-readable.
+type MediaKind string
+
+// MediaKind values cover the v0.1 supported media variants. Stickers,
+// audio and video are all transported as documents in the MTProto wire
+// format and therefore fall under MediaKindDocument.
+const (
+	// MediaKindDocument is any non-photo attachment (file, voice,
+	// video, sticker, animated webp, etc.).
+	MediaKindDocument MediaKind = "document"
+	// MediaKindPhoto is a still photo attachment.
+	MediaKindPhoto MediaKind = "photo"
+)
+
+// MediaInfo is the persisted metadata required to render a media message
+// in the thread pane and to download the underlying file via gotd.
+//
+// FileReference is opaque and refreshed by getDifference; it expires
+// after roughly one hour. Callers that hit a "FILE_REFERENCE_EXPIRED"
+// error must re-fetch the parent message before retrying the download.
+//
+// DC is informational only — gotd's downloader handles cross-DC routing
+// transparently. The field is kept so future migrations can switch to
+// explicit DC pinning without losing the existing cache.
+//
+// ThumbSize is the optional photo size selector ("x", "y", …) passed
+// into InputPhotoFileLocation; empty for documents (always full file).
+type MediaInfo struct {
+	Kind          MediaKind
+	FileID        int64
+	AccessHash    int64
+	FileReference []byte
+	DC            int
+	Filename      string
+	Size          int64
+	MimeType      string
+	ThumbSize     string
 }
 
 // Peer is the resolved MTProto access metadata for a chat. AccessHash is

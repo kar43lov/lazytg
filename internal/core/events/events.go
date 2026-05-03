@@ -4,7 +4,11 @@
 // and use a type switch to react to specific event variants.
 package events
 
-import "time"
+import (
+	"time"
+
+	"github.com/pgmac/lazytg/internal/core/domain"
+)
 
 // Event is the marker interface implemented by every event type in this package.
 // The unexported eventMarker method prevents accidental implementations from other packages.
@@ -13,12 +17,17 @@ type Event interface {
 }
 
 // MessageReceived is emitted when a new message is observed for a known chat.
+// Media, when non-nil, carries the attachment metadata extracted from the
+// gotd update so consumers (LiveService persistence, thread pane render,
+// download pipeline) all see the same view of the message without having
+// to re-fetch it. nil means plain-text or an unsupported media variant.
 type MessageReceived struct {
 	ChatID    int64
 	MessageID int64
 	Text      string
 	FromID    int64
 	Date      time.Time
+	Media     *domain.MediaInfo
 }
 
 func (MessageReceived) eventMarker() {}
@@ -126,3 +135,54 @@ type SearchJumpRequested struct {
 }
 
 func (SearchJumpRequested) eventMarker() {}
+
+// FileDownloadStarted is emitted by core/files.DownloadService once a
+// download has been queued. FileID identifies the Telegram media; Path
+// is the on-disk destination (or .partial during transfer); Filename is
+// the user-visible name shown by the status bar; Size is the
+// originally-advertised byte count (0 when unknown). Subscribers
+// typically reset their progress widget to 0% on Started.
+type FileDownloadStarted struct {
+	FileID   int64
+	ChatID   int64
+	Path     string
+	Filename string
+	Size     int64
+}
+
+func (FileDownloadStarted) eventMarker() {}
+
+// FileDownloadProgress is emitted periodically while the file is being
+// streamed. BytesDownloaded is the cumulative byte count; TotalBytes
+// echoes Size from the matching Started event. Producers throttle the
+// emit rate (every 5% or every 1 MiB by default) so a busy bus does not
+// flood the UI render loop with tens of thousands of ticks per file.
+type FileDownloadProgress struct {
+	FileID          int64
+	BytesDownloaded int64
+	TotalBytes      int64
+}
+
+func (FileDownloadProgress) eventMarker() {}
+
+// FileDownloadCompleted is emitted once the file has been written and
+// the .partial → final rename has succeeded. Path is the user-visible
+// final location.
+type FileDownloadCompleted struct {
+	FileID int64
+	Path   string
+	Size   int64
+}
+
+func (FileDownloadCompleted) eventMarker() {}
+
+// FileDownloadFailed is emitted when a download is aborted. Err carries
+// the underlying error message in human-readable form so the status
+// bar / future toast notification can show it without a separate
+// translation step.
+type FileDownloadFailed struct {
+	FileID int64
+	Err    string
+}
+
+func (FileDownloadFailed) eventMarker() {}

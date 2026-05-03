@@ -117,9 +117,9 @@ func TestBuildSQL(t *testing.T) {
 			wantArgs:     []any{mustDate("2025-11-01").Unix(), mustDate("2025-12-01").Unix()},
 		},
 		{
-			name:         "has:file is a no-op placeholder until Task 6",
+			name:         "has:file filters non-NULL media_kind (added in Task 6)",
 			q:            search.Query{Text: "video", HasFile: true},
-			wantSQL:      " AND /* TODO(stage3-task6): m.media_type IS NOT NULL */ 1=1",
+			wantSQL:      " AND m.media_kind IS NOT NULL",
 			wantFTSMatch: "video",
 			wantArgs:     nil,
 		},
@@ -139,7 +139,7 @@ func TestBuildSQL(t *testing.T) {
 				" AND m.chat_id IN (SELECT id FROM chats WHERE username IN (?) OR title IN (?))" +
 				" AND m.date >= ?" +
 				" AND m.date < ?" +
-				" AND /* TODO(stage3-task6): m.media_type IS NOT NULL */ 1=1",
+				" AND m.media_kind IS NOT NULL",
 			wantFTSMatch: `(слово "точная фраза") NOT (плохой)`,
 			wantArgs: []any{
 				"alice",

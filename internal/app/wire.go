@@ -23,6 +23,7 @@ import (
 	"github.com/pgmac/lazytg/internal/core/config"
 	"github.com/pgmac/lazytg/internal/core/domain"
 	"github.com/pgmac/lazytg/internal/core/events"
+	"github.com/pgmac/lazytg/internal/core/files"
 	coresync "github.com/pgmac/lazytg/internal/core/sync"
 	"github.com/pgmac/lazytg/internal/storage/sqlite"
 	tgclient "github.com/pgmac/lazytg/internal/tg"
@@ -256,6 +257,42 @@ func (a *App) Close() error {
 	})
 	return err
 }
+
+// DedupStoreAdapter bridges *sqlite.Repo into core/files.DedupStore.
+// The repo speaks sqlite.DownloadedFile (with a wall-clock timestamp and
+// access_hash typed as int64); core/files.DedupRecord is the gotd-free
+// view that DownloadService needs. The adapter translates between the
+// two without forcing either side to know about the other's package.
+//
+// Exported because Task 10 wiring (cmd/lazytg/cmd/tui.go) constructs
+// the *core/files.DownloadService at TUI start-up time and needs to
+// pass the adapter through. Pinning the type here keeps the storage
+// → core mapping co-located with the rest of the wire-time adapters.
+type DedupStoreAdapter struct {
+	Repo *sqlite.Repo
+}
+
+// GetDownloadedPath delegates to the underlying repo.
+func (a DedupStoreAdapter) GetDownloadedPath(ctx context.Context, fileID int64) (string, int64, bool, error) {
+	return a.Repo.GetDownloadedPath(ctx, fileID)
+}
+
+// SaveDownloadedFile translates a gotd-free DedupRecord into the
+// repo's storage type and persists it.
+func (a DedupStoreAdapter) SaveDownloadedFile(ctx context.Context, f files.DedupRecord) error {
+	return a.Repo.SaveDownloadedFile(ctx, sqlite.DownloadedFile{
+		FileID:     f.FileID,
+		AccessHash: f.AccessHash,
+		Path:       f.Path,
+		Size:       f.Size,
+	})
+}
+
+// Compile-time anchor: every DedupStoreAdapter value satisfies the
+// core/files.DedupStore contract. Triggers a build break if the
+// interface drifts (e.g. a new method) so the adapter gets updated
+// alongside the contract.
+var _ files.DedupStore = (*DedupStoreAdapter)(nil)
 
 // senderAdapter bridges *tg.Sender (returns serverID int64) into the
 // coresync.SenderInterface signature. The signatures already match, but

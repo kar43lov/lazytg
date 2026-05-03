@@ -115,6 +115,7 @@ func convertMessage(m *tg.Message, chatID int64) domain.Message {
 		Date:    time.Unix(int64(m.Date), 0).UTC(),
 		Text:    m.Message,
 		ReplyTo: replyTo,
+		Media:   MediaFromMessage(m),
 	}
 }
 

@@ -26,6 +26,7 @@ type Keymap struct {
 	ScrollDown  key.Binding
 	Search      key.Binding
 	OpenPalette key.Binding
+	Download    key.Binding
 	Quit        key.Binding
 }
 
@@ -82,6 +83,10 @@ func Default() Keymap {
 		OpenPalette: key.NewBinding(
 			key.WithKeys("ctrl+space", "ctrl+@"),
 			key.WithHelp("ctrl+space", "command palette"),
+		),
+		Download: key.NewBinding(
+			key.WithKeys("ctrl+d"),
+			key.WithHelp("ctrl+d", "download media"),
 		),
 		Quit: key.NewBinding(
 			key.WithKeys("ctrl+c", "ctrl+q"),

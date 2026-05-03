@@ -64,11 +64,74 @@ func FormatMessage(msg domain.Message, width int, replyTo *domain.Message) strin
 		b.WriteByte('\n')
 	}
 
+	if badge := mediaBadge(msg.Media); badge != "" {
+		b.WriteString(badge)
+		if msg.Text != "" {
+			b.WriteByte('\n')
+		}
+	}
+
 	body := renderInlineMarkdown(msg.Text)
 	body = wrapText(body, width-2)
 	b.WriteString(body)
 	return b.String()
 }
+
+// mediaBadge formats a one-line marker like "[📎 report.pdf, 234 KB]" so
+// the user can see at a glance that the message has an attachment.
+// Returns an empty string when the message has no media; callers can
+// safely concat without nil checks.
+//
+// The byte size is rendered with 1024-based units (KiB / MiB) because
+// Telegram itself uses base-2 in the official clients — staying
+// consistent matches user mental model. The rendered prefix is grey
+// italic to signal "metadata, not body content" while the filename
+// stays in normal weight so the eye is drawn to it.
+func mediaBadge(m *domain.MediaInfo) string {
+	if m == nil {
+		return ""
+	}
+	icon := "📎"
+	if m.Kind == domain.MediaKindPhoto {
+		icon = "🖼"
+	}
+	name := m.Filename
+	if name == "" {
+		name = "(no name)"
+	}
+	if m.Size > 0 {
+		return mediaStyle.Render("["+icon+" "+name+", "+formatBytes(m.Size)+"]") + " " + hintStyle.Render("ctrl+d to save")
+	}
+	return mediaStyle.Render("["+icon+" "+name+"]") + " " + hintStyle.Render("ctrl+d to save")
+}
+
+// formatBytes renders n as a base-2 size string ("234 KiB", "1.4 MiB").
+// Tiny inputs stay in plain bytes for surprise-free output.
+func formatBytes(n int64) string {
+	const (
+		kib = 1 << 10
+		mib = 1 << 20
+		gib = 1 << 30
+	)
+	switch {
+	case n < kib:
+		return fmt.Sprintf("%d B", n)
+	case n < mib:
+		return fmt.Sprintf("%.1f KiB", float64(n)/float64(kib))
+	case n < gib:
+		return fmt.Sprintf("%.1f MiB", float64(n)/float64(mib))
+	default:
+		return fmt.Sprintf("%.2f GiB", float64(n)/float64(gib))
+	}
+}
+
+// mediaStyle and hintStyle paint the attachment badge so it sits
+// visually separate from the message body but does not steal focus
+// from text.
+var (
+	mediaStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	hintStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
+)
 
 // formatHeader produces "[HH:MM] author" with the canonical styling.
 // Author resolution is a Stage 3 concern — for now we surface the

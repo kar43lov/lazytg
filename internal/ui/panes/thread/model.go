@@ -328,6 +328,21 @@ func (m Model) Outgoing() []OutgoingMessage {
 	return out
 }
 
+// LatestMediaMessage returns the most recent message in the thread
+// that carries downloadable media, or nil when the thread is empty or
+// has no media-bearing rows. Stage 3 wires the Ctrl-D chord through
+// this helper so the app can drive a download without holding a
+// per-message cursor (cursor lands in v0.2).
+func (m Model) LatestMediaMessage() *domain.Message {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		if m.messages[i].Media != nil {
+			out := m.messages[i]
+			return &out
+		}
+	}
+	return nil
+}
+
 // loadCmd returns a tea.Cmd that fetches the next page from repo and
 // emits messagesLoadedMsg or messagesLoadFailedMsg. We over-fetch by
 // one row (limit+1) so the caller can detect hasMore without a second

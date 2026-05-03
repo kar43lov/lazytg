@@ -11,8 +11,10 @@
 package app
 
 import (
+	"context"
 	"log/slog"
 
+	"github.com/pgmac/lazytg/internal/core/domain"
 	"github.com/pgmac/lazytg/internal/core/events"
 	"github.com/pgmac/lazytg/internal/ui/input"
 	"github.com/pgmac/lazytg/internal/ui/keymap"
@@ -23,6 +25,15 @@ import (
 	"github.com/pgmac/lazytg/internal/ui/panes/thread"
 	"github.com/pgmac/lazytg/internal/ui/statusbar"
 )
+
+// FileDownloader is the gotd-free contract App.handleDownloadRequest
+// uses to start a download. The concrete production implementation is
+// internal/core/files.DownloadService; tests substitute a fake to
+// observe the call sequence without spinning up the SQLite-backed
+// dedup cache.
+type FileDownloader interface {
+	Download(ctx context.Context, chatID int64, chatTitle string, info domain.MediaInfo) (string, error)
+}
 
 // Minimum terminal size below which we refuse to render the layout. 80x24 is
 // the historical VT100 floor and matches the threshold every other TUI in
@@ -87,6 +98,13 @@ type Deps struct {
 	// next palette open. Tests typically leave it nil; production
 	// passes the same FrecencyStore the palette itself reads from.
 	PaletteFrecency palette.FrecencyStore
+
+	// Downloader, if set, is invoked when the user presses the
+	// Download chord (Ctrl-D by default) on a message that carries
+	// media. Tests typically leave it nil — the chord becomes a
+	// no-op in that case and the app stays compilable without
+	// internal/core/files in scope.
+	Downloader FileDownloader
 }
 
 // App is the root Bubble Tea model. Sub-pane fields are concrete types
@@ -106,6 +124,11 @@ type App struct {
 	// separate plumb. nil means "no frecency wired" — the chat
 	// switch still happens but visit counts are not updated.
 	paletteFrecency palette.FrecencyStore
+
+	// downloader is the file-download collaborator wired through
+	// Deps.Downloader. nil means "no downloader wired" and the
+	// Download chord becomes a friendly no-op.
+	downloader FileDownloader
 
 	// preSearchFocus remembers the focus target the user was on
 	// before opening the search overlay so Esc / SearchJump can
@@ -150,6 +173,7 @@ func New(deps Deps) App {
 		search:          chooseSearch(deps.Search),
 		palette:         choosePalette(deps.Palette),
 		paletteFrecency: deps.PaletteFrecency,
+		downloader:      deps.Downloader,
 		preSearchFocus:  -1,
 		prePaletteFocus: -1,
 		focus:           FocusChats,

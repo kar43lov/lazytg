@@ -24,11 +24,9 @@ import (
 // inside sqlText; the caller prepends/append ftsMatch and limit itself
 // when building the final []any slice.
 //
-// HasFile is intentionally not folded into sqlText at Stage 3 Task 3 —
-// the messages.media columns land in Task 6, and emitting a WHERE
-// against a non-existent column would explode every search call. The
-// flag is preserved on Query so Task 6's BuildSQL extension can pick
-// it up without a parser change.
+// HasFile is folded into a "m.media_kind IS NOT NULL" filter — the
+// media_kind column was added by migration 0008 in Stage 3 Task 6 and
+// is NULL for plain-text messages.
 func BuildSQL(q Query) (sqlText, ftsMatch string, args []any, err error) {
 	ftsMatch, err = buildMatch(q)
 	if err != nil {
@@ -76,12 +74,14 @@ func BuildSQL(q Query) (sqlText, ftsMatch string, args []any, err error) {
 		params = append(params, q.Before.UTC().Unix())
 	}
 
-	// HasFile: deliberately no-op until Task 6 lands the media columns.
-	// We avoid silently dropping the user intent by surfacing a logical
-	// note in the SQL comment so future code review/grep lands on the
-	// right spot.
+	// HasFile becomes a real predicate now that Task 6 added the
+	// messages.media_kind column (migration 0008). NULL in that column
+	// means "plain text", any non-NULL value is a media-bearing
+	// message — the simplest possible filter and one the SQLite
+	// query planner handles via the existing PK index without a
+	// dedicated covering index.
 	if q.HasFile {
-		clauses = append(clauses, "/* TODO(stage3-task6): m.media_type IS NOT NULL */ 1=1")
+		clauses = append(clauses, "m.media_kind IS NOT NULL")
 	}
 
 	if len(clauses) == 0 {

@@ -31,3 +31,20 @@ type messagesLoadFailedMsg struct {
 	chatID int64
 	err    error
 }
+
+// DownloadRequestedMsg is emitted by the thread pane when the user
+// presses the Download chord (Ctrl-D by default) and the most recent
+// message in the thread carries a downloadable Media. The app layer
+// picks it up and routes it into core/files.DownloadService.
+//
+// v0.1 scope: the chord operates on the latest media-bearing message in
+// the visible thread. v0.2 will add per-message cursor navigation so
+// the user can pick an older attachment without scrolling-then-pressing.
+// Documented as a non-goal in CLAUDE.md so this is not a regression but
+// a pinned interim UX.
+type DownloadRequestedMsg struct {
+	ChatID    int64
+	MessageID int64
+	ChatTitle string
+	Media     domain.MediaInfo
+}

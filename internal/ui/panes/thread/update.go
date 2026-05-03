@@ -110,6 +110,7 @@ func (m Model) applyIncoming(ev events.MessageReceived) (Model, tea.Cmd) {
 		FromID: ev.FromID,
 		Date:   ev.Date,
 		Text:   ev.Text,
+		Media:  ev.Media,
 	})
 	m.recomputeOldestID()
 	m.viewport.SetContent(m.renderAll())

@@ -316,16 +316,72 @@ func (r *Repo) SaveMessage(ctx context.Context, m domain.Message) error {
 	if m.Date.IsZero() {
 		return errors.New("message: date is required")
 	}
-	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO messages (id, chat_id, from_id, date, text, reply_to, raw_blob)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+	args := messageInsertArgs(m)
+	_, err := r.db.ExecContext(ctx, messageUpsertSQL, args...)
+	if err != nil {
+		return fmt.Errorf("save message %d/%d: %w", m.ChatID, m.ID, err)
+	}
+	return nil
+}
+
+// messageUpsertSQL is the canonical INSERT … ON CONFLICT statement used by
+// SaveMessage / SaveMessages. Media columns (added in migration 0008)
+// participate in the upsert so a re-fetch of the same message updates a
+// stale file_reference (which expires every ~1h) without needing a
+// dedicated UPDATE path.
+const messageUpsertSQL = `
+        INSERT INTO messages (
+            id, chat_id, from_id, date, text, reply_to, raw_blob,
+            media_kind, media_id, media_access_hash, media_file_reference,
+            media_dc, media_filename, media_size, media_mime_type, media_thumb_size
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chat_id, id) DO UPDATE SET
-            from_id  = excluded.from_id,
-            date     = excluded.date,
-            text     = excluded.text,
-            reply_to = excluded.reply_to,
-            raw_blob = excluded.raw_blob
-    `,
+            from_id              = excluded.from_id,
+            date                 = excluded.date,
+            text                 = excluded.text,
+            reply_to             = excluded.reply_to,
+            raw_blob             = excluded.raw_blob,
+            media_kind           = excluded.media_kind,
+            media_id             = excluded.media_id,
+            media_access_hash    = excluded.media_access_hash,
+            media_file_reference = excluded.media_file_reference,
+            media_dc             = excluded.media_dc,
+            media_filename       = excluded.media_filename,
+            media_size           = excluded.media_size,
+            media_mime_type      = excluded.media_mime_type,
+            media_thumb_size     = excluded.media_thumb_size
+    `
+
+// messageInsertArgs builds the positional argument slice for
+// messageUpsertSQL. Centralised here so SaveMessage and SaveMessages stay
+// in lockstep when columns are added (e.g. a future media_caption).
+func messageInsertArgs(m domain.Message) []any {
+	var (
+		mediaKind sql.NullString
+		mediaID   sql.NullInt64
+		mediaAH   sql.NullInt64
+		mediaRef  []byte
+		mediaDC   sql.NullInt64
+		mediaName sql.NullString
+		mediaSize sql.NullInt64
+		mediaMime sql.NullString
+		mediaThSz sql.NullString
+	)
+	if m.Media != nil {
+		mediaKind = sql.NullString{String: string(m.Media.Kind), Valid: m.Media.Kind != ""}
+		mediaID = nullableInt64(m.Media.FileID)
+		mediaAH = sql.NullInt64{Int64: m.Media.AccessHash, Valid: true}
+		mediaRef = m.Media.FileReference
+		if m.Media.DC != 0 {
+			mediaDC = sql.NullInt64{Int64: int64(m.Media.DC), Valid: true}
+		}
+		mediaName = nullableString(m.Media.Filename)
+		mediaSize = nullableInt64(m.Media.Size)
+		mediaMime = nullableString(m.Media.MimeType)
+		mediaThSz = nullableString(m.Media.ThumbSize)
+	}
+	return []any{
 		m.ID,
 		m.ChatID,
 		nullableInt64(m.FromID),
@@ -333,11 +389,16 @@ func (r *Repo) SaveMessage(ctx context.Context, m domain.Message) error {
 		m.Text,
 		nullableInt64(m.ReplyTo),
 		m.RawBlob,
-	)
-	if err != nil {
-		return fmt.Errorf("save message %d/%d: %w", m.ChatID, m.ID, err)
+		mediaKind,
+		mediaID,
+		mediaAH,
+		mediaRef,
+		mediaDC,
+		mediaName,
+		mediaSize,
+		mediaMime,
+		mediaThSz,
 	}
-	return nil
 }
 
 // SaveMessages inserts or replaces a batch of messages inside a single
@@ -372,31 +433,14 @@ func (r *Repo) SaveMessages(ctx context.Context, msgs []domain.Message) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	stmt, err := tx.PrepareContext(ctx, `
-        INSERT INTO messages (id, chat_id, from_id, date, text, reply_to, raw_blob)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(chat_id, id) DO UPDATE SET
-            from_id  = excluded.from_id,
-            date     = excluded.date,
-            text     = excluded.text,
-            reply_to = excluded.reply_to,
-            raw_blob = excluded.raw_blob
-    `)
+	stmt, err := tx.PrepareContext(ctx, messageUpsertSQL)
 	if err != nil {
 		return fmt.Errorf("prepare stmt: %w", err)
 	}
 	defer func() { _ = stmt.Close() }()
 
 	for _, m := range msgs {
-		if _, err := stmt.ExecContext(ctx,
-			m.ID,
-			m.ChatID,
-			nullableInt64(m.FromID),
-			m.Date.UTC().Unix(),
-			m.Text,
-			nullableInt64(m.ReplyTo),
-			m.RawBlob,
-		); err != nil {
+		if _, err := stmt.ExecContext(ctx, messageInsertArgs(m)...); err != nil {
 			return fmt.Errorf("save message %d/%d: %w", m.ChatID, m.ID, err)
 		}
 	}
@@ -412,8 +456,7 @@ func (r *Repo) GetMessages(ctx context.Context, chatID int64, limit, offset int)
 	if limit <= 0 {
 		return nil, nil
 	}
-	rows, err := r.db.QueryContext(ctx, `
-        SELECT id, chat_id, from_id, date, text, reply_to, raw_blob
+	rows, err := r.db.QueryContext(ctx, messageSelectColumns+`
         FROM messages
         WHERE chat_id = ?
         ORDER BY date DESC, id DESC
@@ -424,17 +467,46 @@ func (r *Repo) GetMessages(ctx context.Context, chatID int64, limit, offset int)
 	}
 	defer func() { _ = rows.Close() }()
 
+	return scanMessages(rows)
+}
+
+// messageSelectColumns is the canonical SELECT fragment used by every
+// row-returning helper that returns full domain.Message values. Centralised
+// so a future media column lands in scanMessages without sweeping through
+// half a dozen call sites.
+const messageSelectColumns = `
+        SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
+               media_kind, media_id, media_access_hash, media_file_reference,
+               media_dc, media_filename, media_size, media_mime_type, media_thumb_size
+    `
+
+// scanMessages drains rows into a slice of domain.Message, parsing the
+// media columns into a *MediaInfo when media_kind is non-NULL.
+func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 	var out []domain.Message
 	for rows.Next() {
 		var (
-			m       domain.Message
-			fromID  sql.NullInt64
-			text    sql.NullString
-			replyTo sql.NullInt64
-			date    int64
-			raw     []byte
+			m         domain.Message
+			fromID    sql.NullInt64
+			text      sql.NullString
+			replyTo   sql.NullInt64
+			date      int64
+			raw       []byte
+			mediaKind sql.NullString
+			mediaID   sql.NullInt64
+			mediaAH   sql.NullInt64
+			mediaRef  []byte
+			mediaDC   sql.NullInt64
+			mediaName sql.NullString
+			mediaSize sql.NullInt64
+			mediaMime sql.NullString
+			mediaThSz sql.NullString
 		)
-		if err := rows.Scan(&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &raw); err != nil {
+		if err := rows.Scan(
+			&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &raw,
+			&mediaKind, &mediaID, &mediaAH, &mediaRef,
+			&mediaDC, &mediaName, &mediaSize, &mediaMime, &mediaThSz,
+		); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
 		m.FromID = fromID.Int64
@@ -442,6 +514,19 @@ func (r *Repo) GetMessages(ctx context.Context, chatID int64, limit, offset int)
 		m.ReplyTo = replyTo.Int64
 		m.Date = time.Unix(date, 0).UTC()
 		m.RawBlob = raw
+		if mediaKind.Valid && mediaKind.String != "" {
+			m.Media = &domain.MediaInfo{
+				Kind:          domain.MediaKind(mediaKind.String),
+				FileID:        mediaID.Int64,
+				AccessHash:    mediaAH.Int64,
+				FileReference: mediaRef,
+				DC:            int(mediaDC.Int64),
+				Filename:      mediaName.String,
+				Size:          mediaSize.Int64,
+				MimeType:      mediaMime.String,
+				ThumbSize:     mediaThSz.String,
+			}
+		}
 		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -463,8 +548,7 @@ func (r *Repo) GetMessagesBefore(ctx context.Context, chatID, beforeID int64, li
 	if limit <= 0 || beforeID <= 0 {
 		return nil, nil
 	}
-	rows, err := r.db.QueryContext(ctx, `
-        SELECT id, chat_id, from_id, date, text, reply_to, raw_blob
+	rows, err := r.db.QueryContext(ctx, messageSelectColumns+`
         FROM messages
         WHERE chat_id = ? AND id < ?
         ORDER BY id DESC
@@ -475,30 +559,7 @@ func (r *Repo) GetMessagesBefore(ctx context.Context, chatID, beforeID int64, li
 	}
 	defer func() { _ = rows.Close() }()
 
-	var out []domain.Message
-	for rows.Next() {
-		var (
-			m       domain.Message
-			fromID  sql.NullInt64
-			text    sql.NullString
-			replyTo sql.NullInt64
-			date    int64
-			raw     []byte
-		)
-		if err := rows.Scan(&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &raw); err != nil {
-			return nil, fmt.Errorf("scan message: %w", err)
-		}
-		m.FromID = fromID.Int64
-		m.Text = text.String
-		m.ReplyTo = replyTo.Int64
-		m.Date = time.Unix(date, 0).UTC()
-		m.RawBlob = raw
-		out = append(out, m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate messages: %w", err)
-	}
-	return out, nil
+	return scanMessages(rows)
 }
 
 // nullableUnix returns a sql.NullInt64 for the Unix timestamp of t, or NULL if

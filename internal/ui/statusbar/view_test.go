@@ -158,6 +158,47 @@ func TestStatusbarZeroWidthIsEmpty(t *testing.T) {
 	}
 }
 
+func TestStatusbarDownloadCell(t *testing.T) {
+	t.Parallel()
+
+	m := New()
+	m = m.UpsertDownload(NewDownload(7, "report.pdf", 0, 200_000))
+	m = m.UpsertDownload(NewDownload(7, "", 100_000, 0))
+	out := lipgloss.NewStyle().Render(m.View(120))
+	if !strings.Contains(out, "⬇ report.pdf 50%") {
+		t.Fatalf("expected download cell at 50%%, got %q", out)
+	}
+	// Conn cell should be replaced — "online" must not appear.
+	if strings.Contains(out, "online") {
+		t.Fatalf("conn cell should be hidden during download; got %q", out)
+	}
+	// Filename preserved across Progress event with empty filename.
+	if got := m.ActiveDownloads()[7]; got.Filename() != "report.pdf" {
+		t.Fatalf("filename clobbered by progress event: %q", got.Filename())
+	}
+
+	m = m.RemoveDownload(7)
+	if len(m.ActiveDownloads()) != 0 {
+		t.Fatalf("RemoveDownload did not clear: %+v", m.ActiveDownloads())
+	}
+	out = m.View(120)
+	if !strings.Contains(out, StateConnecting) {
+		t.Fatalf("conn cell should resume after download removed; got %q", out)
+	}
+}
+
+func TestStatusbarMultipleDownloadsPickStable(t *testing.T) {
+	t.Parallel()
+
+	m := New()
+	m = m.UpsertDownload(NewDownload(20, "later.bin", 0, 100))
+	m = m.UpsertDownload(NewDownload(10, "earlier.bin", 50, 100))
+	out := m.View(120)
+	if !strings.Contains(out, "earlier.bin") {
+		t.Fatalf("expected smallest fileID to win for stable rendering; got %q", out)
+	}
+}
+
 func TestStatusbarDefaultsBlankFields(t *testing.T) {
 	t.Parallel()
 

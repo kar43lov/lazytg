@@ -12,7 +12,16 @@ import (
 	"github.com/pgmac/lazytg/internal/ui/palette"
 	"github.com/pgmac/lazytg/internal/ui/panes/chats"
 	uisearch "github.com/pgmac/lazytg/internal/ui/panes/search"
+	"github.com/pgmac/lazytg/internal/ui/panes/thread"
+	"github.com/pgmac/lazytg/internal/ui/statusbar"
 )
+
+// downloadTimeout caps how long a Ctrl-D triggered fetch can run
+// before the cmd's context fires. Large media uploads (the user just
+// received a 1.5 GiB video) can take minutes legitimately, so the cap
+// is generous; a stuck gotd handshake should not, however, block the
+// command goroutine forever.
+const downloadTimeout = 30 * time.Minute
 
 // recordVisitTimeout caps the post-select RecordVisit RPC. The
 // chat switch already happened by the time this fires; the timeout
@@ -73,8 +82,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		events.DialogUpdated,
 		events.OutgoingMessageStateChanged,
 		events.ConnectionStateChanged,
-		events.StorageStateChanged:
+		events.StorageStateChanged,
+		events.FileDownloadStarted,
+		events.FileDownloadProgress,
+		events.FileDownloadCompleted,
+		events.FileDownloadFailed:
 		return a.broadcastBusEvent(msg)
+	case thread.DownloadRequestedMsg:
+		return a.handleDownloadRequest(m)
 	case uisearch.OpenedMsg:
 		return a.openSearch()
 	case uisearch.ClosedMsg:
@@ -269,8 +284,36 @@ func (a App) broadcastBusEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, cmdI)
 		}
 		return a, tea.Batch(cmds...)
+	case events.FileDownloadStarted:
+		a.status = a.status.UpsertDownload(statusbarDownloadStarted(ev))
+		return a, nil
+	case events.FileDownloadProgress:
+		a.status = a.status.UpsertDownload(statusbarDownloadProgress(ev))
+		return a, nil
+	case events.FileDownloadCompleted:
+		a.status = a.status.RemoveDownload(ev.FileID)
+		return a, nil
+	case events.FileDownloadFailed:
+		a.status = a.status.RemoveDownload(ev.FileID)
+		return a, nil
 	}
 	return a, nil
+}
+
+// statusbarDownloadStarted converts a FileDownloadStarted event into a
+// statusbar.Download row — initialising progress at 0 of total. Lives
+// here (next to broadcastBusEvent) so the package boundary stays:
+// statusbar accepts a domain-shaped value object and never imports
+// internal/core/events.
+func statusbarDownloadStarted(ev events.FileDownloadStarted) statusbar.Download {
+	return statusbar.NewDownload(ev.FileID, ev.Filename, 0, ev.Size)
+}
+
+// statusbarDownloadProgress converts a FileDownloadProgress event into
+// a statusbar.Download row, preserving the previously-recorded
+// filename when the event itself does not carry one.
+func statusbarDownloadProgress(ev events.FileDownloadProgress) statusbar.Download {
+	return statusbar.NewDownload(ev.FileID, "", ev.BytesDownloaded, ev.TotalBytes)
 }
 
 // openSearch flips the overlay visible, remembers the previous focus
@@ -461,6 +504,35 @@ func (a App) withPendingScroll(model tea.Model, cmd tea.Cmd) (tea.Model, tea.Cmd
 	return app.applyPendingScroll(), cmd
 }
 
+// handleDownloadRequest takes a thread-pane DownloadRequestedMsg and
+// fires off a goroutine that runs the actual fetch via the wired
+// FileDownloader. Progress / completion events arrive on the bus and
+// route into the status bar through broadcastBusEvent. Returns no
+// command — the result is observed entirely through bus events.
+//
+// When no downloader is wired (test harnesses, unauth sessions) the
+// chord is a quiet no-op so the user does not see a misleading error
+// toast for an action that genuinely cannot be performed.
+func (a App) handleDownloadRequest(req thread.DownloadRequestedMsg) (tea.Model, tea.Cmd) {
+	if a.downloader == nil {
+		if a.log != nil {
+			a.log.Debug("download: no downloader wired, ignoring chord")
+		}
+		return a, nil
+	}
+	dl := a.downloader
+	log := a.log
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), downloadTimeout)
+		defer cancel()
+		if _, err := dl.Download(ctx, req.ChatID, req.ChatTitle, req.Media); err != nil && log != nil {
+			log.Warn("download: request failed",
+				"chat_id", req.ChatID, "message_id", req.MessageID, "err", err)
+		}
+	}()
+	return a, nil
+}
+
 // chatTitle looks up the current title for the given chat id by
 // scanning the chats pane's loaded items. Returns ok=false when the
 // list is empty or the id isn't present (the latter happens when the
@@ -534,6 +606,12 @@ func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 	// modal, and stealing keys from it mid-typed-filter would feel
 	// broken to the user.
 	paletteAllowed := !a.chats.IsFilterActive()
+	// Download chord (Ctrl-D) only fires when the focus is *not* in
+	// the input pane (where the same chord deletes the next char in
+	// emacs muscle memory) and the chats filter is not active. Stage
+	// 3 v0.1: the chord operates on the latest media-bearing message
+	// in the visible thread; per-message cursor lands in v0.2.
+	downloadAllowed := a.focus != FocusInput && !a.chats.IsFilterActive()
 	switch {
 	case helpAllowed && key.Matches(k, a.keymap.ToggleHelp):
 		return cmdToggleHelp(), true
@@ -541,6 +619,11 @@ func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		return cmdOpenSearch(), true
 	case paletteAllowed && key.Matches(k, a.keymap.OpenPalette):
 		return cmdOpenPalette(), true
+	case downloadAllowed && key.Matches(k, a.keymap.Download):
+		if cmd, ok := a.cmdDownloadLatestMedia(); ok {
+			return cmd, true
+		}
+		return nil, true
 	case key.Matches(k, a.keymap.FocusNext):
 		return cmdNextFocus(), true
 	case key.Matches(k, a.keymap.FocusPrev):
@@ -549,6 +632,31 @@ func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		return cmdQuit(), true
 	}
 	return nil, false
+}
+
+// cmdDownloadLatestMedia inspects the thread for its most recent
+// message with Media. If found, it returns a tea.Cmd that emits a
+// thread.DownloadRequestedMsg the app routes into the wired
+// FileDownloader. If no media-bearing message exists, returns
+// (nil, false) so the caller can treat the chord as consumed-but-noop
+// instead of falling through and beeping.
+func (a App) cmdDownloadLatestMedia() (tea.Cmd, bool) {
+	target := a.thread.LatestMediaMessage()
+	if target == nil || target.Media == nil {
+		return nil, false
+	}
+	chatID := target.ChatID
+	title, _ := a.chatTitle(chatID)
+	media := *target.Media
+	messageID := target.ID
+	return func() tea.Msg {
+		return thread.DownloadRequestedMsg{
+			ChatID:    chatID,
+			MessageID: messageID,
+			ChatTitle: title,
+			Media:     media,
+		}
+	}, true
 }
 
 // applyScrollKey checks whether the key matches the configurable

@@ -129,6 +129,7 @@ func (s *LiveService) persist(ctx context.Context, ev events.MessageReceived) {
 		FromID: ev.FromID,
 		Date:   ev.Date,
 		Text:   ev.Text,
+		Media:  ev.Media,
 	}); err != nil {
 		s.log.Error("live: save message failed",
 			"chat_id", ev.ChatID, "message_id", ev.MessageID, "err", err)

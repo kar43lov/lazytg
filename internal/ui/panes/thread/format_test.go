@@ -297,3 +297,95 @@ func TestTruncRunes(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatMessage_MediaBadge(t *testing.T) {
+	t.Parallel()
+
+	doc := domain.Message{
+		ID: 1, ChatID: 1, FromID: 100, Date: fixedDate(),
+		Text: "see attached",
+		Media: &domain.MediaInfo{
+			Kind: domain.MediaKindDocument, FileID: 7,
+			Filename: "report.pdf", Size: 234567,
+		},
+	}
+	out := stripANSI(FormatMessage(doc, 60, nil))
+	if !strings.Contains(out, "📎 report.pdf") {
+		t.Fatalf("missing document badge: %q", out)
+	}
+	if !strings.Contains(out, "229.1 KiB") {
+		t.Fatalf("missing size cell: %q", out)
+	}
+	if !strings.Contains(out, "ctrl+d to save") {
+		t.Fatalf("missing hint: %q", out)
+	}
+	if !strings.Contains(out, "see attached") {
+		t.Fatalf("missing body text: %q", out)
+	}
+
+	photo := domain.Message{
+		ID: 2, ChatID: 1, FromID: 100, Date: fixedDate(),
+		Media: &domain.MediaInfo{
+			Kind: domain.MediaKindPhoto, FileID: 8,
+			Filename: "photo.jpg", Size: 0,
+		},
+	}
+	out = stripANSI(FormatMessage(photo, 60, nil))
+	if !strings.Contains(out, "🖼 photo.jpg") {
+		t.Fatalf("missing photo badge: %q", out)
+	}
+	// Zero-size badge should not show "B" / "KiB" cells.
+	if strings.Contains(out, " B]") || strings.Contains(out, " KiB]") {
+		t.Fatalf("unexpected size for unknown-size media: %q", out)
+	}
+
+	plain := domain.Message{
+		ID: 3, ChatID: 1, FromID: 100, Date: fixedDate(), Text: "hi",
+	}
+	out = stripANSI(FormatMessage(plain, 60, nil))
+	if strings.Contains(out, "📎") || strings.Contains(out, "🖼") {
+		t.Fatalf("plain message gained media badge: %q", out)
+	}
+}
+
+func TestFormatBytes(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0 B"},
+		{512, "512 B"},
+		{1023, "1023 B"},
+		{1024, "1.0 KiB"},
+		{234567, "229.1 KiB"},
+		{2 * 1024 * 1024, "2.0 MiB"},
+		{int64(1.5 * 1024 * 1024 * 1024), "1.50 GiB"},
+	}
+	for _, tc := range cases {
+		if got := formatBytes(tc.in); got != tc.want {
+			t.Errorf("formatBytes(%d) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestLatestMediaMessage(t *testing.T) {
+	t.Parallel()
+	m := New()
+	if got := m.LatestMediaMessage(); got != nil {
+		t.Fatalf("empty: expected nil, got %+v", got)
+	}
+	// applyLoaded the model with messages including one media row.
+	m.messages = []domain.Message{
+		{ID: 1, ChatID: 1, Date: fixedDate(), Text: "first"},
+		{ID: 2, ChatID: 1, Date: fixedDate(), Media: &domain.MediaInfo{Kind: domain.MediaKindDocument, FileID: 99, Filename: "a.bin"}},
+		{ID: 3, ChatID: 1, Date: fixedDate(), Text: "after-media"},
+	}
+	got := m.LatestMediaMessage()
+	if got == nil {
+		t.Fatalf("expected media message, got nil")
+	}
+	if got.ID != 2 || got.Media == nil || got.Media.FileID != 99 {
+		t.Fatalf("wrong media row: %+v", got)
+	}
+}
