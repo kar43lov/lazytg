@@ -258,21 +258,21 @@
 
 ### Task 4: Memory budget benchmark (idle <50MB, active <150MB)
 
-- [ ] Создать `test/perf/memory_test.go` с двумя тестами:
+- [x] Создать `test/perf/memory_test.go` с двумя тестами:
   1. `TestMemoryBudget_Idle` — собирает app через `internal/app.Build` с моками (без реального Telegram), стартует в горутине, ждёт 5 секунд stabilization (`time.Sleep`), вызывает `runtime.GC()` × 2, читает `runtime.MemStats.HeapAlloc`. **Fail если HeapAlloc > 50 * 1024 * 1024 (50MB)**
   2. `TestMemoryBudget_Active` — то же что выше, но симулирует активную нагрузку: 1000 mock messages через event bus за 30 секунд (≈33 msg/sec), параллельно 10 search-запросов с benchmark fixture. После нагрузки — `runtime.GC()` × 2 → проверить `HeapAlloc`. **Fail если > 150 * 1024 * 1024 (150MB)**
-- [ ] Использовать helper из существующих perf-тестов (`test/perf/`). Mock backends: Storage in-memory или `:memory:` SQLite, Transport — fake `Sender`/`HistoryProvider` уже есть в Stage 2 fakes (если приватные — продублировать в `test/perf/fakes.go`)
-- [ ] Замерить через `runtime.MemStats`:
+- [x] Использовать helper из существующих perf-тестов (`test/perf/`). Mock backends: Storage in-memory или `:memory:` SQLite, Transport — fake `Sender`/`HistoryProvider` уже есть в Stage 2 fakes (если приватные — продублировать в `test/perf/fakes.go`) — построение через `app.Build` с `SkipPermissionsAudit=true` поверх `t.TempDir()` XDG-layout (паттерн из `goroutine_leak_test.go`); MTProto-сервисы не аттачатся, fakes не нужны
+- [x] Замерить через `runtime.MemStats`:
   - Idle: после `time.Sleep(5 * time.Second)` + GC×2
   - Active: throughput через `bus.Publish(events.MessageReceived{...})` + `searchService.Search(...)` параллельно, замер через 30 секунд
-- [ ] Создать `docs/PERFORMANCE.md` с описанием:
+- [x] Создать `docs/PERFORMANCE.md` с описанием:
   - Memory budgets (idle <50MB, active <150MB) — обоснование (TUI на разработчиков с долгими сессиями ssh; >150MB начнёт мешать другим процессам в tmux)
   - Search SLA (p95 <100ms на 100k сообщений) — фактический результат из BenchmarkSearch100k
   - Live-updates SLA (p95 <500ms) — фактический результат из BenchmarkLiveUpdateLatency
   - DB size guidance (3-5× от текста сообщений из-за trigram, default cap 5000 msg/chat)
   - Известные ограничения: тяжёлые чаты (>10k активных сообщений в одном чате) могут давать viewport jank — рекомендация ограничить через config
-- [ ] Добавить в `ci.yml` шаг `go test -run "TestMemoryBudget" ./test/perf/...` (отдельный шаг чтобы видно было если упадёт)
-- [ ] Запустить локально `go test -v -run "TestMemoryBudget" ./test/perf/...` — оба теста должны пройти. Если HeapAlloc выше budget — диагностировать через `pprof` (`go test -memprofile=mem.out -run TestMemoryBudget_Active ./test/perf/` + `go tool pprof -top mem.out`)
+- [x] Добавить в `ci.yml` шаг `go test -run "TestMemoryBudget" ./test/perf/...` (отдельный шаг чтобы видно было если упадёт)
+- [x] Запустить локально `go test -v -run "TestMemoryBudget" ./test/perf/...` — оба теста должны пройти. Если HeapAlloc выше budget — диагностировать через `pprof` (`go test -memprofile=mem.out -run TestMemoryBudget_Active ./test/perf/` + `go tool pprof -top mem.out`) — оба прошли локально под `-race`: idle 2.0 MiB / 50 MiB budget, active 2.2 MiB / 150 MiB budget (M4)
 
 ### Task 5: Финальная пользовательская документация
 
