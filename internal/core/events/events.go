@@ -96,3 +96,19 @@ type StorageStateChanged struct {
 }
 
 func (StorageStateChanged) eventMarker() {}
+
+// ReindexProgress is emitted by the search ReindexService after each chat in
+// a multi-chat reindex pass completes. ChatID is the chat just processed;
+// Indexed is the number of newly-indexed rows for that chat (0 if the chat
+// was already up to date); Total is the cumulative count across the whole
+// pass so far. Done is true on the very last event for the pass — UI uses
+// this to flip the "indexing…" indicator off without having to count chats
+// itself.
+type ReindexProgress struct {
+	ChatID  int64
+	Indexed int
+	Total   int
+	Done    bool
+}
+
+func (ReindexProgress) eventMarker() {}

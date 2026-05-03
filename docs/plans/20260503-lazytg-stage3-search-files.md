@@ -98,21 +98,22 @@ Pitch продукта «Instant search across your entire Telegram history» с
 
 ### Task 2: Lazy index + reindex с graceful cancel + p95 benchmark
 
-- [ ] Создать `internal/core/search/reindex.go` с `ReindexService{indexer *Indexer; bus *events.Bus; log *slog.Logger; perChatLimit int}`. Метод `Run(ctx context.Context, chatIDs []int64) error` — последовательно для каждого chatID вызывает `indexer.Backfill`, эмитит progress events (`ReindexProgress{ChatID, Indexed, Total, Done bool}`) в bus после каждого чата. На `ctx.Done()` — graceful return с error wrap. Reindex всех чатов: метод `RunAll(ctx)` сначала запрашивает `repo.GetChats()` потом вызывает `Run` со всеми ID
-- [ ] Создать событие `ReindexProgress{ChatID int64; Indexed int; Total int; Done bool}` в `internal/core/events/events.go`. Добавить `eventMarker()` метод
-- [ ] Создать `internal/core/search/lazy.go` с `LazyTrigger{indexer *Indexer; reindex *ReindexService; bus *events.Bus; mu sync.Mutex; triggered bool}`. Метод `EnsureIndexed(ctx) error` — при первом вызове запускает `RunAll` в горутине (если ещё не triggered), возвращает сразу. Идея: первый поисковый запрос триггерит фоновую индексацию, не блокируется
-- [ ] Создать `internal/core/search/reindex_test.go`:
-  1. RunAll с 3 чатами по 10 сообщений → progress events {1,10,30,false}, {2,10,30,false}, {3,10,30,true}
-  2. **Graceful cancel:** запустить RunAll, через 50ms cancel context → возврат с `context.Canceled`, нет panic, ИНДЕКС НЕ В БРОКЕН-СОСТОЯНИИ (проверить через `PRAGMA integrity_check` и `INSERT INTO messages_fts(messages_fts) VALUES('integrity-check')`)
-  3. LazyTrigger дважды → второй вызов не запускает RunAll повторно (проверить через mock indexer call counter)
-- [ ] Создать `internal/core/search/service.go` с `Service{repo storage.Repo; indexer *Indexer; lazy *LazyTrigger; log *slog.Logger}`. Метод `Search(ctx, query Query, limit int) ([]Hit, error)` где `Query` — структура из Task 3, `Hit{Message domain.Message; Snippet string; ChatID int64; Score float64}`. Запрос: `SELECT m.*, snippet(messages_fts, 0, '<b>', '</b>', '...', 16) AS snippet, bm25(messages_fts) AS score FROM messages m JOIN messages_fts ON messages_fts.rowid = m.rowid WHERE messages_fts MATCH ? ORDER BY bm25(messages_fts) LIMIT ?` (на этой стадии без операторов; операторы в Task 4)
-- [ ] **SLA Benchmark.** Создать `internal/core/search/bench_test.go` с `BenchmarkSearch100k`:
-  1. Setup: создать БД на `b.TempDir()`, прогнать миграции, вставить **100 000 сообщений** с разнообразным текстом (русский+английский, длина 50-200 символов, рандомный seed для воспроизводимости)
-  2. Прогнать `Indexer.Backfill` для всех (или batched по 10000)
-  3. Прогнать 100 итераций `Service.Search` с разнообразными query: "привет", "hello world", "тест", "abc def" — собрать latencies
-  4. Посчитать p95 (отсортировать, взять `latencies[int(0.95*len(latencies))]`)
-  5. **`b.Fatalf` если p95 > 100ms.** Setup в `b.StopTimer()/StartTimer()` чтобы не учитывать
-- [ ] Запустить `go test -race ./internal/core/search/...` — зелёное; `go test -bench=BenchmarkSearch100k -benchtime=1x ./internal/core/search/` — p95 <100ms
+- [x] Создан `internal/core/search/reindex.go` с `ReindexService{indexer, chats ChatLister, bus EventPublisher, log, perChatLimit}`. Метод `Run(ctx, chatIDs)` последовательно вызывает `indexer.Backfill`, после каждого чата публикует `ReindexProgress{ChatID, Indexed, Total, Done}` (флаг Done на последнем). `RunAll(ctx)` через `ChatLister.GetChats` собирает идентификаторы и делегирует в Run. Cancel оборачивается `fmt.Errorf("…: %w", err)` так что `errors.Is(err, context.Canceled)` ловит как явные `ctx.Err()`-проверки между чатами, так и cancel изнутри Backfill через `BeginTx`. Empty pass публикует один Done-event для UI-сценария «индексация выключена».
+- [x] Создано событие `ReindexProgress{ChatID, Indexed, Total, Done}` в `internal/core/events/events.go` с `eventMarker()`.
+- [x] Создан `internal/core/search/lazy.go` с `LazyTrigger{reindex, log, mu, triggered, done chan struct{}}`. `EnsureIndexed(ctx)` под mutex выставляет `triggered=true`, запускает RunAll в goroutine, закрывает `done` по выходу. Повторный вызов — noop. Дополнительно добавлены геттеры `Triggered()` и `Done()` для тестов и будущей синхронизации в wire.
+- [x] Создан `internal/core/search/reindex_test.go`:
+  1. RunAll по 3 чатам × 10 сообщений → 3 события ReindexProgress в порядке id ASC, последний с Done=true. Indexed=0 для каждого, потому что AFTER INSERT уже сложил всё в индекс.
+  2. Graceful cancel: 50 чатов × 200 сообщений с временно сброшенным trigger (имитация "историческая БД до Stage 3"), RunAll стартует в goroutine, после 50 мс — cancel. Ассерт: возвращается `context.Canceled` (или nil на сверх-быстрых машинах с логированием), `PRAGMA integrity_check` = "ok", `INSERT INTO messages_fts(messages_fts) VALUES('integrity-check')` без ошибки.
+  3. LazyTrigger × 2 + ChatLister-mock со счётчиком calls → ровно 1 вызов GetChats, `Triggered()=true`.
+  4. Дополнительно: пустой pass публикует Done-event; RunAll без ChatLister возвращает явную ошибку.
+- [x] Создан `internal/core/search/service.go` с `Service{store IndexStore, lazy *LazyTrigger, log}`. `Search(ctx, raw string, limit int) ([]Hit, error)` строит SQL `SELECT m.*, snippet(...), bm25(...) FROM messages_fts JOIN messages ORDER BY bm25 LIMIT ?`. Для Task 4 совместимая сигнатура (raw string), Query/Parser плагуются в Task 3. Empty/whitespace-only query → ошибка; limit ≤ 0 → DefaultSearchLimit (50). Подключён LazyTrigger через `EnsureIndexed`. Мини-тесты в `service_test.go` (basic match, empty rejected, default limit).
+- [x] **SLA Benchmark.** Создан `internal/core/search/bench_test.go` с `BenchmarkSearch100k`:
+  1. Setup в `b.StopTimer()`: 20 чатов, 100 000 сообщений (длина 3–18 слов), batched транзакции по 5000, deterministic PCG seed=42.
+  2. Backfill не нужен — триггеры индексируют на INSERT.
+  3. Warmup по 4 запросам (греет page cache и FTS5 idx-сегмент).
+  4. 100 итераций `Service.Search` по очереди с queries `["привет", "hello world", "тест", "abc def"]`.
+  5. Сортировка latencies, `b.Fatalf` если `latencies[len*95/100]` > `p95SLA` (100 мс). `b.ReportMetric` для p50/p95/p99.
+- [x] `go test -race ./internal/core/search/...` зелёное; `go test -bench=BenchmarkSearch100k -benchtime=1x` → **p95 = 44.23 мс** (p50=37.67, p99=44.98) на M4. Запас по SLA ~2.3×, регрессии теперь видны в CI.
 
 ### Task 3: Search query parser
 
