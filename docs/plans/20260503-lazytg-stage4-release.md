@@ -276,7 +276,7 @@
 
 ### Task 5: Финальная пользовательская документация
 
-- [ ] Создать `docs/INSTALL.md`. Секции:
+- [x] Создать `docs/INSTALL.md`. Секции:
   - **Recommended (macOS):** `brew install pgmac/lazytg/lazytg` (после публикации tap)
   - **Linux .deb:** `wget https://github.com/pgmac/lazytg/releases/latest/download/lazytg_<version>_linux_amd64.deb && sudo dpkg -i lazytg_*.deb`
   - **Linux .rpm:** `sudo dnf install https://github.com/.../lazytg_<version>_linux_amd64.rpm`
@@ -284,13 +284,13 @@
   - **From source:** `go install github.com/pgmac/lazytg/cmd/lazytg@v0.1.0` (требует Go 1.22+)
   - **SQLCipher build (encrypted DB):** только manual download `lazytg-sqlcipher_*` или `go install -tags sqlcipher`. Документировать что нужен `libsqlcipher` в системе
   - **Setup:** получить API_ID/API_HASH в https://my.telegram.org/apps, экспортировать `LAZYTG_API_ID`, `LAZYTG_API_HASH`, запустить `lazytg login --account +<phone>`
-- [ ] Создать `docs/CONFIGURATION.md`. Секции:
+- [x] Создать `docs/CONFIGURATION.md`. Секции:
   - **Config file location:** `$XDG_CONFIG_HOME/lazytg/config.toml` (default `~/.config/lazytg/config.toml`)
   - **Все опции config.toml:** документировать каждое поле (с дефолтами): logging level/path/debug, storage path, fts5 max_messages_per_chat, polling interval, send rate-limit, downloads dir, editor, и т.д.
   - **Keymap config:** `~/.config/lazytg/keymap.toml`. Default bindings + примеры override (например, swap Ctrl+R и Ctrl+E)
   - **Env vars:** `LAZYTG_API_ID`, `LAZYTG_API_HASH`, `EDITOR`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`
   - **Multi-account:** через `--account <phone>` флаг, по аккаунту своя session+config. Состояние accounts хранится в БД таблицы `accounts`
-- [ ] Создать `docs/TROUBLESHOOTING.md`. Секции в формате «Симптом → диагностика → решение»:
+- [x] Создать `docs/TROUBLESHOOTING.md`. Секции в формате «Симптом → диагностика → решение»:
   - "lazytg login fails with FLOOD_WAIT" → подождать N секунд указанный в ошибке, gotd сам ретраит. Если повторяется — возможно account под observation (Telegram security)
   - "Search не находит ничего" → проверить что reindex прошёл (`lazytg reindex --all`); проверить размер индекса (`lazytg debug-bundle` → распаковать → `db_stats.txt`)
   - "TUI выглядит сломано / нет цветов" → проверить `$TERM` (рекомендуется xterm-256color или alacritty); проверить что терминал поддерживает Unicode
@@ -298,7 +298,7 @@
   - "DB locked" → другой процесс держит БД (другой запущенный lazytg). Закрыть его. Если процессов нет — удалить `~/.local/share/lazytg/lazytg.db-shm` и `-wal` (WAL-файлы)
   - "Account banned" → к сожалению, риск userbot-аккаунтов. Написать в recover@telegram.org с описанием use-case (TUI-клиент для personal use). См. SECURITY.md
   - **Как собрать debug-bundle для bug-report:** `lazytg debug-bundle` → tar.gz появится в cwd → приложить к GitHub Issue (gist если большой)
-- [ ] Создать `docs/VERIFY.md`. Секции:
+- [x] Создать `docs/VERIFY.md`. Секции:
   - **Verify checksums:** `sha256sum -c checksums.txt` после скачивания всех артефактов
   - **Verify cosign signatures:** инструкция через `cosign verify-blob` с keyless OIDC. Команда:
     ```sh
@@ -310,7 +310,7 @@
     ```
   - **What it proves:** binary собран в GitHub Actions с workflow `release.yml` под тегом начинающимся с `v`, никто не подменил после
   - Проверить cosign установлен (`brew install cosign` для macOS)
-- [ ] Обновить `README.md`:
+- [x] Обновить `README.md`:
   - **Первая строка под заголовком:** ban-warning (уже есть, проверить актуальность)
   - **Pitch:** «Local-first Telegram TUI with instant FTS5 search. Built for developers who live in tmux+nvim+ssh.»
   - **Demo:** placeholder для asciinema-cast или gif (`![demo](docs/demo.gif)` — файл записать вручную после ручного smoke-тестирования; в плане документировать как создать)
@@ -319,13 +319,13 @@
   - **Acceptance criteria badges:** GitHub Actions status, Go report card, codecov coverage
   - **Links:** INSTALL.md, CONFIGURATION.md, SEARCH.md, TROUBLESHOOTING.md, SECURITY.md, ARCHITECTURE.md, CONTRIBUTING.md, VERIFY.md, PERFORMANCE.md, FILES.md, CHANGELOG.md
   - **License:** MIT
-- [ ] Документировать **как записать demo** в `docs/DEMO.md` (для maintainer'a):
+- [x] Документировать **как записать demo** в `docs/DEMO.md` (для maintainer'a):
   ```
   1. asciinema rec -c "lazytg" docs/demo.cast
   2. agg --speed 2 --theme dracula docs/demo.cast docs/demo.gif (или asciinema-gif-generator)
   3. Сценарий: login → выбор чата → ввод "hello" → отправка → /search "тест" → результаты → переход в чат
   ```
-- [ ] Проверить что все docs-ссылки в README.md и CLAUDE.md ведут на существующие файлы (`grep -rn 'docs/' README.md CLAUDE.md` + manual проверка)
+- [x] Проверить что все docs-ссылки в README.md и CLAUDE.md ведут на существующие файлы (`grep -rn 'docs/' README.md CLAUDE.md` + manual проверка) — Python-скрипт прошёл (image-placeholder `docs/demo.gif` исключён по плану, fix stale path в CLAUDE.md → `completed/20260502-lazytg-stage1-foundation.md`)
 
 ### Task 6: Issue/PR templates + Security policy — доработка
 

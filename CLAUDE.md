@@ -130,7 +130,7 @@ internal/
 | Артефакт | Путь | Описание |
 |----------|------|----------|
 | Полный план продукта | [`docs/plans/lazytg-v0.1.0.md`](docs/plans/lazytg-v0.1.0.md) | 4 этапа × 10 недель × 180 часов. Прошёл deep brainstorm + dialectic + Plan-Reviewer APPROVED |
-| Ralphex-план этапа 1 | [`docs/plans/20260502-lazytg-stage1-foundation.md`](docs/plans/20260502-lazytg-stage1-foundation.md) | Foundation: bootstrap + архитектура + storage + auth + CLI + logging + CI + docs. ~30-40 часов |
+| Ralphex-план этапа 1 | [`docs/plans/completed/20260502-lazytg-stage1-foundation.md`](docs/plans/completed/20260502-lazytg-stage1-foundation.md) | Foundation: bootstrap + архитектура + storage + auth + CLI + logging + CI + docs. ~30-40 часов (выполнен) |
 
 **Запуск этапа 1 через ralphex:**
 ```sh
