@@ -349,7 +349,7 @@
 
 ### Task 7: Beta smoke checklist + draft анонса
 
-- [ ] Создать `docs/BETA_CHECKLIST.md` с **6-пунктным smoke-чеклистом** для beta-тестеров:
+- [x] Создать `docs/BETA_CHECKLIST.md` с **6-пунктным smoke-чеклистом** для beta-тестеров:
   ```markdown
   # lazytg v0.1.0-beta smoke checklist
 
@@ -378,14 +378,14 @@
   - Чего не хватает (но помните — мы целимся в v0.1.0, не в v1.0):
   - Готовы ли использовать ежедневно? (yes / no / "если добавите X")
   ```
-- [ ] Создать `docs/RELEASE_ANNOUNCE.md` (draft анонса для maintainer'a, **не публикуем автоматически**):
+- [x] Создать `docs/RELEASE_ANNOUNCE.md` (draft анонса для maintainer'a, **не публикуем автоматически**):
   - Шаблон для Show HN / r/commandline / lobste.rs / r/golang
   - Pitch: «lazytg — local-first Telegram TUI client with FTS5 search, written in pure Go»
   - Highlights: 100k msg search p95 47ms, multi-account, $EDITOR delegation, cosign-verified binaries
   - Honesty: alpha quality, ban-risk предупреждение, не replace для Telegram Desktop а tool для tmux-resident developers
   - Ссылки: GitHub repo, demo gif, install instructions, beta checklist
   - **НЕ публиковать без явной команды пользователя.** Это draft для финальной фазы release
-- [ ] Создать `docs/RELEASE_PROCESS.md` — runbook для maintainer'a:
+- [x] Создать `docs/RELEASE_PROCESS.md` — runbook для maintainer'a:
   ```
   1. Убедиться что main зелёный (CI green, coverage gates passed, benchmark gates passed)
   2. Обновить CHANGELOG.md через `git-cliff --tag <new-version> --unreleased`
@@ -397,7 +397,7 @@
   8. Если confirmations OK → tag v0.1.0 (без суффикса) → release.yml опубликует stable + brew + nfpm
   9. Анонс через RELEASE_ANNOUNCE.md
   ```
-- [ ] Запустить `go build ./...`, `go test -race ./...` — не должно быть регрессов
+- [x] Запустить `go build ./...`, `go test -race ./...` — не должно быть регрессов (build чистый, все 28 пакетов прошли `go test -race ./...`, golangci-lint 0 issues)
 
 ### Task 8: Verification + plan move to completed
 
