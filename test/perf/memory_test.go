@@ -119,6 +119,13 @@ func TestMemoryBudget_Idle(t *testing.T) {
 	if testing.Short() {
 		t.Skip("memory budget tests skipped under -short")
 	}
+	// Race detector inflates the runtime working set unpredictably (shadow
+	// memory + happens-before tracking) and serialises goroutines, both of
+	// which would either flake the budget probe or mask a real regression.
+	// The dedicated `Memory budget gate` CI step runs without -race.
+	if raceEnabled {
+		t.Skip("memory budget tests skipped under -race (HeapAlloc reading is not representative)")
+	}
 	// macOS runners add scheduler noise that flakes the active-load drain
 	// window without surfacing a real regression — same caveat as the
 	// search SLA gate. CI ci.yml gates on Linux only; skip on others so
@@ -162,6 +169,9 @@ func TestMemoryBudget_Active(t *testing.T) {
 	if testing.Short() {
 		t.Skip("memory budget tests skipped under -short")
 	}
+	if raceEnabled {
+		t.Skip("memory budget tests skipped under -race (HeapAlloc reading is not representative)")
+	}
 	if runtime.GOOS != "linux" {
 		t.Skipf("memory budget gate runs on linux only (got %s)", runtime.GOOS)
 	}
@@ -193,7 +203,23 @@ func TestMemoryBudget_Active(t *testing.T) {
 	searchCtx, cancelSearch := context.WithCancel(bgCtx)
 	queries := []string{"hello", "world", "сообщение", "test", "data"}
 	var searchWG sync.WaitGroup
-	var searchErr atomic.Value
+	// First-error capture. atomic.Value would panic on Store of a different
+	// concrete error type from a second worker (the test calls Search across
+	// multiple goroutines and the wrapped errors may differ between calls);
+	// atomic.Pointer[error] is type-safe and serialises Load against Store.
+	var searchErr atomic.Pointer[error]
+	storeSearchErr := func(err error) {
+		if err == nil {
+			return
+		}
+		searchErr.CompareAndSwap(nil, &err)
+	}
+	loadSearchErr := func() error {
+		if p := searchErr.Load(); p != nil {
+			return *p
+		}
+		return nil
+	}
 	// Joint cancel+wait cleanup so a t.Fatalf in the drain probe below
 	// doesn't race the workers against a.Close() (registered in
 	// buildIsolatedApp). LIFO ordering means this runs before Close().
@@ -217,7 +243,7 @@ func TestMemoryBudget_Active(t *testing.T) {
 					if searchCtx.Err() != nil {
 						return
 					}
-					searchErr.Store(err)
+					storeSearchErr(err)
 					return
 				}
 				i++
@@ -269,6 +295,12 @@ producer:
 	// in-flight queue.
 	drainDeadline := time.Now().Add(15 * time.Second)
 	for {
+		// Surface a search-worker error immediately so the drain timeout
+		// doesn't mask its root cause. Workers exit on first error, so a
+		// stalled drain here is often a downstream symptom.
+		if err := loadSearchErr(); err != nil {
+			t.Fatalf("search worker error during drain: %v", err)
+		}
 		// We seeded chatCount*seedPerChat rows + eventCount live events
 		// into the same chats. The simplest drain probe is to count
 		// rows in chat 1 and confirm the live-drain caught up.
@@ -288,8 +320,8 @@ producer:
 
 	cancelSearch()
 	searchWG.Wait()
-	if v := searchErr.Load(); v != nil {
-		t.Fatalf("search worker error: %v", v)
+	if err := loadSearchErr(); err != nil {
+		t.Fatalf("search worker error: %v", err)
 	}
 
 	heap := heapAllocAfterGC()

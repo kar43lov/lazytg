@@ -47,10 +47,12 @@ changelog:
   sort: asc
   use: git
   filters:
+    # Match Conventional Commits both with and without a scope: `docs:`
+    # AND `docs(install):` should both be excluded from public release notes.
     exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
+      - '^docs(\([^)]+\))?(!)?:'
+      - '^test(\([^)]+\))?(!)?:'
+      - '^chore(\([^)]+\))?(!)?:'
       - "Merge pull request"
       - "Merge branch"
 

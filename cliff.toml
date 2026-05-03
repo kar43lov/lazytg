@@ -33,7 +33,12 @@ footer = ""
 [git]
 conventional_commits = true
 filter_unconventional = false
+# Order matters: the first matching parser wins. Breaking changes are
+# detected ahead of feat/fix so a `feat!: …` commit lands in the
+# Breaking section instead of Added.
 commit_parsers = [
+  { message = "^[a-z]+(\\([^)]+\\))?!:", group = "Breaking" },
+  { body = ".*BREAKING CHANGE", group = "Breaking" },
   { message = "^feat", group = "Added" },
   { message = "^fix", group = "Fixed" },
   { message = "^perf", group = "Performance" },
@@ -43,10 +48,12 @@ commit_parsers = [
   { message = "^test", skip = true },
   { message = "^chore", skip = true },
   { message = "^Merge", skip = true },
-  { body = ".*BREAKING CHANGE", group = "Breaking" },
 ]
 filter_commits = false
 tag_pattern = "v[0-9].*"
-ignore_tags = ""
+# Fold prerelease tags (alpha/beta/rc) into the next stable changelog
+# section. Without this, `git-cliff --tag v0.1.0 --unreleased` would emit
+# separate sections for every v0.1.0-alpha.N / -beta.N / -rc.N tag.
+ignore_tags = "-(alpha|beta|rc)\\."
 topo_order = false
 sort_commits = "oldest"
