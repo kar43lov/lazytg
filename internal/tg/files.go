@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 
 	"github.com/gotd/td/telegram/downloader"
+	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
@@ -239,6 +242,235 @@ func documentFilename(doc *tg.Document) string {
 		}
 	}
 	return fmt.Sprintf("document_%d.bin", doc.ID)
+}
+
+// uploaderClient is the slice of *tg.Client that gotd's uploader needs.
+// Pulled out as an interface so unit tests can substitute a stub without
+// a full tgtest harness — the uploader.Client interface itself is the
+// canonical reference, repeated here so downstream code does not import
+// gotd.
+type uploaderClient = uploader.Client
+
+// uploaderDefaultPartSize is the chunk size we ask the gotd uploader to
+// use. 512 KiB matches the gotd default and balances per-RPC overhead
+// against finer progress granularity (every part triggers a callback).
+const uploaderDefaultPartSize = 512 * 1024
+
+// uploaderProgressCallback is the per-chunk callback the uploader fires
+// after every confirmed part. uploaded is cumulative bytes; total is
+// the originally-advertised size (may be -1 when streaming an unknown
+// length, but this code path always passes a known length so the field
+// is always >= 0).
+//
+// The callback runs on the goroutine driving the upload and must not
+// block — heavy work (event publish, UI render) should be dispatched
+// asynchronously by the caller.
+type uploaderProgressCallback func(uploaded, total int64)
+
+// Uploader streams a local file into Telegram via gotd's chunked
+// uploader and returns the resulting tg.InputFileClass that the caller
+// can pass into messages.sendMedia.
+//
+// All gotd types stay confined to this file: callers in core/files pass
+// a path + progress callback and receive a domain-shaped InputFile
+// reference (wrapped in a small interface so internal/core stays
+// gotd-free). The depguard rule (core ⊥ gotd) holds without further
+// plumbing.
+type Uploader struct {
+	api      uploaderClient
+	log      *slog.Logger
+	partSize int
+}
+
+// NewUploader returns an Uploader bound to the given API client. log
+// may be nil; a noop handler is wired so call sites stay clean.
+func NewUploader(api uploaderClient, log *slog.Logger) *Uploader {
+	if log == nil {
+		log = slog.New(noopHandler{})
+	}
+	return &Uploader{api: api, log: log, partSize: uploaderDefaultPartSize}
+}
+
+// UploadResult carries the data Sender.SendMedia needs to wrap a
+// freshly-uploaded file in an InputMedia* envelope. InputFile is the
+// gotd-generated handle (small file: *tg.InputFile, big file:
+// *tg.InputFileBig — both satisfy tg.InputFileClass). Filename is the
+// basename of the source file; MimeType is the content type the
+// uploader / caller wants attached.
+//
+// Exported fields make this struct serve double duty: callers in
+// internal/tg use it directly, while core/files keeps the value as an
+// opaque any-handle (UploadResult is never imported from core/files).
+type UploadResult struct {
+	InputFile tg.InputFileClass
+	Filename  string
+	MimeType  string
+}
+
+// Upload streams the file at path into Telegram using gotd's chunked
+// uploader. progress may be nil. The caller must keep path stable
+// until Upload returns — gotd reads from disk lazily.
+//
+// The function returns a UploadResult with the Telegram-side handle
+// the caller can pass into Sender.SendMedia. FLOOD_WAIT errors are
+// translated to *coresync.FloodWaitError so the retry policy in
+// SendService stays gotd-free.
+func (u *Uploader) Upload(ctx context.Context, path string, progress uploaderProgressCallback) (*UploadResult, error) {
+	if u.api == nil {
+		return nil, fmt.Errorf("uploader: api client is nil")
+	}
+	if path == "" {
+		return nil, fmt.Errorf("uploader: path is empty")
+	}
+	// Resolve absolute path here so a relative cwd-dependent caller does
+	// not surprise gotd with a "no such file" deep inside the chunk loop.
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("uploader: abs %q: %w", path, err)
+	}
+	// path is supplied by the user-side file picker; gosec G304 is by
+	// design here — the picker is the trust boundary, not this RPC layer.
+	f, err := os.Open(filepath.Clean(abs)) //nolint:gosec
+	if err != nil {
+		return nil, fmt.Errorf("uploader: open %q: %w", abs, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("uploader: stat %q: %w", abs, err)
+	}
+	totalBytes := info.Size()
+
+	up := uploader.NewUploader(u.api).WithPartSize(u.partSize)
+	if progress != nil {
+		up = up.WithProgress(&uploaderProgressAdapter{cb: progress, total: totalBytes})
+	}
+
+	inputFile, err := up.FromFile(ctx, f)
+	if err != nil {
+		if d, ok := tgerr.AsFloodWait(err); ok {
+			return nil, &coresync.FloodWaitError{RetryAfter: d}
+		}
+		return nil, fmt.Errorf("uploader: from file %q: %w", abs, err)
+	}
+
+	// Final progress tick: gotd's per-chunk callback may not land
+	// exactly at total bytes (the last chunk can be short). Synthesise a
+	// terminal callback so consumers can render "100%" deterministically.
+	if progress != nil {
+		progress(totalBytes, totalBytes)
+	}
+
+	return &UploadResult{
+		InputFile: inputFile,
+		Filename:  filepath.Base(abs),
+		MimeType:  detectMimeType(abs),
+	}, nil
+}
+
+// FilesAdapter is the gotd-aware bridge that lets core/files.UploadService
+// drive the upload + sendMedia round-trip without importing gotd. The
+// adapter satisfies both files.TGUploader (Upload returns an opaque
+// any-handle) and files.SendMediaSender (SendMedia accepts that same
+// handle) because keeping them on one struct lets the wiring layer
+// inject a single dependency rather than two.
+//
+// Up is the *Uploader that streams bytes server-side; Snd is the
+// *Sender that issues messages.sendMedia. Both must be non-nil at
+// construction time (NewFilesAdapter validates).
+type FilesAdapter struct {
+	Up  *Uploader
+	Snd *Sender
+}
+
+// NewFilesAdapter validates the dependencies and returns a ready
+// adapter. Returns an error rather than panicking so the wiring layer
+// can fail loudly at startup if either dependency is missing.
+func NewFilesAdapter(up *Uploader, snd *Sender) (*FilesAdapter, error) {
+	if up == nil {
+		return nil, fmt.Errorf("filesadapter: uploader is required")
+	}
+	if snd == nil {
+		return nil, fmt.Errorf("filesadapter: sender is required")
+	}
+	return &FilesAdapter{Up: up, Snd: snd}, nil
+}
+
+// Upload satisfies files.TGUploader. The returned handle is the
+// concrete *UploadResult; core/files treats it as opaque any.
+func (a *FilesAdapter) Upload(ctx context.Context, path string, progress func(uploaded, total int64)) (any, error) {
+	res, err := a.Up.Upload(ctx, path, uploaderProgressCallback(progress))
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// SendMedia satisfies files.SendMediaSender. handle must be the
+// *UploadResult produced by Upload (or matching test fake) — the type
+// assertion is the trust boundary between core/files's any-handle and
+// the gotd-typed InputFile that messages.sendMedia needs.
+func (a *FilesAdapter) SendMedia(ctx context.Context, chatID int64, handle any, caption string, replyTo int) (int64, error) {
+	res, ok := handle.(*UploadResult)
+	if !ok || res == nil {
+		return 0, fmt.Errorf("filesadapter: invalid upload handle %T", handle)
+	}
+	return a.Snd.SendMedia(ctx, chatID, res.InputFile, res.Filename, res.MimeType, caption, replyTo)
+}
+
+// uploaderProgressAdapter bridges gotd's uploader.Progress interface
+// (Chunk(ctx, ProgressState) error) onto our minimal func-based
+// uploaderProgressCallback. Stored on the heap because gotd holds a
+// reference to it for the duration of the upload.
+type uploaderProgressAdapter struct {
+	cb    uploaderProgressCallback
+	total int64
+}
+
+func (a *uploaderProgressAdapter) Chunk(_ context.Context, st uploader.ProgressState) error {
+	if a.cb == nil {
+		return nil
+	}
+	total := st.Total
+	if total < 0 {
+		total = a.total
+	}
+	a.cb(st.Uploaded, total)
+	return nil
+}
+
+// detectMimeType returns a best-effort MIME based on the file's
+// extension. We deliberately avoid sniffing the magic bytes — that
+// would require a second read pass and the server already accepts a
+// generic application/octet-stream when we cannot guess a better type.
+// Image/* extensions are mapped explicitly so sendMedia can later opt
+// into InputMediaUploadedPhoto when the caller wants — Stage 3 routes
+// every upload through InputMediaUploadedDocument with ForceFile, so
+// the field is currently informational.
+func detectMimeType(path string) string {
+	ext := filepath.Ext(path)
+	switch ext {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".pdf":
+		return "application/pdf"
+	case ".txt", ".md", ".log":
+		return "text/plain"
+	case ".mp4":
+		return "video/mp4"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".zip":
+		return "application/zip"
+	}
+	return "application/octet-stream"
 }
 
 // largestPhotoSize selects the highest-resolution jpeg variant from

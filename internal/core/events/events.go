@@ -186,3 +186,78 @@ type FileDownloadFailed struct {
 }
 
 func (FileDownloadFailed) eventMarker() {}
+
+// UploadID is the in-process identifier the upload pipeline assigns to a
+// single Ctrl-U invocation. It is not the Telegram-assigned file id (gotd
+// generates that internally and exposes it only after the upload
+// completes) — the status bar needs *something* to dedupe its progress
+// rows the moment the upload starts, before any RPC has fired. A
+// monotonic int64 is sufficient and keeps the bar's keying scheme
+// identical to the download path (which uses the Telegram file_id).
+type UploadID = int64
+
+// FileUploadStarted is emitted by core/files.UploadService once a file
+// upload has been queued. UploadID is the in-process identifier the
+// status bar uses to dedupe its progress widget; ChatID is where the
+// file is being sent; Path is the source path on disk; Filename is the
+// user-visible name (typically filepath.Base(Path)); Size is the byte
+// count read from os.Stat at queue time.
+type FileUploadStarted struct {
+	UploadID UploadID
+	ChatID   int64
+	Path     string
+	Filename string
+	Size     int64
+}
+
+func (FileUploadStarted) eventMarker() {}
+
+// FileUploadProgress is emitted periodically while the file is being
+// streamed to Telegram. BytesUploaded is the cumulative byte count the
+// gotd uploader has confirmed; TotalBytes echoes Size from the matching
+// Started event. Producers throttle the emit rate so a busy bus does
+// not flood the UI render loop.
+type FileUploadProgress struct {
+	UploadID      UploadID
+	BytesUploaded int64
+	TotalBytes    int64
+}
+
+func (FileUploadProgress) eventMarker() {}
+
+// FileUploadCompleted is emitted once the upload has been accepted by
+// Telegram (messages.sendMedia returned success). MessageID is the
+// server-assigned message id of the message that carries the just-
+// uploaded media — 0 when the server only acks via PTS without
+// surfacing one (rare for sendMedia but defensive).
+type FileUploadCompleted struct {
+	UploadID  UploadID
+	ChatID    int64
+	MessageID int64
+}
+
+func (FileUploadCompleted) eventMarker() {}
+
+// FileUploadFailed is emitted when an upload is aborted. Err carries
+// the underlying error message in human-readable form so the status
+// bar / future toast notification can show it without a separate
+// translation step.
+type FileUploadFailed struct {
+	UploadID UploadID
+	Err      string
+}
+
+func (FileUploadFailed) eventMarker() {}
+
+// FileUploadWarning is emitted when an upload exceeds the soft size
+// threshold (50 MiB by default). The upload still proceeds — the event
+// is purely informational so the status bar can show "uploading large
+// file…" alongside the regular progress widget. Hard rejection of
+// over-2-GiB files surfaces as a normal Failed event instead.
+type FileUploadWarning struct {
+	UploadID  UploadID
+	Size      int64
+	Threshold int64
+}
+
+func (FileUploadWarning) eventMarker() {}

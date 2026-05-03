@@ -34,6 +34,8 @@ func (a App) View() tea.View {
 	switch {
 	case a.help.Visible:
 		body = a.help.View(a.width, maxInt(a.height-1, 1))
+	case a.attach.Visible:
+		body = a.attach.View(a.width, maxInt(a.height-1, 1))
 	case a.palette.Visible:
 		body = a.palette.View(a.width, maxInt(a.height-1, 1))
 	case a.search.Visible:

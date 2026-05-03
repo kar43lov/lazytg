@@ -33,6 +33,14 @@ func (s *stubSendMessage) MessagesSendMessage(_ context.Context, req *tg.Message
 	return s.resp, nil
 }
 
+// MessagesSendMedia satisfies the extended MessagesSendMessageClient
+// interface. Tests that exercise media flows use stubMediaSender (in
+// files_test.go); this stub returns a not-implemented error so an
+// accidental call shows up as a clear test failure.
+func (s *stubSendMessage) MessagesSendMedia(_ context.Context, _ *tg.MessagesSendMediaRequest) (tg.UpdatesClass, error) {
+	return nil, errors.New("stubSendMessage: MessagesSendMedia not wired")
+}
+
 // stubResolver is a fixed PeerResolver: every Resolve returns the same
 // configured peer (or error). The chatID is irrelevant for these tests
 // because Sender's job is to translate the resolver's output into an

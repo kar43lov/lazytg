@@ -27,6 +27,7 @@ type Keymap struct {
 	Search      key.Binding
 	OpenPalette key.Binding
 	Download    key.Binding
+	Attach      key.Binding
 	Quit        key.Binding
 }
 
@@ -87,6 +88,10 @@ func Default() Keymap {
 		Download: key.NewBinding(
 			key.WithKeys("ctrl+d"),
 			key.WithHelp("ctrl+d", "download media"),
+		),
+		Attach: key.NewBinding(
+			key.WithKeys("ctrl+u"),
+			key.WithHelp("ctrl+u", "attach file"),
 		),
 		Quit: key.NewBinding(
 			key.WithKeys("ctrl+c", "ctrl+q"),

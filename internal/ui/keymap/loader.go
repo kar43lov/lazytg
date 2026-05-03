@@ -49,6 +49,7 @@ func bindingFields(km *Keymap) map[string]*key.Binding {
 		"search":       &km.Search,
 		"open_palette": &km.OpenPalette,
 		"download":     &km.Download,
+		"attach":       &km.Attach,
 		"quit":         &km.Quit,
 	}
 }

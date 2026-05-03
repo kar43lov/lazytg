@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gotd/td/tg"
@@ -233,3 +235,222 @@ func TestDownloader_RejectsNilWriter(t *testing.T) {
 // Ensure the wrapper itself implements io.Writer (compile-time
 // assurance that progressWriter wires correctly).
 var _ io.Writer = (*progressWriter)(nil)
+
+// fakeUploadAPI implements uploader.Client minimally: every
+// SaveFilePart returns ok+true so the gotd uploader walks straight
+// through the chunks.
+type fakeUploadAPI struct {
+	parts      int
+	bigParts   int
+	saveErr    error
+	bigSaveErr error
+}
+
+func (f *fakeUploadAPI) UploadSaveFilePart(_ context.Context, req *tg.UploadSaveFilePartRequest) (bool, error) {
+	if f.saveErr != nil {
+		return false, f.saveErr
+	}
+	f.parts++
+	_ = req
+	return true, nil
+}
+
+func (f *fakeUploadAPI) UploadSaveBigFilePart(_ context.Context, req *tg.UploadSaveBigFilePartRequest) (bool, error) {
+	if f.bigSaveErr != nil {
+		return false, f.bigSaveErr
+	}
+	f.bigParts++
+	_ = req
+	return true, nil
+}
+
+func TestUploader_Upload_StreamsBytes(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.txt")
+	payload := bytes.Repeat([]byte("X"), 2048)
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	api := &fakeUploadAPI{}
+	up := NewUploader(api, nil)
+	up.partSize = 1024 // exercises chunk loop with two parts
+
+	progressTicks := 0
+	res, err := up.Upload(t.Context(), path, func(b, total int64) {
+		progressTicks++
+		if total != int64(len(payload)) {
+			t.Errorf("progress total = %d, want %d", total, len(payload))
+		}
+	})
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	if res == nil {
+		t.Fatalf("expected UploadResult, got nil")
+	}
+	if res.Filename != "doc.txt" {
+		t.Fatalf("filename = %q, want doc.txt", res.Filename)
+	}
+	if res.MimeType == "" {
+		t.Fatalf("mime type empty")
+	}
+	if res.InputFile == nil {
+		t.Fatalf("InputFile is nil")
+	}
+	if api.parts < 1 {
+		t.Fatalf("UploadSaveFilePart never called")
+	}
+	if progressTicks == 0 {
+		t.Fatalf("progress callback never fired")
+	}
+}
+
+func TestUploader_RejectsEmptyPath(t *testing.T) {
+	up := NewUploader(&fakeUploadAPI{}, nil)
+	if _, err := up.Upload(t.Context(), "", nil); err == nil {
+		t.Fatalf("expected error for empty path")
+	}
+}
+
+func TestUploader_FailsOnMissingFile(t *testing.T) {
+	up := NewUploader(&fakeUploadAPI{}, nil)
+	if _, err := up.Upload(t.Context(), "/no/such/file/here.bin", nil); err == nil {
+		t.Fatalf("expected error for missing file")
+	}
+}
+
+func TestDetectMimeType(t *testing.T) {
+	cases := map[string]string{
+		"x.jpg":     "image/jpeg",
+		"x.JPG":     "application/octet-stream", // ext check is case-sensitive
+		"x.png":     "image/png",
+		"x.pdf":     "application/pdf",
+		"x.zip":     "application/zip",
+		"x.txt":     "text/plain",
+		"":          "application/octet-stream",
+		"x.unknown": "application/octet-stream",
+	}
+	for path, want := range cases {
+		if got := detectMimeType(path); got != want {
+			t.Errorf("detectMimeType(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+// stubMediaSender extends stubSendMessage with a SendMedia channel so
+// FilesAdapter can be unit-tested.
+type stubMediaSender struct {
+	*stubSendMessage
+	mediaResp tg.UpdatesClass
+	mediaErr  error
+	mediaReq  *tg.MessagesSendMediaRequest
+}
+
+func (s *stubMediaSender) MessagesSendMedia(_ context.Context, req *tg.MessagesSendMediaRequest) (tg.UpdatesClass, error) {
+	s.mediaReq = req
+	if s.mediaErr != nil {
+		return nil, s.mediaErr
+	}
+	return s.mediaResp, nil
+}
+
+func TestFilesAdapter_SendMedia_RoundTrip(t *testing.T) {
+	stub := &stubMediaSender{
+		stubSendMessage: &stubSendMessage{},
+		mediaResp:       &tg.UpdateShortSentMessage{ID: 7},
+	}
+	resolver := &stubResolver{peer: domain.Peer{ID: 99, Type: domain.ChatTypePrivate, AccessHash: 0xCAFE}}
+	sender := NewSender(stub, resolver, WithRandomIDFunc(func() (int64, error) { return 1, nil }))
+	uploaderClient := NewUploader(&fakeUploadAPI{}, nil)
+	adapter, err := NewFilesAdapter(uploaderClient, sender)
+	if err != nil {
+		t.Fatalf("NewFilesAdapter: %v", err)
+	}
+	handle := &UploadResult{
+		InputFile: &tg.InputFile{ID: 42, Name: "doc.pdf"},
+		Filename:  "doc.pdf",
+		MimeType:  "application/pdf",
+	}
+	id, err := adapter.SendMedia(t.Context(), 99, handle, "see me", 0)
+	if err != nil {
+		t.Fatalf("SendMedia: %v", err)
+	}
+	if id != 7 {
+		t.Fatalf("messageID = %d, want 7", id)
+	}
+	if stub.mediaReq == nil {
+		t.Fatalf("MessagesSendMedia was not called")
+	}
+	if stub.mediaReq.Message != "see me" {
+		t.Fatalf("caption = %q", stub.mediaReq.Message)
+	}
+	media, ok := stub.mediaReq.Media.(*tg.InputMediaUploadedDocument)
+	if !ok {
+		t.Fatalf("media kind = %T, want InputMediaUploadedDocument", stub.mediaReq.Media)
+	}
+	if media.MimeType != "application/pdf" {
+		t.Fatalf("mime = %q", media.MimeType)
+	}
+	gotName := ""
+	for _, a := range media.Attributes {
+		if af, ok := a.(*tg.DocumentAttributeFilename); ok {
+			gotName = af.FileName
+		}
+	}
+	if gotName != "doc.pdf" {
+		t.Fatalf("filename attr = %q", gotName)
+	}
+}
+
+func TestFilesAdapter_SendMedia_RejectsBadHandle(t *testing.T) {
+	stub := &stubMediaSender{stubSendMessage: &stubSendMessage{}}
+	resolver := &stubResolver{peer: domain.Peer{ID: 1, Type: domain.ChatTypePrivate}}
+	sender := NewSender(stub, resolver)
+	adapter, _ := NewFilesAdapter(NewUploader(&fakeUploadAPI{}, nil), sender)
+	if _, err := adapter.SendMedia(t.Context(), 1, "not-a-handle", "", 0); err == nil {
+		t.Fatalf("expected error for invalid handle type")
+	}
+}
+
+func TestNewFilesAdapter_RejectsNilDeps(t *testing.T) {
+	if _, err := NewFilesAdapter(nil, nil); err == nil {
+		t.Fatalf("expected error for nil uploader")
+	}
+}
+
+func TestSender_SendMedia_AttachesReplyTo(t *testing.T) {
+	stub := &stubMediaSender{
+		stubSendMessage: &stubSendMessage{},
+		mediaResp:       &tg.UpdateShortSentMessage{ID: 11},
+	}
+	resolver := &stubResolver{peer: domain.Peer{ID: 1, Type: domain.ChatTypePrivate, AccessHash: 1}}
+	sender := NewSender(stub, resolver, WithRandomIDFunc(func() (int64, error) { return 99, nil }))
+
+	id, err := sender.SendMedia(t.Context(), 1, &tg.InputFile{ID: 1, Name: "x.bin"}, "x.bin", "application/octet-stream", "caption", 42)
+	if err != nil {
+		t.Fatalf("SendMedia: %v", err)
+	}
+	if id != 11 {
+		t.Fatalf("messageID = %d, want 11", id)
+	}
+	if stub.mediaReq == nil {
+		t.Fatalf("MessagesSendMedia not called")
+	}
+	rt, ok := stub.mediaReq.GetReplyTo()
+	if !ok {
+		t.Fatalf("ReplyTo not set on media")
+	}
+	if rt.(*tg.InputReplyToMessage).ReplyToMsgID != 42 {
+		t.Fatalf("ReplyToMsgID = %d, want 42", rt.(*tg.InputReplyToMessage).ReplyToMsgID)
+	}
+}
+
+func TestSender_SendMedia_RejectsNilFile(t *testing.T) {
+	stub := &stubMediaSender{stubSendMessage: &stubSendMessage{}}
+	resolver := &stubResolver{peer: domain.Peer{ID: 1, Type: domain.ChatTypePrivate}}
+	sender := NewSender(stub, resolver)
+	if _, err := sender.SendMedia(t.Context(), 1, nil, "x", "", "", 0); err == nil {
+		t.Fatalf("expected error for nil file")
+	}
+}

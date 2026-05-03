@@ -187,6 +187,46 @@ func TestStatusbarDownloadCell(t *testing.T) {
 	}
 }
 
+func TestStatusbarUploadCell(t *testing.T) {
+	t.Parallel()
+
+	m := New()
+	m = m.UpsertUpload(NewUpload(13, "draft.zip", 0, 1_000_000))
+	m = m.UpsertUpload(NewUpload(13, "", 250_000, 0)) // progress event w/o filename
+	out := m.View(120)
+	if !strings.Contains(out, "⬆ draft.zip 25%") {
+		t.Fatalf("expected upload cell at 25%%, got %q", out)
+	}
+	if strings.Contains(out, "online") || strings.Contains(out, StateConnecting) {
+		// Conn cell must be replaced while upload is active.
+		t.Fatalf("conn cell should be hidden during upload; got %q", out)
+	}
+	if got := m.ActiveUploads()[13]; got.Filename() != "draft.zip" {
+		t.Fatalf("filename clobbered by progress event: %q", got.Filename())
+	}
+
+	m = m.RemoveUpload(13)
+	if len(m.ActiveUploads()) != 0 {
+		t.Fatalf("RemoveUpload did not clear: %+v", m.ActiveUploads())
+	}
+}
+
+func TestStatusbarUploadOverridesDownload(t *testing.T) {
+	t.Parallel()
+	// When both a download and an upload are active, the upload takes
+	// priority because the user just initiated it.
+	m := New()
+	m = m.UpsertDownload(NewDownload(1, "passive.bin", 50, 100))
+	m = m.UpsertUpload(NewUpload(1, "active.bin", 25, 100))
+	out := m.View(120)
+	if !strings.Contains(out, "⬆ active.bin") {
+		t.Fatalf("upload should win over download; got %q", out)
+	}
+	if strings.Contains(out, "passive.bin") {
+		t.Fatalf("download cell must not appear when upload is active; got %q", out)
+	}
+}
+
 func TestStatusbarMultipleDownloadsPickStable(t *testing.T) {
 	t.Parallel()
 

@@ -10,6 +10,7 @@ import (
 	"github.com/pgmac/lazytg/internal/core/events"
 	"github.com/pgmac/lazytg/internal/ui/input"
 	"github.com/pgmac/lazytg/internal/ui/palette"
+	"github.com/pgmac/lazytg/internal/ui/panes/attach"
 	"github.com/pgmac/lazytg/internal/ui/panes/chats"
 	uisearch "github.com/pgmac/lazytg/internal/ui/panes/search"
 	"github.com/pgmac/lazytg/internal/ui/panes/thread"
@@ -22,6 +23,12 @@ import (
 // is generous; a stuck gotd handshake should not, however, block the
 // command goroutine forever.
 const downloadTimeout = 30 * time.Minute
+
+// uploadTimeout caps how long a single Ctrl-U triggered upload can
+// run. Same generous 30-minute cap as the download path — a 2 GiB
+// file on a 50 Mbps link still finishes in ~5 minutes, so the cap
+// only protects against a wedged gotd handshake.
+const uploadTimeout = 30 * time.Minute
 
 // recordVisitTimeout caps the post-select RecordVisit RPC. The
 // chat switch already happened by the time this fires; the timeout
@@ -86,7 +93,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		events.FileDownloadStarted,
 		events.FileDownloadProgress,
 		events.FileDownloadCompleted,
-		events.FileDownloadFailed:
+		events.FileDownloadFailed,
+		events.FileUploadStarted,
+		events.FileUploadProgress,
+		events.FileUploadCompleted,
+		events.FileUploadFailed,
+		events.FileUploadWarning:
 		return a.broadcastBusEvent(msg)
 	case thread.DownloadRequestedMsg:
 		return a.handleDownloadRequest(m)
@@ -110,6 +122,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, cmd := a.palette.Update(msg)
 		a.palette = updated
 		return a, cmd
+	case attach.OpenedMsg:
+		return a.openAttach(m)
+	case attach.ClosedMsg:
+		return a.closeAttach(), nil
+	case attach.SubmitMsg:
+		return a.handleAttachSubmit(m)
 	}
 
 	if a.help.Visible {
@@ -121,6 +139,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if a.palette.Visible {
 		updated, cmd := a.palette.Update(msg)
 		a.palette = updated
+		return a, cmd
+	}
+
+	if a.attach.Visible {
+		updated, cmd := a.attach.Update(msg)
+		a.attach = updated
 		return a, cmd
 	}
 
@@ -296,8 +320,38 @@ func (a App) broadcastBusEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case events.FileDownloadFailed:
 		a.status = a.status.RemoveDownload(ev.FileID)
 		return a, nil
+	case events.FileUploadStarted:
+		a.status = a.status.UpsertUpload(statusbarUploadStarted(ev))
+		return a, nil
+	case events.FileUploadProgress:
+		a.status = a.status.UpsertUpload(statusbarUploadProgress(ev))
+		return a, nil
+	case events.FileUploadCompleted:
+		a.status = a.status.RemoveUpload(ev.UploadID)
+		return a, nil
+	case events.FileUploadFailed:
+		a.status = a.status.RemoveUpload(ev.UploadID)
+		return a, nil
+	case events.FileUploadWarning:
+		// Informational — the status bar already shows the upload row;
+		// the warning event is consumed mostly so future toast widgets
+		// can latch on without us having to add another routing arm.
+		return a, nil
 	}
 	return a, nil
+}
+
+// statusbarUploadStarted builds a statusbar.Upload row from a
+// FileUploadStarted event.
+func statusbarUploadStarted(ev events.FileUploadStarted) statusbar.Upload {
+	return statusbar.NewUpload(ev.UploadID, ev.Filename, 0, ev.Size)
+}
+
+// statusbarUploadProgress builds a statusbar.Upload row from a
+// FileUploadProgress event, preserving the previously-recorded
+// filename when the event itself does not carry one.
+func statusbarUploadProgress(ev events.FileUploadProgress) statusbar.Upload {
+	return statusbar.NewUpload(ev.UploadID, "", ev.BytesUploaded, ev.TotalBytes)
 }
 
 // statusbarDownloadStarted converts a FileDownloadStarted event into a
@@ -392,6 +446,67 @@ func (a App) handleSearchJump(msg uisearch.JumpMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 	return a, tea.Batch(cmds...)
+}
+
+// openAttach flips the attach overlay visible (capturing the chat
+// id from the message), remembers the previous focus target so
+// closeAttach can restore it, and forwards Open() so the path input
+// is focused and the directory listing starts loading.
+//
+// When the message arrives with ChatID == 0 (defensive — the
+// keymap-driven path always supplies a chat id), the overlay opens
+// anyway but Submit will be a no-op until the user types a chat id.
+func (a App) openAttach(msg attach.OpenedMsg) (tea.Model, tea.Cmd) {
+	if a.preAttachFocus < 0 {
+		a.preAttachFocus = a.focus
+	}
+	updated, cmd := a.attach.Open(msg.ChatID)
+	a.attach = updated
+	return a, cmd
+}
+
+// closeAttach hides the attach overlay and restores the focus
+// target the user was on when they opened it. Idempotent.
+func (a App) closeAttach() App {
+	a.attach = a.attach.Close()
+	if a.preAttachFocus >= 0 {
+		a.preAttachFocus = -1
+	}
+	return a
+}
+
+// handleAttachSubmit consumes a SubmitMsg from the attach overlay:
+// closes the overlay and dispatches the upload via the wired
+// FileUploader. The upload runs in a goroutine bounded by
+// uploadTimeout — progress / completion events arrive on the bus and
+// route into the status bar through broadcastBusEvent. Returns no
+// command — the result is observed entirely through bus events.
+//
+// When no uploader is wired (test harnesses, unauth sessions) the
+// submit is a quiet no-op so the user does not see a misleading error
+// for an action that genuinely cannot be performed.
+func (a App) handleAttachSubmit(msg attach.SubmitMsg) (tea.Model, tea.Cmd) {
+	a = a.closeAttach()
+	if a.uploader == nil {
+		if a.log != nil {
+			a.log.Debug("upload: no uploader wired, ignoring submit")
+		}
+		return a, nil
+	}
+	up := a.uploader
+	log := a.log
+	chatID := msg.ChatID
+	path := msg.Path
+	caption := msg.Caption
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), uploadTimeout)
+		defer cancel()
+		if _, err := up.SendFile(ctx, chatID, path, caption, 0); err != nil && log != nil {
+			log.Warn("upload: submit failed",
+				"chat_id", chatID, "path", path, "err", err)
+		}
+	}()
+	return a, nil
 }
 
 // openPalette flips the palette overlay visible, remembers the
@@ -579,6 +694,7 @@ func (a App) handleResize(msg tea.WindowSizeMsg) App {
 	a.input = a.input.SetWidth(a.width)
 	a.search = a.search.SetSize(a.width, a.height)
 	a.palette = a.palette.SetSize(a.width, a.height)
+	a.attach = a.attach.SetSize(a.width, a.height)
 	return a
 }
 
@@ -612,6 +728,13 @@ func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 	// 3 v0.1: the chord operates on the latest media-bearing message
 	// in the visible thread; per-message cursor lands in v0.2.
 	downloadAllowed := a.focus != FocusInput && !a.chats.IsFilterActive()
+	// Attach chord (Ctrl-U) is allowed from any non-filter focus —
+	// even the input pane, because Ctrl-U "delete to start of line"
+	// in emacs is uncommon enough that hijacking it for "attach
+	// file" matches Telegram Desktop's muscle memory. The Attach
+	// overlay needs a chat to upload into; we bail when the input
+	// pane has no chat bound yet.
+	attachAllowed := !a.chats.IsFilterActive()
 	switch {
 	case helpAllowed && key.Matches(k, a.keymap.ToggleHelp):
 		return cmdToggleHelp(), true
@@ -624,6 +747,11 @@ func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 			return cmd, true
 		}
 		return nil, true
+	case attachAllowed && key.Matches(k, a.keymap.Attach):
+		if cmd, ok := a.cmdOpenAttach(); ok {
+			return cmd, true
+		}
+		return nil, true
 	case key.Matches(k, a.keymap.FocusNext):
 		return cmdNextFocus(), true
 	case key.Matches(k, a.keymap.FocusPrev):
@@ -632,6 +760,22 @@ func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		return cmdQuit(), true
 	}
 	return nil, false
+}
+
+// cmdOpenAttach picks the chat id from the thread pane (the chat
+// the user is currently looking at — same chat the input pane is
+// bound to) and emits a OpenedMsg the app routes into the
+// attach overlay. Returns (nil, false) when no chat is open so the
+// chord becomes a quiet no-op rather than opening an attach overlay
+// the user could never submit from.
+func (a App) cmdOpenAttach() (tea.Cmd, bool) {
+	chatID := a.thread.ChatID()
+	if chatID == 0 {
+		return nil, false
+	}
+	return func() tea.Msg {
+		return attach.OpenedMsg{ChatID: chatID}
+	}, true
 }
 
 // cmdDownloadLatestMedia inspects the thread for its most recent

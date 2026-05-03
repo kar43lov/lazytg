@@ -20,6 +20,7 @@ import (
 	"github.com/pgmac/lazytg/internal/ui/keymap"
 	"github.com/pgmac/lazytg/internal/ui/overlay"
 	"github.com/pgmac/lazytg/internal/ui/palette"
+	"github.com/pgmac/lazytg/internal/ui/panes/attach"
 	"github.com/pgmac/lazytg/internal/ui/panes/chats"
 	uisearch "github.com/pgmac/lazytg/internal/ui/panes/search"
 	"github.com/pgmac/lazytg/internal/ui/panes/thread"
@@ -33,6 +34,14 @@ import (
 // dedup cache.
 type FileDownloader interface {
 	Download(ctx context.Context, chatID int64, chatTitle string, info domain.MediaInfo) (string, error)
+}
+
+// FileUploader is the gotd-free contract App.handleAttachSubmit uses
+// to start an upload + sendMedia round-trip. The concrete production
+// implementation is internal/core/files.UploadService; tests substitute
+// a fake.
+type FileUploader interface {
+	SendFile(ctx context.Context, chatID int64, path, caption string, replyTo int) (uploadID int64, err error)
 }
 
 // Minimum terminal size below which we refuse to render the layout. 80x24 is
@@ -92,6 +101,7 @@ type Deps struct {
 	Status  *statusbar.Model
 	Search  *uisearch.Model
 	Palette *palette.Model
+	Attach  *attach.Model
 
 	// PaletteFrecency, if set, is invoked by the app on every
 	// SelectedMsg so the just-visited chat ranks higher in the
@@ -105,6 +115,12 @@ type Deps struct {
 	// no-op in that case and the app stays compilable without
 	// internal/core/files in scope.
 	Downloader FileDownloader
+
+	// Uploader, if set, is invoked when the user submits a file
+	// from the Attach overlay (Ctrl-U flow). nil makes the overlay
+	// open / browse / submit but the actual SendFile call becomes a
+	// no-op so tests stay compilable without the upload pipeline.
+	Uploader FileUploader
 }
 
 // App is the root Bubble Tea model. Sub-pane fields are concrete types
@@ -118,6 +134,7 @@ type App struct {
 	help    overlay.Help
 	search  uisearch.Model
 	palette palette.Model
+	attach  attach.Model
 
 	// paletteFrecency mirrors Deps.PaletteFrecency so
 	// handlePaletteSelected can call RecordVisit without a
@@ -130,6 +147,11 @@ type App struct {
 	// Download chord becomes a friendly no-op.
 	downloader FileDownloader
 
+	// uploader is the file-upload collaborator wired through
+	// Deps.Uploader. nil means "no uploader wired" — the Attach
+	// overlay still opens but Submit silently no-ops.
+	uploader FileUploader
+
 	// preSearchFocus remembers the focus target the user was on
 	// before opening the search overlay so Esc / SearchJump can
 	// restore it. -1 means "no overlay open" so the field is
@@ -140,6 +162,11 @@ type App struct {
 	// closing it (Esc / SelectedMsg) can restore the prior focus
 	// target. -1 means "no palette open".
 	prePaletteFocus FocusTarget
+
+	// preAttachFocus is the same idea for the attach overlay so
+	// Esc / Submit can restore the prior focus target. -1 means
+	// "no attach overlay open".
+	preAttachFocus FocusTarget
 
 	// pendingScroll holds a deferred ScrollTo target produced by
 	// handleSearchJump. The thread pane's applyLoaded calls
@@ -172,10 +199,13 @@ func New(deps Deps) App {
 		help:            overlay.New(deps.Keymap),
 		search:          chooseSearch(deps.Search),
 		palette:         choosePalette(deps.Palette),
+		attach:          chooseAttach(deps.Attach, deps.Log),
 		paletteFrecency: deps.PaletteFrecency,
 		downloader:      deps.Downloader,
+		uploader:        deps.Uploader,
 		preSearchFocus:  -1,
 		prePaletteFocus: -1,
+		preAttachFocus:  -1,
 		focus:           FocusChats,
 		keymap:          deps.Keymap,
 		bus:             deps.Bus,
@@ -205,6 +235,16 @@ func choosePalette(src *palette.Model) palette.Model {
 		return *src
 	}
 	return palette.New(nil, nil, nil)
+}
+
+// chooseAttach returns *src if non-nil, else a fresh attach overlay
+// rooted at the user's home directory. The placeholder is harmless in
+// app/View tests because the overlay only renders when Visible.
+func chooseAttach(src *attach.Model, log *slog.Logger) attach.Model {
+	if src != nil {
+		return *src
+	}
+	return attach.New(log)
 }
 
 // pendingThreadScroll is the deferred scroll target produced by
@@ -265,6 +305,14 @@ func (a App) PaletteVisible() bool { return a.palette.Visible }
 // PaletteModel returns the embedded palette overlay (test helper).
 // Value-copied; mutating it does not affect the App.
 func (a App) PaletteModel() palette.Model { return a.palette }
+
+// AttachVisible reports whether the attach overlay is currently
+// shown. Exposed for tests.
+func (a App) AttachVisible() bool { return a.attach.Visible }
+
+// AttachModel returns the embedded attach overlay (test helper).
+// Value-copied; mutating it does not affect the App.
+func (a App) AttachModel() attach.Model { return a.attach }
 
 // TooSmall reports whether the last WindowSize was below MinWidth/MinHeight.
 // Exposed for tests so they can assert without parsing the rendered View.

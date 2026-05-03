@@ -28,6 +28,7 @@ type PeerResolver interface {
 // the same pattern as MessagesGetHistoryClient in history.go.
 type MessagesSendMessageClient interface {
 	MessagesSendMessage(ctx context.Context, request *tg.MessagesSendMessageRequest) (tg.UpdatesClass, error)
+	MessagesSendMedia(ctx context.Context, request *tg.MessagesSendMediaRequest) (tg.UpdatesClass, error)
 }
 
 // Sender is the gotd-aware adapter for messages.sendMessage. The struct
@@ -114,6 +115,71 @@ func (s *Sender) SendText(ctx context.Context, chatID int64, text string, replyT
 			return 0, &coresync.ValidationError{Reason: rpc.Type}
 		}
 		return 0, fmt.Errorf("messages.sendMessage chat=%d: %w", chatID, err)
+	}
+	return extractMessageID(updates), nil
+}
+
+// SendMedia delivers a previously-uploaded file as a document message
+// with optional caption to chatID. file is the gotd InputFile handle
+// returned by Uploader.Upload (small files: *tg.InputFile, big files:
+// *tg.InputFileBig — both satisfy InputFileClass). filename is sent in
+// the document attribute so recipients see the original on-disk name;
+// mimeType drives the server-side preview pipeline (image/* enables
+// thumbnails, video/* enables playback). caption is optional.
+//
+// All v0.1 uploads go out as InputMediaUploadedDocument with no
+// ForceFile flag — Telegram still picks an appropriate envelope (photo,
+// video, audio) when the mime type matches the well-known set. A future
+// task can switch image/* uploads to InputMediaUploadedPhoto for the
+// "render in chat as image" UX.
+//
+// FLOOD_WAIT errors are translated to *coresync.FloodWaitError;
+// 400-class errors land as *coresync.ValidationError so the retry
+// policy in core/sync gives up immediately.
+func (s *Sender) SendMedia(ctx context.Context, chatID int64, file tg.InputFileClass, filename, mimeType, caption string, replyTo int) (int64, error) {
+	if file == nil {
+		return 0, errors.New("send: file is nil")
+	}
+	peer, err := s.peers.Resolve(ctx, chatID)
+	if err != nil {
+		return 0, fmt.Errorf("send: resolve peer %d: %w", chatID, err)
+	}
+	inputPeer, err := buildInputPeer(peer.ID, peer.AccessHash, string(peer.Type))
+	if err != nil {
+		return 0, fmt.Errorf("send: build input peer %d: %w", chatID, err)
+	}
+	randomID, err := s.randInt()
+	if err != nil {
+		return 0, fmt.Errorf("send: generate random_id: %w", err)
+	}
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	media := &tg.InputMediaUploadedDocument{
+		File:     file,
+		MimeType: mimeType,
+		Attributes: []tg.DocumentAttributeClass{
+			&tg.DocumentAttributeFilename{FileName: filename},
+		},
+	}
+	req := &tg.MessagesSendMediaRequest{
+		Peer:     inputPeer,
+		Media:    media,
+		Message:  caption,
+		RandomID: randomID,
+	}
+	if replyTo > 0 {
+		req.SetReplyTo(&tg.InputReplyToMessage{ReplyToMsgID: replyTo})
+	}
+	updates, err := s.api.MessagesSendMedia(ctx, req)
+	if err != nil {
+		if d, ok := tgerr.AsFloodWait(err); ok {
+			return 0, &coresync.FloodWaitError{RetryAfter: d}
+		}
+		if rpc, ok := tgerr.As(err); ok && rpc.IsCode(400) {
+			return 0, &coresync.ValidationError{Reason: rpc.Type}
+		}
+		return 0, fmt.Errorf("messages.sendMedia chat=%d: %w", chatID, err)
 	}
 	return extractMessageID(updates), nil
 }

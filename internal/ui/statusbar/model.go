@@ -43,6 +43,37 @@ type Download struct {
 	total    int64
 }
 
+// Upload is the upload-side twin of Download. uploadID is the
+// in-process counter UploadService assigns at SendFile time (not the
+// Telegram-assigned file id, which the upload pipeline only learns
+// after completion); filename / bytes / total drive the same widget
+// rendering as Download but with a ⬆ glyph instead of ⬇.
+type Upload struct {
+	uploadID int64
+	filename string
+	bytes    int64
+	total    int64
+}
+
+// NewUpload constructs an Upload row. Twin of NewDownload — exposed so
+// app/update.go can build typed values without poking unexported
+// fields.
+func NewUpload(uploadID int64, filename string, bytes, total int64) Upload {
+	return Upload{uploadID: uploadID, filename: filename, bytes: bytes, total: total}
+}
+
+// UploadID returns the upload's in-process identifier.
+func (u Upload) UploadID() int64 { return u.uploadID }
+
+// Filename returns the user-visible name.
+func (u Upload) Filename() string { return u.filename }
+
+// Bytes returns the bytes uploaded so far.
+func (u Upload) Bytes() int64 { return u.bytes }
+
+// Total returns the total byte size; 0 when unknown.
+func (u Upload) Total() int64 { return u.total }
+
 // NewDownload constructs a Download row. Exposed so app/update.go can
 // build typed values without poking at unexported fields. fileID is
 // the dedup key the status bar uses to merge the same download's
@@ -88,6 +119,11 @@ type Model struct {
 	// of every other Model setter holds — callers never observe a
 	// partially-mutated map across goroutine boundaries.
 	downloads map[int64]Download
+
+	// uploads is the upload-side twin of downloads, keyed by the
+	// in-process UploadID UploadService assigns. Same copy-on-write
+	// discipline so the Model stays value-typed across goroutines.
+	uploads map[int64]Upload
 }
 
 // New returns a Model with sensible "no data yet" defaults — placeholder
@@ -163,22 +199,27 @@ func (m Model) renderLeft(budget int) string {
 // renderRight composes "unread N | conn[: reason] | storage" with colour on
 // the conn cell. FloodWait, when non-zero, replaces conn with "floodwait Xs".
 //
-// When at least one download is active, the conn cell is replaced with
-// `⬇ filename N%` so the user sees ongoing progress in the bottom strip
-// without a separate notification widget. Multi-download cases pick the
-// download with the smallest fileID to keep the rendering deterministic
-// across re-orders of the underlying map.
+// When at least one download or upload is active, the conn cell is
+// replaced with `⬇ filename N%` (download) or `⬆ filename N%` (upload)
+// so the user sees ongoing progress in the bottom strip without a
+// separate notification widget. Active uploads take priority over
+// downloads — the user just initiated the upload action and feedback
+// matters more than passive download progress. Multi-row cases pick
+// the row with the smallest in-process id to keep rendering
+// deterministic across map re-orders.
 func (m Model) renderRight() string {
 	unread := fmt.Sprintf("unread %d", m.UnreadTotal)
-	connOrDl := m.renderConn()
-	if d, ok := m.activeDownload(); ok {
-		connOrDl = downloadStyle.Render(formatDownloadCell(d))
+	cell := m.renderConn()
+	if u, ok := m.activeUpload(); ok {
+		cell = uploadStyle.Render(formatUploadCell(u))
+	} else if d, ok := m.activeDownload(); ok {
+		cell = downloadStyle.Render(formatDownloadCell(d))
 	}
 	storage := m.StorageMode
 	if storage == "" {
 		storage = events.StorageModeReadWrite
 	}
-	return unread + " | " + connOrDl + " | " + storage
+	return unread + " | " + cell + " | " + storage
 }
 
 // UpsertDownload inserts or updates the in-progress download row keyed
@@ -259,6 +300,95 @@ func (m Model) activeDownload() (Download, bool) {
 	return out, seen
 }
 
+// UpsertUpload inserts or updates the in-progress upload row keyed
+// by u.UploadID. Same preserve-filename behaviour as UpsertDownload —
+// a Progress event without a filename keeps the previous one visible.
+func (m Model) UpsertUpload(u Upload) Model {
+	out := m
+	out.uploads = make(map[int64]Upload, len(m.uploads)+1)
+	for k, v := range m.uploads {
+		out.uploads[k] = v
+	}
+	if u.filename == "" {
+		if prev, ok := m.uploads[u.uploadID]; ok {
+			u.filename = prev.filename
+			if u.total == 0 {
+				u.total = prev.total
+			}
+		}
+	}
+	out.uploads[u.uploadID] = u
+	return out
+}
+
+// RemoveUpload drops the row for uploadID. Twin of RemoveDownload —
+// idempotent, used by both completed and failed paths.
+func (m Model) RemoveUpload(uploadID int64) Model {
+	if _, ok := m.uploads[uploadID]; !ok {
+		return m
+	}
+	out := m
+	out.uploads = make(map[int64]Upload, len(m.uploads))
+	for k, v := range m.uploads {
+		if k == uploadID {
+			continue
+		}
+		out.uploads[k] = v
+	}
+	if len(out.uploads) == 0 {
+		out.uploads = nil
+	}
+	return out
+}
+
+// ActiveUploads returns a snapshot of in-flight uploads. Test helper.
+func (m Model) ActiveUploads() map[int64]Upload {
+	if len(m.uploads) == 0 {
+		return nil
+	}
+	out := make(map[int64]Upload, len(m.uploads))
+	for k, v := range m.uploads {
+		out[k] = v
+	}
+	return out
+}
+
+// activeUpload picks one of the running uploads to surface in the
+// status bar. Smallest UploadID wins so the rendering is stable
+// across map re-orders.
+func (m Model) activeUpload() (Upload, bool) {
+	if len(m.uploads) == 0 {
+		return Upload{}, false
+	}
+	var (
+		out  Upload
+		seen bool
+	)
+	for _, u := range m.uploads {
+		if !seen || u.uploadID < out.uploadID {
+			out = u
+			seen = true
+		}
+	}
+	return out, seen
+}
+
+// formatUploadCell mirrors formatDownloadCell but renders ⬆ instead.
+func formatUploadCell(u Upload) string {
+	name := u.filename
+	if name == "" {
+		name = "file"
+	}
+	if u.total > 0 {
+		pct := int(u.bytes * 100 / u.total)
+		if pct > 100 {
+			pct = 100
+		}
+		return fmt.Sprintf("⬆ %s %d%%", name, pct)
+	}
+	return "⬆ " + name
+}
+
 // formatDownloadCell renders a single Download into the
 // "⬇ filename 47%" form. When total bytes are unknown (gotd has not
 // yet seen the file size) the percentage drops out and the cell shows
@@ -282,6 +412,12 @@ func formatDownloadCell(d Download) string {
 // "transient activity" indicator rather than the steady
 // connection/floodwait colours.
 var downloadStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6")) // ANSI cyan
+
+// uploadStyle paints the upload cell. We re-use the cyan from the
+// download cell so the user reads "transient activity" without the bar
+// having to spell out the direction in colour — the ⬆ glyph already
+// does that.
+var uploadStyle = downloadStyle
 
 // renderConn returns the colourised connection cell. Colour values are
 // ANSI-256 indices so the output renders identically across truecolor /
