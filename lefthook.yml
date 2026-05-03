@@ -11,3 +11,37 @@ pre-commit:
     gotest:
       glob: "*.go"
       run: go test -short ./...
+
+commit-msg:
+  commands:
+    commitlint:
+      # Conventional Commits enforcement.
+      # Prefer commitlint via npx (richer rule set, see .commitlintrc.yml).
+      # Fall back to a bash regex if Node/npx is unavailable so the hook
+      # still gates on the type prefix and subject length.
+      run: |
+        msg_file="{1}"
+        first_line="$(head -n 1 "$msg_file")"
+        # Skip merge/revert/fixup commits — git generates these automatically.
+        case "$first_line" in
+          "Merge "*|"Revert "*|"fixup! "*|"squash! "*) exit 0 ;;
+        esac
+        if command -v npx >/dev/null 2>&1; then
+          npx --no-install --package=@commitlint/cli -- commitlint --edit "$msg_file" && exit 0
+          status=$?
+          # exit 1 = lint failure; exit >1 = npx couldn't resolve commitlint
+          # (no node_modules, offline, etc). Fall through to the bash gate
+          # in that case so first-time contributors aren't blocked.
+          [ "$status" = "1" ] && exit 1
+        fi
+        # Bash fallback: type(scope)!: subject — types match .commitlintrc.yml
+        if ! printf '%s' "$first_line" | grep -Eq '^(feat|fix|perf|security|docs|refactor|test|chore|build|ci)(\([a-z0-9._-]+\))?!?: .{1,100}$'; then
+          echo "lefthook: commit subject does not match Conventional Commits." >&2
+          echo "  expected: <type>(<scope>)?!?: <subject>" >&2
+          echo "  types:    feat|fix|perf|security|docs|refactor|test|chore|build|ci" >&2
+          echo "  got:      $first_line" >&2
+          exit 1
+        fi
+      skip:
+        - merge
+        - rebase

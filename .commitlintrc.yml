@@ -1,0 +1,22 @@
+# Commitlint configuration for lazytg.
+# Enforces Conventional Commits via lefthook commit-msg hook (see lefthook.yml).
+# Run locally: npx --no-install --package=@commitlint/cli -- commitlint --edit .git/COMMIT_EDITMSG
+
+extends:
+  - "@commitlint/config-conventional"
+
+rules:
+  type-enum:
+    - 2
+    - always
+    - [feat, fix, perf, security, docs, refactor, test, chore, build, ci]
+  subject-max-length:
+    - 2
+    - always
+    - 100
+  body-leading-blank:
+    - 1
+    - always
+  footer-leading-blank:
+    - 1
+    - always

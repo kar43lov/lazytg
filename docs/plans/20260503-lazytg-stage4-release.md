@@ -177,7 +177,7 @@
 
 ### Task 3: Changelog automation — git-cliff + commitlint
 
-- [ ] Создать `cliff.toml` в корне репо со следующей конфигурацией:
+- [x] Создать `cliff.toml` в корне репо со следующей конфигурацией:
   ```toml
   [changelog]
   header = "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\nThe format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),\nand this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).\n\n"
@@ -219,7 +219,7 @@
   topo_order = false
   sort_commits = "oldest"
   ```
-- [ ] Создать `.commitlintrc.yml` в корне:
+- [x] Создать `.commitlintrc.yml` в корне:
   ```yaml
   extends:
     - "@commitlint/config-conventional"
@@ -239,7 +239,7 @@
       - 1
       - always
   ```
-- [ ] Обновить `lefthook.yml` — добавить commit-msg hook для commitlint:
+- [x] Обновить `lefthook.yml` — добавить commit-msg hook для commitlint:
   ```yaml
   commit-msg:
     commands:
@@ -250,11 +250,11 @@
           - rebase
   ```
   Если npx unavailable — fallback на самостоятельный bash-парсер: regex `^(feat|fix|perf|security|docs|refactor|test|chore|build|ci)(\([a-z0-9-]+\))?!?: .{1,100}` через `grep -E` в commit-msg hook
-- [ ] Документировать в `docs/CONTRIBUTING.md` секцию «Commit message format» с примерами и ссылкой на conventional commits спецификацию
-- [ ] Добавить GitHub Actions job в `ci.yml` для проверки PR title (использовать action `amannn/action-semantic-pull-request@v5` или ручной grep по `${{ github.event.pull_request.title }}`)
-- [ ] Запустить `git-cliff --tag v0.1.0 --unreleased` локально для генерации первого CHANGELOG (если git-cliff установлен через brew). Сохранить результат как стартовую точку CHANGELOG.md, заменив существующий пустой Unreleased section
-- [ ] Если git-cliff не установлен — документировать в README.md и CONTRIBUTING.md что для генерации changelog нужно `brew install git-cliff` или `cargo install git-cliff`. Не блокировать таск на этом
-- [ ] Проверить `go build ./...` и `go test -race ./...` — изменения в `.commitlintrc.yml`, `cliff.toml`, `lefthook.yml` не должны затрагивать Go-код, но регресс обязателен
+- [x] Документировать в `docs/CONTRIBUTING.md` секцию «Commit message format» с примерами и ссылкой на conventional commits спецификацию
+- [x] Добавить GitHub Actions job в `ci.yml` для проверки PR title (использовать action `amannn/action-semantic-pull-request@v5` или ручной grep по `${{ github.event.pull_request.title }}`)
+- [x] Запустить `git-cliff --tag v0.1.0 --unreleased` локально для генерации первого CHANGELOG (если git-cliff установлен через brew). Сохранить результат как стартовую точку CHANGELOG.md, заменив существующий пустой Unreleased section — git-cliff не установлен локально, генерация отложена на момент release tagging maintainer'ом (документировано в README "Regenerating CHANGELOG" + CONTRIBUTING "Changelog generation"). Существующий CHANGELOG.md уже содержит полный Unreleased секшн с feat/fix entries из Stages 1-3 — преждевременная регенерация перетёрла бы рукописное содержимое
+- [x] Если git-cliff не установлен — документировать в README.md и CONTRIBUTING.md что для генерации changelog нужно `brew install git-cliff` или `cargo install git-cliff`. Не блокировать таск на этом
+- [x] Проверить `go build ./...` и `go test -race ./...` — изменения в `.commitlintrc.yml`, `cliff.toml`, `lefthook.yml` не должны затрагивать Go-код, но регресс обязателен (build OK, все пакеты тестов прошли, golangci-lint 0 issues)
 
 ### Task 4: Memory budget benchmark (idle <50MB, active <150MB)
 

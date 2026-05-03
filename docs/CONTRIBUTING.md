@@ -90,12 +90,38 @@ feat: add age-encrypted secret store fallback
 fix: tighten session-file permission check on macOS
 perf: batch FTS5 inserts during initial reindex
 security: redact api_hash in slog handler
-breaking!: rename --account flag to --phone
+feat!: rename --account flag to --phone
 ```
 
-Allowed types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `chore`, `build`, `ci`, `security`, `breaking`. The `!` suffix marks breaking changes (also note them in the commit body and `CHANGELOG.md`).
+Allowed types (`.commitlintrc.yml`): `feat`, `fix`, `perf`, `security`, `docs`, `refactor`, `test`, `chore`, `build`, `ci`. The trailing `!` suffix (`feat!:`, `fix(scope)!:`) marks breaking changes — also describe them in the commit body and reflect them in `CHANGELOG.md` under `### Breaking`.
 
-Conventional Commits is currently a **convention only** — there is no automated lint hook or CI check. `commitlint` and `git-cliff` integration is planned for Stage 4 alongside the release-notes pipeline.
+Subject line is capped at 100 characters; the body (if present) must be separated from the subject by a blank line.
+
+### Local enforcement
+
+`lefthook.yml` registers a `commit-msg` hook that lints the message before the commit lands. With `lefthook install` already run (see [Bootstrap](#bootstrap)) the hook fires automatically on every `git commit`.
+
+The hook prefers `commitlint` via `npx --no-install --package=@commitlint/cli`. If `npx` (or the package) is unavailable the hook falls back to a bash regex with the same type set and 100-char subject cap, so first-time contributors are not blocked by missing Node tooling. To run the rich rule set explicitly:
+
+```sh
+brew install node                  # one-time
+npx --package=@commitlint/cli -- commitlint --from=origin/main --to=HEAD
+```
+
+### CI enforcement
+
+`ci.yml` runs `amannn/action-semantic-pull-request` on every PR — the **PR title** must conform to Conventional Commits (the action ignores individual squash-commit subjects, so the title is the source of truth when squashing). `Merge` / `Revert` / `fixup!` commits are exempt from the local hook.
+
+### Changelog generation
+
+`CHANGELOG.md` is generated from commit history by [`git-cliff`](https://git-cliff.org/) using `cliff.toml` in the repo root. The maintainer regenerates it before tagging:
+
+```sh
+brew install git-cliff             # macOS, one-time (or `cargo install git-cliff`)
+git-cliff --tag v0.1.0-alpha.1 --unreleased --prepend CHANGELOG.md
+```
+
+Contributors do not need `git-cliff` installed for normal PR work; the CHANGELOG is regenerated as part of the release process. If you want to preview what your commits will look like, `git-cliff --unreleased` prints the would-be section to stdout without touching the file.
 
 ## Pull request checklist
 

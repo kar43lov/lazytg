@@ -181,6 +181,23 @@ CI (`release.yml`) does not set `SKIP_SQLCIPHER` and builds both variants on a r
 
 Every release archive ships a sigstore bundle (`*.sigstore.json`) and `checksums.txt` is signed via cosign keyless OIDC. See [docs/VERIFY.md](docs/VERIFY.md) (Stage 4) for the full verification recipe.
 
+### Regenerating CHANGELOG
+
+`CHANGELOG.md` is generated from Conventional Commit history by [`git-cliff`](https://git-cliff.org/) using `cliff.toml`. Install once:
+
+```sh
+brew install git-cliff             # macOS
+# or: cargo install git-cliff
+```
+
+Before tagging a release, regenerate the Unreleased section:
+
+```sh
+git-cliff --tag v0.1.0-alpha.1 --unreleased --prepend CHANGELOG.md
+```
+
+Contributors do not need `git-cliff` for normal PR work — see [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#commit-messages) for the commit-message rules that feed it.
+
 ## License
 
 [MIT](LICENSE) © 2026 lazytg contributors.
