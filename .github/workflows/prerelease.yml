@@ -101,4 +101,4 @@ jobs:
           NEW_TAG="${{ steps.tag.outputs.tag }}"
           git tag -a "$NEW_TAG" -m "$NEW_TAG"
           git push origin "$NEW_TAG"
-          echo "::notice title=Tag pushed::${NEW_TAG} pushed to origin; release.yml will trigger automatically."
+          echo "::notice title=Tag pushed::${NEW_TAG} pushed to origin. release.yml does NOT auto-trigger (GitHub blocks recursive workflow dispatch). Run: gh workflow run release.yml --ref ${NEW_TAG}"

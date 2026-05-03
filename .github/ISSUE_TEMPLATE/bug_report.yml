@@ -85,7 +85,7 @@ body:
     attributes:
       label: debug-bundle
       description: |
-        Run `lazytg debug-bundle` in the affected environment. A `lazytg-debug-bundle-<timestamp>.tar.gz`
+        Run `lazytg debug-bundle` in the affected environment. A `lazytg-bundle-<timestamp>.tar.gz`
         will land in your CWD with mode 0600. **Drag-and-drop the file into this textarea** (GitHub will
         upload and inline a link). If it is too large for an issue attachment, upload to a private gist
         and paste the URL here.
@@ -94,7 +94,7 @@ body:
         (redactor applied), `db_stats.txt` (row counts only, no message text), `goroutines.txt`.
         It does **not** contain: session blobs, raw `api_hash`, message bodies, contact lists,
         peer access hashes, the SQLite DB file. CI enforces this via `bundle_grep_test.go`.
-      placeholder: "Drop lazytg-debug-bundle-<timestamp>.tar.gz here, or paste a gist URL."
+      placeholder: "Drop lazytg-bundle-<timestamp>.tar.gz here, or paste a gist URL."
     validations:
       required: false
   - type: checkboxes

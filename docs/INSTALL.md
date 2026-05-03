@@ -21,7 +21,6 @@ separately in [VERIFY.md](VERIFY.md); recipes referenced here delegate to it.
 | Manual binary archive                      | Anywhere — gives you a checksum + signature  | manual                               |
 | `go install`                                | You already have a Go ≥ 1.25 toolchain        | `go install …@latest`                |
 | Build from source                          | Hacking on lazytg                              | `git pull && make build`             |
-| `-tags sqlcipher` build                    | Encrypted SQLite at rest (heavy users)        | manual; requires system libsqlcipher |
 
 Every release publishes the same set of artifacts; the choice is purely about
 delivery preference.

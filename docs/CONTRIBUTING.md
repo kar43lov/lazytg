@@ -148,7 +148,7 @@ Releases are produced by GoReleaser via `.github/workflows/release.yml`, which f
 | `v0.1.0-rc.N`            | prerelease     | **skipped**         | attached as assets     | Final candidate before stable                 |
 | `v0.1.0` (no suffix)     | stable         | **published**       | attached as assets     | Public release                                |
 
-Detection is automatic — `release.prerelease: auto` in `.goreleaser.yaml` derives the prerelease flag from the SemVer suffix, and `brews[].skip_upload: '{{ if .Prerelease }}true{{ end }}'` short-circuits the homebrew tap update for any non-stable tag. The workflow's "Detect prerelease" step is informational only; it surfaces a `::notice` line in the CI log so it is obvious from the run summary whether brew is going to be touched.
+Detection is automatic — `release.prerelease: auto` in `.goreleaser.yaml` derives the prerelease flag from the SemVer suffix, and `brews[].skip_upload: '{{ if .Prerelease }}true{{ end }}'` short-circuits the homebrew tap update for any non-stable tag. To check whether a given run touched brew, scan the GoReleaser log for `homebrew tap formula` (stable) or `skipping homebrew publish` (prerelease).
 
 ### Cutting a pre-release tag
 

@@ -175,7 +175,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full layout, dependency
 
 User docs:
 
-- [docs/INSTALL.md](docs/INSTALL.md) — every install path (brew, .deb, .rpm, manual, `go install`, sqlcipher).
+- [docs/INSTALL.md](docs/INSTALL.md) — every install path (brew, .deb, .rpm, manual, `go install`, build from source).
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — env vars, CLI flags, `keymap.toml`, multi-account.
 - [docs/SEARCH.md](docs/SEARCH.md) — query operators, FTS5 internals, DB-size guidance.
 - [docs/FILES.md](docs/FILES.md) — download/upload pipeline (`Ctrl+D` / `Ctrl+U`).

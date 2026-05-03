@@ -16,7 +16,7 @@
 
 - 🔍 **Instant search across your entire history.** SQLite FTS5 trigram-индекс локально на диске. p95 ≈ 47ms на 100k сообщений (SLA <100ms — запас 2×). Никакого зависания на серверном `messages.search`.
 - ⚡ **Live-updates < 5ms p95.** Полученное сообщение → отрисовка в TUI в среднем за 4ms (SLA <500ms — запас 100×). Через `gotd updates.Manager` поверх SQLite-state.
-- 🔐 **Local-first.** История + индекс на вашем диске. Сессии в Keychain / Secret Service / wincred (через `zalando/go-keyring`). Build tag `sqlcipher` для encrypted DB на heavy users.
+- 🔐 **Local-first.** История + индекс на вашем диске. Сессии в Keychain / Secret Service / wincred (через `zalando/go-keyring`). Encrypted DB (`sqlcipher` build tag) отложена на v0.2 — сейчас полагаемся на permission audit (0600) + OS-level disk encryption.
 - ⌨️ **emacs/readline ввод по умолчанию + $EDITOR delegation.** `Ctrl+E` открывает `$EDITOR` для длинных сообщений. Vim-mode — opt-in в v0.2 (намеренно — половинчатая реализация даёт mode confusion, см. dialectic в плане).
 - 📥📤 **Files.** `Ctrl+D` — download с прогрессом. `Ctrl+U` — upload с file picker. Permissions автоматически `0600`.
 - 🛡️ **Ban-risk-aware.** Send rate-limit guard 10 msg/sec (снижает поведенческий след). `lazytg debug-bundle` без секретов (доказано grep-тестом). Permission check 0600/0700 fail-fast при старте.

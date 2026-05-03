@@ -152,7 +152,7 @@ go test -v -run "TestLiveUpdateLatencySLA" ./test/perf/...
 go test -v -run "TestApp_NoGoroutineLeaks" ./test/perf/...
 ```
 
-CI (`.github/workflows/ci.yml`) запускает всю четвёрку на ubuntu-latest и macos-latest.
+CI (`.github/workflows/ci.yml`): memory budget gate и search SLA bench запускаются только на ubuntu-latest (macOS runners добавляют scheduler noise, флакающий active-load drain без реальной регрессии). Goroutine-leak и live-update SLA — часть основного `go test ./...`, идут на обоих ubuntu-latest и macos-latest.
 
 ---
 
