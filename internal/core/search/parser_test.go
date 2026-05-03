@@ -146,6 +146,8 @@ func TestParse_Errors(t *testing.T) {
 		{"invalid before date", "before:invalid", "before:invalid"},
 		{"unsupported has value", "has:everything", "has:everything"},
 		{"only exclusion no positive term", "-spam", "no positive search terms"},
+		{"from operator with empty username", "from:@ hello", "username required"},
+		{"in operator with empty chat name", "in:# hello", "chat name required"},
 	}
 
 	for _, c := range cases {

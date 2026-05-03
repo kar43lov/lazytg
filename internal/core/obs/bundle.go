@@ -264,21 +264,31 @@ func (b *Bundle) readRedactedLogs() ([]byte, error) {
 	defer func() { _ = f.Close() }()
 
 	// Ring-buffer keeps memory bounded to limit lines regardless of
-	// file size. bufio.Scanner.Buffer is bumped to 1 MiB so a single
-	// pathologically long log line does not error out the read.
+	// file size. Buffer is bumped to 16 MiB so a single pathologically
+	// long log line still fits; if a line still exceeds that the bundle
+	// degrades gracefully by replacing the offender with a placeholder
+	// rather than aborting the whole read — debug-bundle is the
+	// triager's last-resort tool and must not fail on malformed input.
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	sc.Buffer(make([]byte, 0, 64*1024), 16<<20)
 	ring := make([]string, 0, limit)
-	for sc.Scan() {
+	appendLine := func(line string) {
 		if len(ring) < limit {
-			ring = append(ring, sc.Text())
-			continue
+			ring = append(ring, line)
+			return
 		}
 		copy(ring, ring[1:])
-		ring[limit-1] = sc.Text()
+		ring[limit-1] = line
+	}
+	for sc.Scan() {
+		appendLine(sc.Text())
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("scan log %q: %w", b.LogPath, err)
+		if errors.Is(err, bufio.ErrTooLong) {
+			appendLine("# truncated: log line exceeded 16 MiB scanner buffer")
+		} else {
+			return nil, fmt.Errorf("scan log %q: %w", b.LogPath, err)
+		}
 	}
 
 	var sb strings.Builder

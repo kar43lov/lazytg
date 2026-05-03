@@ -189,10 +189,18 @@ func splitOperator(tok string) (key, value string, ok bool) {
 func applyOperator(q *Query, key, value string) (handled bool, err error) {
 	switch key {
 	case "from":
-		q.From = append(q.From, strings.TrimPrefix(value, "@"))
+		name := strings.TrimPrefix(value, "@")
+		if name == "" {
+			return true, fmt.Errorf("search: from:%s — username required (e.g. from:@alice)", value)
+		}
+		q.From = append(q.From, name)
 		return true, nil
 	case "in":
-		q.InChats = append(q.InChats, strings.TrimPrefix(value, "#"))
+		name := strings.TrimPrefix(value, "#")
+		if name == "" {
+			return true, fmt.Errorf("search: in:%s — chat name required (e.g. in:#general)", value)
+		}
+		q.InChats = append(q.InChats, name)
 		return true, nil
 	case "before":
 		t, perr := parseDate(value)
