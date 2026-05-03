@@ -349,35 +349,7 @@
 
 ### Task 7: Beta smoke checklist + draft анонса
 
-- [x] Создать `docs/BETA_CHECKLIST.md` с **6-пунктным smoke-чеклистом** для beta-тестеров:
-  ```markdown
-  # lazytg v0.1.0-beta smoke checklist
-
-  Пожалуйста, заполните и приложите к GitHub issue с тегом `beta-feedback`.
-  Должно занять ≤15 минут. Спасибо!
-
-  **Tester info:**
-  - OS: __________ (macOS Sonoma / Ubuntu 22.04 / etc)
-  - Architecture: __________ (arm64 / amd64)
-  - Terminal: __________ (Alacritty / iTerm2 / Ghostty / etc)
-  - Tmux: yes / no
-  - Telegram account type: тестовый / основной (РЕКОМЕНДУЕМ ТЕСТОВЫЙ)
-
-  **Smoke steps (отметьте ✅ если работает, ❌ если сломано, ⚠️ если работает с замечаниями):**
-
-  - [ ] **1. Install:** `brew install pgmac/lazytg/lazytg` (или `.deb`/`.rpm`/binary). Команда `lazytg --version` показывает версию.
-  - [ ] **2. Login:** `lazytg login --account +<phone>`. Прошло phone → code → 2FA. Никаких cryptic errors. После завершения — `lazytg accounts` показывает аккаунт.
-  - [ ] **3. Read:** запуск `lazytg` (без подкоманды) открывает TUI. Слева список ваших чатов отсортированный по последнему сообщению. Стрелками можно выбрать чат, Enter → справа загружается история.
-  - [ ] **4. Send:** Tab → focus в input. Ввод "hello from lazytg" + Enter → сообщение появилось мгновенно (optimistic), пришло на телефон.
-  - [ ] **5. Search:** `/привет` (или другое слово которое точно есть) → live results появились через ≤500ms. Enter на результате → переход в правильный чат + scroll к нужному сообщению.
-  - [ ] **6. Files:** на сообщении с фото нажать `Ctrl+D` → прогресс в статус-баре → файл в `~/Downloads/lazytg/<chat>/`. Затем `Ctrl+U` → выбрать любой .txt файл → отправлен в чат с caption.
-
-  **Free-form feedback:**
-  - Что понравилось:
-  - Что сломано / медленно / непонятно:
-  - Чего не хватает (но помните — мы целимся в v0.1.0, не в v1.0):
-  - Готовы ли использовать ежедневно? (yes / no / "если добавите X")
-  ```
+- [x] Создать `docs/BETA_CHECKLIST.md` — **6-пунктный smoke-чеклист** для beta-тестеров (Install / Login / Read / Send / Search / Files), tester info (OS, arch, terminal, tmux, account type), free-form feedback. Шаблон с fillable checkboxes — фактическое содержимое см. в файле `docs/BETA_CHECKLIST.md` (snippet в этом плане убран, чтобы не триггерить ralphex-loop по литералам template-чекбоксов).
 - [x] Создать `docs/RELEASE_ANNOUNCE.md` (draft анонса для maintainer'a, **не публикуем автоматически**):
   - Шаблон для Show HN / r/commandline / lobste.rs / r/golang
   - Pitch: «lazytg — local-first Telegram TUI client with FTS5 search, written in pure Go»
