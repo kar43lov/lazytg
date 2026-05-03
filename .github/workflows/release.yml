@@ -39,6 +39,29 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
+      - name: Guard HOMEBREW_TAP_GITHUB_TOKEN for stable tags
+        # Stable tags (no -alpha/beta/rc suffix) push to pgmac/homebrew-lazytg.
+        # An empty PAT means goreleaser publishes archives but fails on brew
+        # upload — a half-shipped release with red CI. Fail-fast here with a
+        # clear remediation pointer so the maintainer can configure the secret
+        # before the artefacts ship. Prereleases short-circuit via skip_upload.
+        env:
+          REF: ${{ inputs.ref || github.ref_name }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Strip refs/tags/ prefix when triggered by `on: push: tags`.
+          TAG="${REF#refs/tags/}"
+          if [[ "$TAG" =~ -(alpha|beta|rc)\. ]]; then
+            echo "Prerelease tag $TAG — brew upload skipped, token check waived."
+            exit 0
+          fi
+          if [[ -z "$HOMEBREW_TAP_GITHUB_TOKEN" ]]; then
+            echo "::error title=HOMEBREW_TAP_GITHUB_TOKEN missing::Stable tag $TAG requires a PAT with contents:write on pgmac/homebrew-lazytg. Configure the secret and re-run via 'gh workflow run release.yml --ref $TAG'. See docs/RELEASE_PROCESS.md."
+            exit 1
+          fi
+          echo "Stable tag $TAG — HOMEBREW_TAP_GITHUB_TOKEN present."
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

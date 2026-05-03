@@ -48,7 +48,7 @@ The CI matrix runs `go test -race ./...` on `ubuntu-latest` and `macos-latest`. 
 
 - Auth flow tests use a hand-rolled `auth.FlowClient` mock (in-process, no MTProto). The `gotd/td/tgtest` SRP server is not yet wired — see Stage 1 plan task 4 deviation.
 - Storage tests run against a temp directory; nothing leaks outside `t.TempDir()`.
-- Coverage gate: `internal/core/...` targets ≥ 80 % from v0.1.0 onward — currently informational, no automated CI gate yet (Stage 4 will add one).
+- Coverage gate: `internal/core/...` targets ≥ 80 % from v0.1.0 onward — tracked in codecov, not a hard CI gate (`fail_ci_if_error: false` in `.codecov.yml`).
 
 ### Manual smoke (real Telegram)
 
@@ -154,7 +154,15 @@ Detection is automatic — `release.prerelease: auto` in `.goreleaser.yaml` deri
 
 Two paths are supported:
 
-1. **`Create prerelease tag` workflow (recommended).** In the GitHub UI go to *Actions → Create prerelease tag → Run workflow*, pick `alpha`, `beta`, or `rc`, optionally override the base version. The workflow computes the next available `v<base>-<kind>.N`, pushes the annotated tag, and `release.yml` runs from there.
+1. **`Create prerelease tag` workflow (recommended).** In the GitHub UI go to *Actions → Create prerelease tag → Run workflow*, pick `alpha`, `beta`, or `rc`, optionally override the base version. The workflow computes the next available `v<base>-<kind>.N` and pushes the annotated tag.
+
+   ⚠️ Tags pushed by the workflow's default `GITHUB_TOKEN` do **not** trigger `release.yml` automatically (GitHub blocks recursive workflow dispatch). After the prerelease workflow finishes, run the release manually:
+
+   ```sh
+   gh workflow run release.yml --ref <NEW_TAG>
+   ```
+
+   See `docs/RELEASE_PROCESS.md` step 5 and the notice printed at the end of the prerelease workflow run.
 2. **Manual.** From a clean checkout of `main`:
 
    ```sh

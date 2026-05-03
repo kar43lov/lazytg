@@ -191,10 +191,16 @@ func TestMemoryBudget_Active(t *testing.T) {
 	// Search workers. Each issues queries until ctx is cancelled. The
 	// service is concurrency-safe (read-only over an FTS5 index).
 	searchCtx, cancelSearch := context.WithCancel(bgCtx)
-	t.Cleanup(cancelSearch)
 	queries := []string{"hello", "world", "сообщение", "test", "data"}
 	var searchWG sync.WaitGroup
 	var searchErr atomic.Value
+	// Joint cancel+wait cleanup so a t.Fatalf in the drain probe below
+	// doesn't race the workers against a.Close() (registered in
+	// buildIsolatedApp). LIFO ordering means this runs before Close().
+	t.Cleanup(func() {
+		cancelSearch()
+		searchWG.Wait()
+	})
 	for w := 0; w < searchWorkers; w++ {
 		searchWG.Add(1)
 		go func(workerID int) {

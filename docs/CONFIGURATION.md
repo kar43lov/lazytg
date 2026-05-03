@@ -70,7 +70,7 @@ on every command that opens a Telegram session (`login`, the TUI). The
 | `--account <phone>`              | E.164 phone of the account to operate on (`+79991112233`). Selects the session for multi-account. |
 | `--debug`                        | Duplicate JSON logs to stderr. Otherwise logs go only to the rotated state-dir file.              |
 | `--log-level debug\|info\|warn\|error` | Log verbosity. Default `info`.                                                                |
-| `--polling`                      | Force history polling instead of `updates.Manager`. Use when your network keeps producing update gaps. |
+| `--polling`                      | **Reserved (no-op in v0.1)** — flag is parsed and stored but `PollingFallback` wire-up into `runTUI` is deferred (see CHANGELOG `Known gaps`). Will engage 3 s history polling when wired in a v0.1 follow-up. |
 | `--config <path>`                | **Reserved** — no-op in v0.1, kept so existing scripts do not break when `config.toml` lands in v0.2. |
 
 ### Subcommand flags

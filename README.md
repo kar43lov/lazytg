@@ -140,7 +140,7 @@ All subcommands accept:
 - `--account <phone>` — phone number to operate on.
 - `--debug` — duplicates JSON logs to stderr in addition to the rotated file sink.
 - `--log-level debug|info|warn|error` (default `info`).
-- `--polling` — force history polling instead of `updates.Manager`.
+- `--polling` — reserved, currently a no-op (wire-up deferred to a v0.1 follow-up; see CHANGELOG `Known gaps`).
 
 Full reference, env vars, and `keymap.toml` overrides live in
 [docs/CONFIGURATION.md](docs/CONFIGURATION.md).

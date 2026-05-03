@@ -50,10 +50,16 @@ jobs:
 
       - name: Compute next prerelease tag
         id: tag
+        env:
+          # Pass user inputs through env vars instead of ${{ }} interpolation
+          # to avoid shell injection — base_version is a free-form string and
+          # would otherwise be rendered into the script before bash sees it.
+          INPUT_KIND: ${{ inputs.kind }}
+          INPUT_BASE: ${{ inputs.base_version }}
         run: |
           set -euo pipefail
-          KIND="${{ inputs.kind }}"
-          BASE="${{ inputs.base_version }}"
+          KIND="$INPUT_KIND"
+          BASE="$INPUT_BASE"
 
           if [[ -z "$BASE" ]]; then
             LATEST_STABLE=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | grep -v '-' | sort -V | tail -n1 || true)
@@ -97,8 +103,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Create and push annotated tag
+        env:
+          NEW_TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          NEW_TAG="${{ steps.tag.outputs.tag }}"
+          set -euo pipefail
           git tag -a "$NEW_TAG" -m "$NEW_TAG"
           git push origin "$NEW_TAG"
           echo "::notice title=Tag pushed::${NEW_TAG} pushed to origin. release.yml does NOT auto-trigger (GitHub blocks recursive workflow dispatch). Run: gh workflow run release.yml --ref ${NEW_TAG}"
