@@ -125,6 +125,14 @@ func (s *DownloadService) Download(ctx context.Context, chatID int64, chatTitle 
 		s.failure(info.FileID, fmt.Errorf("open tmp: %w", err))
 		return "", err
 	}
+	// Enforce 0o600 on the .partial unconditionally so an in-flight
+	// download is not world-readable while bytes stream in. open()
+	// honours umask, which can widen the bits up to 0o644 — chmod the
+	// fd directly to close that race window before any data lands.
+	if err := f.Chmod(s.store.FilePerm()); err != nil {
+		s.log.Warn("download: chmod tmp file failed",
+			"path", tmpPath, "err", err)
+	}
 
 	s.publish(events.FileDownloadStarted{
 		FileID: info.FileID, ChatID: chatID, Path: finalPath,

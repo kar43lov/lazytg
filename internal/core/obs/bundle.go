@@ -263,22 +263,27 @@ func (b *Bundle) readRedactedLogs() ([]byte, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	// Ring-buffer keeps memory bounded to limit lines regardless of
+	// Circular ring keeps memory bounded to limit lines regardless of
 	// file size. Buffer is bumped to 16 MiB so a single pathologically
 	// long log line still fits; if a line still exceeds that the bundle
 	// degrades gracefully by replacing the offender with a placeholder
 	// rather than aborting the whole read — debug-bundle is the
 	// triager's last-resort tool and must not fail on malformed input.
+	//
+	// `head` indexes the next slot to write; once `count` reaches
+	// `limit` writes wrap around. This avoids an O(N) memmove per line
+	// past the limit (the previous slice-shift implementation made the
+	// bundle quadratic in log size for long-running operators).
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 16<<20)
-	ring := make([]string, 0, limit)
+	ring := make([]string, limit)
+	var head, count int
 	appendLine := func(line string) {
-		if len(ring) < limit {
-			ring = append(ring, line)
-			return
+		ring[head] = line
+		head = (head + 1) % limit
+		if count < limit {
+			count++
 		}
-		copy(ring, ring[1:])
-		ring[limit-1] = line
 	}
 	for sc.Scan() {
 		appendLine(sc.Text())
@@ -291,9 +296,16 @@ func (b *Bundle) readRedactedLogs() ([]byte, error) {
 		}
 	}
 
+	// Replay in chronological order: when the ring has wrapped, the
+	// oldest retained line lives at `head`; otherwise lines are still
+	// laid out from index 0.
+	start := 0
+	if count == limit {
+		start = head
+	}
 	var sb strings.Builder
-	for _, line := range ring {
-		sb.WriteString(Redact(line))
+	for i := 0; i < count; i++ {
+		sb.WriteString(Redact(ring[(start+i)%limit]))
 		sb.WriteByte('\n')
 	}
 	return []byte(sb.String()), nil
@@ -364,20 +376,39 @@ func (b *Bundle) collectDBStats(ctx context.Context) ([]byte, error) {
 
 // redactHomePrefix replaces the leading user-home directory with the
 // literal `~` so on-disk paths in the bundle do not leak the OS
-// username. The substitution is purely textual: empty home or paths
-// outside it pass through unchanged.
+// username. Falls back to substituting bare $USER occurrences with
+// `<user>` for paths outside $HOME (e.g. XDG_DATA_HOME pointing at
+// /var/lib/lazytg/$USER) so the username does not leak there either.
+// Empty home and empty $USER pass through unchanged.
 func redactHomePrefix(p string) string {
 	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return p
-	}
-	if p == home {
+	switch {
+	case err == nil && home != "" && p == home:
 		return "~"
-	}
-	if strings.HasPrefix(p, home+string(os.PathSeparator)) {
+	case err == nil && home != "" && strings.HasPrefix(p, home+string(os.PathSeparator)):
 		return "~" + p[len(home):]
 	}
-	return p
+	return redactUserComponent(p)
+}
+
+// redactUserComponent replaces every occurrence of $USER inside p with
+// the literal `<user>`. The match is anchored on path-separator
+// boundaries so a coincidental substring (e.g. user-id "alex" inside
+// "/var/cache/alexa") does not get mangled. The function is idempotent
+// and returns p unchanged when $USER is empty or absent from the path.
+func redactUserComponent(p string) string {
+	user := os.Getenv("USER")
+	if user == "" || !strings.Contains(p, user) {
+		return p
+	}
+	sep := string(os.PathSeparator)
+	parts := strings.Split(p, sep)
+	for i, part := range parts {
+		if part == user {
+			parts[i] = "<user>"
+		}
+	}
+	return strings.Join(parts, sep)
 }
 
 // captureGoroutines returns the runtime goroutine dump. It is large

@@ -286,10 +286,11 @@ func CheckPermissions(paths config.Paths, log *slog.Logger) error {
 }
 
 // runStartupPermissionsAudit runs the canonical Stage 3 audit set
-// (secrets.age, ConfigDir, ConfigDir/.../lazytg.db, StateDir) and either
-// returns a wrapped error (fail-class findings — boot must abort) or
-// logs a single warn line per warn-class finding. Pulled out of Build
-// so the audit list lives in one place and tests can call it directly.
+// (secrets.age, ConfigDir, DataDir, DataDir/lazytg.db, StateDir) and
+// either returns a wrapped error (fail-class findings — boot must
+// abort) or logs a single warn line per warn-class finding. Pulled
+// out of Build so the audit list lives in one place and tests can
+// call it directly.
 func runStartupPermissionsAudit(paths config.Paths, log *slog.Logger) error {
 	checks := []security.PathCheck{
 		{
@@ -300,6 +301,12 @@ func runStartupPermissionsAudit(paths config.Paths, log *slog.Logger) error {
 		},
 		{
 			Path:         paths.Config,
+			Type:         security.KindDir,
+			ExpectedMode: 0o700,
+			Severity:     security.SeverityWarn,
+		},
+		{
+			Path:         paths.Data,
 			Type:         security.KindDir,
 			ExpectedMode: 0o700,
 			Severity:     security.SeverityWarn,
