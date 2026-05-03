@@ -208,25 +208,21 @@ Pitch продукта «Instant search across your entire Telegram history» с
 
 ### Task 9: Security minimal — permissions + send rate-limit guard
 
-- [ ] Создать `internal/core/security/permissions.go` (если нет от Stage 2 — проверить!) с функцией `CheckAtStartup(paths []PathCheck) []SecurityIssue` где `PathCheck{Path string; Type "file"|"dir"; ExpectedMode os.FileMode (e.g. 0600 for files, 0700 for dirs); Severity "warn"|"fail"}`. Возвращает список нарушений. Метод `EnforceFatal(issues []SecurityIssue) error` — если есть `fail` severity, вернуть error с описанием
-- [ ] Список default checks (в `internal/app/wire.go` при старте):
-  - `~/.config/lazytg/secrets.age` → 0600 fail
-  - `~/.config/lazytg/` → 0700 warn
-  - `~/.local/share/lazytg/lazytg.db` → 0600 fail
-  - `~/.local/state/lazytg/logs/` → 0700 warn
-- [ ] Создать `internal/core/security/permissions_test.go`:
-  1. Создать tmp-файл с 0600 → CheckAtStartup нет issues
-  2. Файл с 0644 → issue severity fail
-  3. Директория с 0755 → issue severity warn
-  4. Несуществующий файл → отдельная категория issue ("missing"), не fail (это ок при первом запуске)
-- [ ] Создать `internal/core/security/send_ratelimit.go` — обёртка вокруг существующего `internal/core/sync/ratelimit.go::TokenBucket`. Конфигурация: `SendRateLimit{rate float64 = 10/sec; capacity int = 30}`. Используется `SendService` через middleware-подход
-- [ ] Обновить `internal/core/sync/send.go::SendService.SendText`: перед отправкой вызвать `rateLimiter.Wait(ctx)`. Если `rate.Limit` exceeded — ждать. Логировать когда rate-limit hit (slog warn). Поведение **не меняется** для пользователя если send rate <10/sec (стандартный case)
-- [ ] Создать `internal/core/security/send_ratelimit_test.go`:
-  1. 5 sends в секунду → все проходят без задержки
-  2. 30 sends подряд (capacity) → 30 проходят сразу, 31-й — ждёт ~100ms (1/10s)
-  3. 10 sends в секунду в течение 3 секунд = 30 sends → нормально
-- [ ] Расширить `wire.go`: при `Build` вызвать `security.CheckAtStartup` и `EnforceFatal`. Передать `SendRateLimit` в `SendService`
-- [ ] Запустить `go test -race ./internal/core/security/... ./internal/core/sync/...` — зелёное
+- [x] Создан `internal/core/security/permissions.go` с типом `PathCheck{Path, Type (KindFile/KindDir), ExpectedMode os.FileMode, Severity (SeverityFail/SeverityWarn)}` и `SecurityIssue{Path, Category, Severity, Expected, Actual, Message, Cause}`. `CheckAtStartup(checks)` пробегает по всем checks (пустой Path молча скипается — wiring может передать неrezolved XDG-путь без guard). `EnforceFatal(issues)` возвращает aggregate error для всех `SeverityFail`-issues, отсортированных по path для стабильного error-message order. `FilterBySeverity` для логирования warn-class отдельно. **Категории issues разведены**: `CategoryPermissions` (мode mismatch), `CategoryWrongType` (file vs dir), `CategoryMissing` (всегда warn — first-run friendly, declared severity игнорируется), `CategoryStatError` (всегда fail — permission denied / broken FS). Test seam `checkWithStat` для inject-а fake stat без temp-files. Также добавлен `doc.go` с депгард-нотой.
+- [x] Список default checks вызывается из нового хелпера `runStartupPermissionsAudit(paths, log)` в `internal/app/wire.go` (вынесен из тела Build чтобы тесты могли его дернуть напрямую). Аудит запускается **до `sqlite.Open`** — иначе sqlite.Open молча chmod'ит lazytg.db обратно в 0600 и tampered-файл с wrong-mode не обнаружится. Чек-лист:
+  - `<Config>/secrets.age` → 0600 fail (file)
+  - `<Config>` → 0700 warn (dir)
+  - `<Data>/lazytg.db` → 0600 fail (file)
+  - `<State>` → 0700 warn (dir, где живет lazytg.log — единый файл, не subdir; план говорил `logs/` но фактически продакшн использует flat-файл `lazytg.log` в state-dir)
+
+  Warn-class findings логируются по одной строке через `log.Warn("security: startup audit warning", path, category, expected_mode, actual_mode, message)`. `cfg.SkipPermissionsAudit` (default false) даёт тестам опт-аут на случай если umask дрифтит на CI.
+- [x] Создан `internal/core/security/permissions_test.go` — 9 тестов с POSIX-skip для Windows: TightFile (0600 → 0 issues, baseline), LooseFileEmitsFail (0644 + EnforceFatal returns error), LooseDirEmitsWarn (0755 dir + EnforceFatal returns nil), MissingPathReturnsMissing (always warn even if declared fail — first-run friendly), EmptyPathSkipped (wiring contract — пустые XDG-пути молча игнорируются), TypeMismatch (dir где ожидался file → CategoryWrongType), StatErrorIsFatal (синтетическая IO-error → category stat_error + severity fail независимо от declared severity), EnforceFatal_AggregatesAllFails (multiple fails в одном error.Error() в sorted-by-path порядке + warn-class **не** появляется в сообщении), FilterBySeverity (slice fail/warn для wiring-логирования), NotExistFromCustomFS (round-trip через test-seam).
+- [x] Создан `internal/core/security/send_ratelimit.go` — обёртка `SendGuard{bucket *coresync.TokenBucket, cfg SendRateLimit}` поверх существующего `internal/core/sync.TokenBucket`. Defaults: `Rate=10`, `Burst=30` (project-wide ban-risk ceiling). `SendRateLimit{}` с zero-value → defaults через `withDefaults()`. `NewSendGuard(cfg)` возвращает error если bucket-construct упадёт (catch для негативных rate/capacity). `Wait(ctx)` — nil-safe (`(*SendGuard)(nil).Wait()` возвращает nil — оптимизация для тестов). `Config()` — геттер для observability.
+- [x] Обновлён `internal/core/sync/send.go`: добавлен interface `RateLimiter{Wait(ctx) error}` (а не прямой импорт security в sync — иначе import cycle, security уже импортирует sync). Метод `WithRateLimiter(limiter)` для chainable wiring. В `deliver` loop добавлен `awaitToken(ctx, localID, chatID) bool` который вызывается **перед каждой отправкой включая retries** (так что sustained burst of failures не превышает ceiling кумулятивно). Threshold > 1ms на warn-логирование чтобы warm-bucket случай не спамил логи. Cancellation от limiter.Wait → markFailed("cancelled before send") + sender НЕ вызывается. Поведение для users с rate <10/sec не меняется (instant bucket).
+- [x] Создан `internal/core/security/send_ratelimit_test.go` — 6 тестов. NewSendGuard_AppliesDefaults (zero-value cfg → DefaultSendRate=10/DefaultSendBurst=30). BurstFitsInsideCapacity (30 Wait-ов меньше чем за 50ms). BlocksAfterBurst (31-й Wait действительно блокируется на ≥50ms но ≤200ms — реальный wall-clock, не frozen). ContextCancellation (starved Wait возвращает ctx.DeadlineExceeded в пределах 500ms). NilIsNoop (`(*SendGuard)(nil).Wait()` + `Config()`). SteadyStateMatchesRate (skipped в `-short`; 15 extra Wait-ов на rate=20 уложились в 0.5×..1.5× от 750ms — 50% slop для CI).
+- [x] Также добавлены 3 теста в `internal/core/sync/send_test.go` для проверки интеграции: RateLimiter_ConsultedBeforeEverySend (limiter.Wait вызывается ровно `senderCallCount` раз — перед initial + перед каждым retry), RateLimiter_CancellationFailsSend (limiter.Err = context.Canceled → 0 sender calls + Failed event), NilRateLimiter_NoChange (regression-guard: pre-Stage-3 baseline остаётся валидной).
+- [x] Расширен `wire.go`: добавлен `security` import; `Config{SendRateLimit security.SendRateLimit, SkipPermissionsAudit bool}`; в `App` добавлено поле `SendGuard *security.SendGuard`. В `Build`: после path-resolve и до sqlite.Open вызывается `runStartupPermissionsAudit` (если не отключено флагом). После Open строится `security.NewSendGuard(cfg.SendRateLimit)` с graceful-cleanup repo при ошибке. В `AttachClient` SendService теперь chainable: `NewSendService(...).WithBackgroundContext(bgCtx).WithRateLimiter(a.SendGuard)`. На тестовых tmp-dirs (test/perf/goroutine_leak_test.go) аудит проходит — dirs созданы с 0700, lazytg.db/secrets.age missing → warn (boot proceeds).
+- [x] `go test -race ./internal/core/security/... ./internal/core/sync/...` зелёное. Полный `go test -race ./...` (24 пакета) — зелёное (включая существующий `test/perf/goroutine_leak_test.go` который теперь проходит через новый audit). `golangci-lint run` — 0 issues. `go build ./...` — чистая сборка.
 
 ### Task 10: Wiring + final verification
 

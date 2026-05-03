@@ -21,6 +21,18 @@ type SenderInterface interface {
 	SendText(ctx context.Context, chatID int64, text string, replyTo int) (serverID int64, err error)
 }
 
+// RateLimiter is the optional throttle SendService consults before each
+// MTProto attempt. Nil is allowed — the deliver loop short-circuits the
+// Wait call so unit tests of unrelated behaviour stay free of plumbing.
+//
+// Production wiring satisfies this with internal/core/security.SendGuard,
+// a TokenBucket(rate=10/sec, burst=30) wrapper. Lives behind an interface
+// (rather than a concrete type) so internal/core/security can depend on
+// internal/core/sync without forcing the reverse import cycle.
+type RateLimiter interface {
+	Wait(ctx context.Context) error
+}
+
 // OutgoingStore is the storage surface SendService writes through. The
 // methods are a subset of *sqlite.Repo so unit tests can swap in an
 // in-memory fake. CreatedAt on the saved record is the moment SendText
@@ -80,11 +92,12 @@ func (c *SendConfig) defaults() {
 // goroutine, scoped to the service-level background context (see
 // WithBackgroundContext).
 type SendService struct {
-	sender SenderInterface
-	store  OutgoingStore
-	bus    *events.Bus
-	log    *slog.Logger
-	cfg    SendConfig
+	sender  SenderInterface
+	store   OutgoingStore
+	bus     *events.Bus
+	log     *slog.Logger
+	cfg     SendConfig
+	limiter RateLimiter
 
 	// bgCtx is the lifetime ctx used for the deliver goroutine and the
 	// markSent / markFailed storage writes. It is intentionally NOT the
@@ -123,6 +136,20 @@ func NewSendService(sender SenderInterface, store OutgoingStore, bus *events.Bus
 		newID:  uuid.NewString,
 		jitter: rand.Float64,
 	}
+}
+
+// WithRateLimiter installs the optional pre-send throttle. The deliver
+// loop calls limiter.Wait(ctx) before every attempt (including retries
+// that follow a transient network error) so a sustained burst of
+// retries cannot cumulatively exceed the configured ceiling. A nil
+// argument disables throttling — used by unit tests that want to drive
+// the retry policy without a clock dependency.
+//
+// Returns the same service so the wiring layer can chain
+// WithRateLimiter().WithBackgroundContext(ctx) in one line.
+func (s *SendService) WithRateLimiter(limiter RateLimiter) *SendService {
+	s.limiter = limiter
+	return s
 }
 
 // WithBackgroundContext sets the lifetime ctx for the deliver goroutines.
@@ -192,6 +219,10 @@ func (s *SendService) SendText(ctx context.Context, chatID int64, text string, r
 func (s *SendService) deliver(ctx context.Context, localID string, chatID int64, text string, replyTo int) {
 	backoff := s.cfg.InitialBackoff
 	for attempt := 0; ; attempt++ {
+		if !s.awaitToken(ctx, localID, chatID) {
+			s.markFailed(ctx, localID, chatID, fmt.Sprintf("cancelled before send: %v", ctx.Err()))
+			return
+		}
 		serverID, err := s.sender.SendText(ctx, chatID, text, replyTo)
 		if err == nil {
 			s.markSent(ctx, localID, chatID, serverID)
@@ -231,6 +262,31 @@ func (s *SendService) deliver(ctx context.Context, localID string, chatID int64,
 		}
 		backoff = nextBackoff(backoff, s.cfg.BackoffCap)
 	}
+}
+
+// awaitToken blocks on the optional rate-limiter, logging a warn line
+// whenever the wait actually stalls the send. Returns false iff ctx was
+// cancelled mid-wait — the caller treats that as a terminal "cancelled
+// before send" failure (we do not silently swallow user cancellation).
+//
+// The 1 ms threshold filters the warm-bucket case: when the limiter
+// has tokens available, Wait returns "instantly" and we don't want a
+// log line for every send.
+func (s *SendService) awaitToken(ctx context.Context, localID string, chatID int64) bool {
+	if s.limiter == nil {
+		return true
+	}
+	start := s.now()
+	if err := s.limiter.Wait(ctx); err != nil {
+		s.log.Warn("send: rate-limit Wait cancelled",
+			"chat_id", chatID, "local_id", localID, "err", err)
+		return false
+	}
+	if waited := s.now().Sub(start); waited > time.Millisecond {
+		s.log.Warn("send: rate-limit hit",
+			"chat_id", chatID, "local_id", localID, "wait", waited)
+	}
+	return true
 }
 
 // markSent persists the success transition and publishes the matching

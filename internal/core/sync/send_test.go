@@ -475,3 +475,123 @@ func drainEvents(t *testing.T, ch <-chan events.Event, want int, d time.Duration
 
 // silence unused warning if the symbol gets removed by future refactors
 var _ = collectEvents
+
+// stubLimiter records every Wait invocation and can be programmed to
+// return an error (e.g. ctx cancellation) on the first or Nth call so
+// the integration with deliver can be exercised without a real
+// TokenBucket clock.
+type stubLimiter struct {
+	mu    sync.Mutex
+	calls int
+	err   error
+}
+
+func (s *stubLimiter) Wait(_ context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	return s.err
+}
+
+func (s *stubLimiter) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+// TestSendService_RateLimiter_ConsultedBeforeEverySend exercises the
+// happy-path wiring: the deliver loop must call limiter.Wait before
+// each MTProto attempt (initial + every retry) so a sustained burst of
+// transient failures cannot cumulatively exceed the configured ceiling.
+func TestSendService_RateLimiter_ConsultedBeforeEverySend(t *testing.T) {
+	t.Parallel()
+	store := newInMemoryOutgoing()
+	bus := events.New()
+	netErr := errors.New("conn reset")
+	sender := &scriptedSender{steps: []sendStep{
+		{err: netErr},
+		{err: netErr},
+		{id: 7},
+	}}
+	cfg := SendConfig{MaxNetworkRetries: 3, InitialBackoff: time.Millisecond, BackoffCap: 2 * time.Millisecond}
+	limiter := &stubLimiter{}
+	svc := NewSendService(sender, store, bus, nil, cfg).WithRateLimiter(limiter)
+	svc.jitter = func() float64 { return 0 }
+
+	if _, err := svc.SendText(context.Background(), 1, "x", 0); err != nil {
+		t.Fatalf("SendText: %v", err)
+	}
+	deadline := time.After(time.Second)
+	for {
+		if u := store.snapshot(); len(u) == 1 && u[0].State == events.OutgoingStateSent {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("never sent; calls=%d limiter=%d updates=%+v",
+				sender.callCount(), limiter.callCount(), store.snapshot())
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+	if got, want := limiter.callCount(), sender.callCount(); got != want {
+		t.Fatalf("limiter.Wait calls = %d, want %d (one per attempt)", got, want)
+	}
+}
+
+// TestSendService_RateLimiter_CancellationFailsSend covers the cancel
+// path: if the limiter returns ctx.Err() (e.g. service shutdown while
+// the deliver goroutine is parked waiting for a token) the send must
+// land in Failed without ever calling the underlying sender.
+func TestSendService_RateLimiter_CancellationFailsSend(t *testing.T) {
+	t.Parallel()
+	store := newInMemoryOutgoing()
+	bus := events.New()
+	sender := &scriptedSender{steps: []sendStep{{id: 1}}}
+	limiter := &stubLimiter{err: context.Canceled}
+	svc := NewSendService(sender, store, bus, nil, SendConfig{}).WithRateLimiter(limiter)
+
+	if _, err := svc.SendText(context.Background(), 1, "x", 0); err != nil {
+		t.Fatalf("SendText: %v", err)
+	}
+	deadline := time.After(time.Second)
+	for {
+		if u := store.snapshot(); len(u) == 1 && u[0].State == events.OutgoingStateFailed {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("never failed after limiter cancel; updates=%+v calls=%d limiter=%d",
+				store.snapshot(), sender.callCount(), limiter.callCount())
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+	if sender.callCount() != 0 {
+		t.Fatalf("sender must not be called after limiter cancellation, calls=%d", sender.callCount())
+	}
+}
+
+// TestSendService_NilRateLimiter_NoChange asserts the limiter remains
+// optional: a SendService constructed without WithRateLimiter behaves
+// exactly like the pre-Stage-3 baseline.
+func TestSendService_NilRateLimiter_NoChange(t *testing.T) {
+	t.Parallel()
+	store := newInMemoryOutgoing()
+	bus := events.New()
+	sender := &scriptedSender{steps: []sendStep{{id: 99}}}
+	svc := NewSendService(sender, store, bus, nil, SendConfig{})
+
+	if _, err := svc.SendText(context.Background(), 1, "x", 0); err != nil {
+		t.Fatalf("SendText: %v", err)
+	}
+	deadline := time.After(time.Second)
+	for {
+		if u := store.snapshot(); len(u) == 1 && u[0].State == events.OutgoingStateSent {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("nil-limiter happy path broken: updates=%+v", store.snapshot())
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+}

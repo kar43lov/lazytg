@@ -24,6 +24,7 @@ import (
 	"github.com/pgmac/lazytg/internal/core/domain"
 	"github.com/pgmac/lazytg/internal/core/events"
 	"github.com/pgmac/lazytg/internal/core/files"
+	"github.com/pgmac/lazytg/internal/core/security"
 	coresync "github.com/pgmac/lazytg/internal/core/sync"
 	"github.com/pgmac/lazytg/internal/storage/sqlite"
 	tgclient "github.com/pgmac/lazytg/internal/tg"
@@ -34,6 +35,14 @@ import (
 // in cmd/lazytg/cmd/runtime.go — both layers must agree on file location for
 // `lazytg login` and `lazytg` (TUI) to share state.
 const dbFileName = "lazytg.db"
+
+// secretsFileName mirrors internal/core/config.secretsFileName so the
+// startup audit knows where the age-encrypted fallback secrets file
+// lives. Kept as a string constant (not an exported config helper)
+// because the file is optional — when the OS keyring is available
+// nothing is ever written to disk and the audit produces a "missing"
+// finding (which is informational, not fatal).
+const secretsFileName = "secrets.age"
 
 // Config bundles the boot-time options Build needs. Zero values pick the
 // production defaults: paths resolved from XDG, keymap from defaults +
@@ -63,6 +72,22 @@ type Config struct {
 	// back to Paths.Config/keymap.toml; missing files are tolerated and
 	// silently fall through to defaults.
 	KeymapPath string
+
+	// SendRateLimit overrides the outbound send-rate ceiling. The zero
+	// value picks security.DefaultSendRate (10/sec) and
+	// security.DefaultSendBurst (30) — the project-wide ban-risk floor.
+	// Tests that exercise SendService directly can disable the guard by
+	// leaving cfg untouched and constructing without AttachClient (the
+	// guard only activates once SendService is wired in AttachClient).
+	SendRateLimit security.SendRateLimit
+
+	// SkipPermissionsAudit disables the startup permissions audit
+	// (CheckAtStartup + EnforceFatal). Default false. Used by tests
+	// that point at temp-dir XDG paths whose modes they intentionally
+	// don't control — e.g. CI runners where umask drift would
+	// otherwise flake the audit. Production wiring leaves this at
+	// false so a tampered DB / secrets file aborts the boot.
+	SkipPermissionsAudit bool
 }
 
 // App is the composed runtime. The *non-MTProto* services are populated by
@@ -85,6 +110,13 @@ type App struct {
 	Log    *slog.Logger
 	Phone  string
 	Paths  config.Paths
+
+	// SendGuard is the project-wide outbound rate-limit (10 msg/sec by
+	// default). Constructed during Build so AttachClient can plug it
+	// into SendService. Exposed as a public field so cmd/lazytg/cmd/tui.go
+	// can also pass it through to any future per-action consumer
+	// (e.g. file-upload throttling).
+	SendGuard *security.SendGuard
 
 	// MTProto-aware services. Populated by AttachClient. Nil-checked at
 	// every consumer (cmd/tui.go falls back to a stubbed sender / history
@@ -127,9 +159,26 @@ func Build(ctx context.Context, cfg Config) (*App, error) {
 		paths = resolved
 	}
 
+	// Permissions audit BEFORE sqlite.Open so a tampered lazytg.db (with
+	// wrong mode bits) is caught before sqlite.Open silently chmod's it
+	// back to 0600. The audit emits "missing" findings on first run for
+	// secrets.age + lazytg.db; both are warn-class, so EnforceFatal lets
+	// the boot proceed.
+	if !cfg.SkipPermissionsAudit {
+		if err := runStartupPermissionsAudit(paths, cfg.Logger); err != nil {
+			return nil, fmt.Errorf("app.Build: %w", err)
+		}
+	}
+
 	repo, err := sqlite.Open(ctx, filepath.Join(paths.Data, dbFileName))
 	if err != nil {
 		return nil, fmt.Errorf("app.Build: open repo: %w", err)
+	}
+
+	guard, err := security.NewSendGuard(cfg.SendRateLimit)
+	if err != nil {
+		_ = repo.Close()
+		return nil, fmt.Errorf("app.Build: send guard: %w", err)
 	}
 
 	bus := events.New()
@@ -156,8 +205,54 @@ func Build(ctx context.Context, cfg Config) (*App, error) {
 		Log:         cfg.Logger,
 		Phone:       cfg.Phone,
 		Paths:       paths,
+		SendGuard:   guard,
 		Polling:     cfg.Polling,
 	}, nil
+}
+
+// runStartupPermissionsAudit runs the canonical Stage 3 audit set
+// (secrets.age, ConfigDir, ConfigDir/.../lazytg.db, StateDir) and either
+// returns a wrapped error (fail-class findings — boot must abort) or
+// logs a single warn line per warn-class finding. Pulled out of Build
+// so the audit list lives in one place and tests can call it directly.
+func runStartupPermissionsAudit(paths config.Paths, log *slog.Logger) error {
+	checks := []security.PathCheck{
+		{
+			Path:         filepath.Join(paths.Config, secretsFileName),
+			Type:         security.KindFile,
+			ExpectedMode: 0o600,
+			Severity:     security.SeverityFail,
+		},
+		{
+			Path:         paths.Config,
+			Type:         security.KindDir,
+			ExpectedMode: 0o700,
+			Severity:     security.SeverityWarn,
+		},
+		{
+			Path:         filepath.Join(paths.Data, dbFileName),
+			Type:         security.KindFile,
+			ExpectedMode: 0o600,
+			Severity:     security.SeverityFail,
+		},
+		{
+			Path:         paths.State,
+			Type:         security.KindDir,
+			ExpectedMode: 0o700,
+			Severity:     security.SeverityWarn,
+		},
+	}
+	issues := security.CheckAtStartup(checks)
+	for _, issue := range security.FilterBySeverity(issues, security.SeverityWarn) {
+		log.Warn("security: startup audit warning",
+			"path", issue.Path,
+			"category", string(issue.Category),
+			"expected_mode", issue.Expected,
+			"actual_mode", issue.Actual,
+			"message", issue.Message,
+		)
+	}
+	return security.EnforceFatal(issues)
 }
 
 // loadKeymap picks the right keymap.toml path: explicit override wins,
@@ -200,7 +295,8 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client) {
 
 	sender := tgclient.NewSender(client.API(), peerResolverAdapter{peers: a.Peers})
 	a.Sender = coresync.NewSendService(senderAdapter{sender: sender}, outgoingStoreAdapter{repo: a.Repo}, a.Bus, a.Log, coresync.SendConfig{}).
-		WithBackgroundContext(bgCtx)
+		WithBackgroundContext(bgCtx).
+		WithRateLimiter(a.SendGuard)
 
 	a.Updates = tgclient.NewUpdatesDispatcher(a.Bus, a.Log)
 	a.Reconnect = coresync.NewReconnectManager(reconnectAdapter{client: client}, a.Bus, a.Log, coresync.ReconnectConfig{})
