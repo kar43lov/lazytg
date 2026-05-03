@@ -4,7 +4,7 @@ PR title MUST follow Conventional Commits, e.g.:
   fix: tighten session-file permission check on macOS
   perf: batch FTS5 inserts during initial reindex
   security: redact api_hash in slog handler
-  breaking!: rename --account flag to --phone
+  feat!: rename --account flag to --phone (breaking change marker is `!` after the type)
 -->
 
 ## Summary

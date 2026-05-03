@@ -19,6 +19,13 @@ permissions:
   contents: write
   id-token: write
 
+# Serialize releases to avoid two simultaneous tag-publishes racing on the
+# Homebrew tap (Formula/lazytg.rb) and on Rekor signature registration.
+# cancel-in-progress: false — never abort a release mid-publish, queue instead.
+concurrency:
+  group: release-${{ inputs.ref || github.ref }}
+  cancel-in-progress: false
+
 jobs:
   goreleaser:
     name: GoReleaser

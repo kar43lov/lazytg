@@ -33,9 +33,10 @@
 5. **Snapshot release passes.**
    ```sh
    goreleaser check
-   goreleaser release --snapshot --clean --skip=publish --skip=announce
+   goreleaser release --snapshot --clean --skip=publish,announce,sign
    ```
    В `dist/` должны появиться tar.gz для всех 4 платформ + `.deb` + `.rpm`.
+   `--skip=sign` обязателен локально — cosign keyless OIDC требует GitHub Actions runtime context и без него сборка падает на signs step. Подпись валидируется в release.yml.
 
 ---
 

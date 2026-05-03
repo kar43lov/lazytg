@@ -48,7 +48,7 @@ The CI matrix runs `go test -race ./...` on `ubuntu-latest` and `macos-latest`. 
 
 - Auth flow tests use a hand-rolled `auth.FlowClient` mock (in-process, no MTProto). The `gotd/td/tgtest` SRP server is not yet wired — see Stage 1 plan task 4 deviation.
 - Storage tests run against a temp directory; nothing leaks outside `t.TempDir()`.
-- Coverage gate: `internal/core/...` targets ≥ 80 % from v0.1.0 onward — tracked in codecov, not a hard CI gate (`fail_ci_if_error: false` in `.codecov.yml`).
+- Coverage gate: `internal/core/...` targets ≥ 80 % from v0.1.0 onward — tracked in codecov, not a hard CI gate (`fail_ci_if_error: false` in `.github/workflows/ci.yml`).
 
 ### Manual smoke (real Telegram)
 

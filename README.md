@@ -41,7 +41,7 @@ Think `lazygit` ergonomics, but for Telegram conversations: keyboard-driven, sin
 
 ## Status
 
-**Alpha — work in progress.** Stages 1–3 of the [v0.1.0 roadmap](docs/plans/lazytg-v0.1.0.md) have shipped (foundation, TUI, search/files/security). Stage 4 (release pipeline + alpha/beta cycle) is in progress. The MTProto session attach in `runTUI` is still on the Stage 2 follow-up list — without it the TUI runs on the local SQLite cache only.
+**Alpha — release-candidate.** All four stages of the [v0.1.0 roadmap](docs/plans/lazytg-v0.1.0.md) have shipped (foundation, TUI, search/files/security, release pipeline). The MTProto session attach in `runTUI` is still on the Stage 2 follow-up list — without it the TUI runs on the local SQLite cache only (see CHANGELOG `Known gaps`).
 
 Current capabilities:
 

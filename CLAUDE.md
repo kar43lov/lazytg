@@ -105,7 +105,7 @@ internal/
 ## Live-updates
 
 - **gotd `updates.Manager`** через `StateStorage` поверх SQLite (5 методов, ~50 строк)
-- **Fallback на polling 3s** через флаг `--polling` если updates.Manager создаст gap-проблемы
+- **Fallback на polling 3s** через флаг `--polling` (флаг зарезервирован, no-op в v0.1 — wire-up в `runTUI` рядом с `AttachClient`, см. CHANGELOG `Known gaps`)
 - **SLA:** latency MTProto-update → UI render <500ms p95 (benchmark в этапе 2)
 
 ---
