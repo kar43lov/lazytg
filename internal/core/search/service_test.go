@@ -101,3 +101,52 @@ func TestService_Search_DefaultLimit(t *testing.T) {
 		t.Errorf("hits = %d, want %d (default limit)", len(hits), search.DefaultSearchLimit)
 	}
 }
+
+// TestService_Search_HydratesMedia verifies that a hit on a media
+// message round-trips MediaInfo through the search SQL — the thread
+// pane needs Media populated for the [📎 …] badge to render and for
+// Ctrl-D to find a downloadable target.
+func TestService_Search_HydratesMedia(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+	const chatID int64 = 12003
+	seedChat(t, repo, ctx, chatID, "MediaSearch")
+
+	if err := repo.SaveMessage(ctx, domain.Message{
+		ID:     1,
+		ChatID: chatID,
+		FromID: 7,
+		Date:   time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+		Text:   "квартальный отчёт",
+		Media: &domain.MediaInfo{
+			Kind:     domain.MediaKindDocument,
+			FileID:   1234,
+			Filename: "Q4-report.pdf",
+			Size:     54321,
+			MimeType: "application/pdf",
+		},
+	}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	svc := search.NewService(repo, nil, nil)
+	hits, err := svc.Search(ctx, "отчёт", 10)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(hits))
+	}
+	got := hits[0].Message
+	if got.Media == nil {
+		t.Fatalf("Media: want non-nil, got nil")
+	}
+	if got.Media.Filename != "Q4-report.pdf" {
+		t.Errorf("Media.Filename = %q, want Q4-report.pdf", got.Media.Filename)
+	}
+	if got.Media.Size != 54321 {
+		t.Errorf("Media.Size = %d, want 54321", got.Media.Size)
+	}
+	if got.Media.Kind != domain.MediaKindDocument {
+		t.Errorf("Media.Kind = %q, want document", got.Media.Kind)
+	}
+}

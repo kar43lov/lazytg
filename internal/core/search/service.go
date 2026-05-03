@@ -95,17 +95,36 @@ func (s *Service) JumpContext(ctx context.Context, hit Hit, around int) ([]domai
 	// preserves the ordering produced by each leg, then the outer
 	// SELECT re-sorts the merged set ascending so the caller does not
 	// have to.
+	//
+	// Media columns ride along so the thread pane can render the [📎 …]
+	// badge after a search jump and Ctrl-D download still finds a target
+	// message — without these, jumped-to attachments would regress to
+	// plain text and downloads would fail until the user reopened the
+	// chat normally (the regular GetMessages path includes the same
+	// columns; see internal/storage/sqlite/repo.go::scanMessages).
 	const windowSQL = `
-        SELECT id, chat_id, from_id, date, text, reply_to, raw_blob FROM (
-            SELECT id, chat_id, from_id, date, text, reply_to, raw_blob, 0 AS half
+        SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
+               media_kind, media_id, media_access_hash, media_file_reference,
+               media_dc, media_filename, media_size, media_mime_type, media_thumb_size
+        FROM (
+            SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
+                   media_kind, media_id, media_access_hash, media_file_reference,
+                   media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
+                   0 AS half
             FROM messages
             WHERE chat_id = ? AND id < ?
             ORDER BY id DESC
             LIMIT ?
         )
         UNION ALL
-        SELECT id, chat_id, from_id, date, text, reply_to, raw_blob FROM (
-            SELECT id, chat_id, from_id, date, text, reply_to, raw_blob, 1 AS half
+        SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
+               media_kind, media_id, media_access_hash, media_file_reference,
+               media_dc, media_filename, media_size, media_mime_type, media_thumb_size
+        FROM (
+            SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
+                   media_kind, media_id, media_access_hash, media_file_reference,
+                   media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
+                   1 AS half
             FROM messages
             WHERE chat_id = ? AND id >= ?
             ORDER BY id ASC
@@ -125,22 +144,10 @@ func (s *Service) JumpContext(ctx context.Context, hit Hit, around int) ([]domai
 	var out []domain.Message
 	target := -1
 	for rows.Next() {
-		var (
-			m       domain.Message
-			fromID  sql.NullInt64
-			text    sql.NullString
-			replyTo sql.NullInt64
-			date    int64
-			rawBlob []byte
-		)
-		if err := rows.Scan(&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &rawBlob); err != nil {
+		m, err := scanMessageWithMedia(rows)
+		if err != nil {
 			return nil, -1, fmt.Errorf("jump context scan: %w", err)
 		}
-		m.FromID = fromID.Int64
-		m.Text = text.String
-		m.ReplyTo = replyTo.Int64
-		m.Date = time.Unix(date, 0).UTC()
-		m.RawBlob = rawBlob
 		if m.ID == hit.Message.ID {
 			target = len(out)
 		}
@@ -160,6 +167,60 @@ func (s *Service) JumpContext(ctx context.Context, hit Hit, around int) ([]domai
 // when the messages_fts row outlives the messages row (a delete that
 // did not propagate), or when the test setup is incomplete.
 var ErrJumpTargetMissing = errors.New("search: jump target not found")
+
+// scanMessageWithMedia scans the canonical "message + media columns"
+// row layout (id, chat_id, from_id, date, text, reply_to, raw_blob,
+// media_kind, media_id, media_access_hash, media_file_reference,
+// media_dc, media_filename, media_size, media_mime_type,
+// media_thumb_size) into a domain.Message with Media populated when
+// media_kind is non-NULL. Mirrors internal/storage/sqlite::scanMessages
+// — the duplication is deliberate because exporting that helper would
+// pull search into the storage package's surface area.
+func scanMessageWithMedia(rows *sql.Rows) (domain.Message, error) {
+	var (
+		m         domain.Message
+		fromID    sql.NullInt64
+		text      sql.NullString
+		replyTo   sql.NullInt64
+		date      int64
+		rawBlob   []byte
+		mediaKind sql.NullString
+		mediaID   sql.NullInt64
+		mediaAH   sql.NullInt64
+		mediaRef  []byte
+		mediaDC   sql.NullInt64
+		mediaName sql.NullString
+		mediaSize sql.NullInt64
+		mediaMime sql.NullString
+		mediaThSz sql.NullString
+	)
+	if err := rows.Scan(
+		&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &rawBlob,
+		&mediaKind, &mediaID, &mediaAH, &mediaRef,
+		&mediaDC, &mediaName, &mediaSize, &mediaMime, &mediaThSz,
+	); err != nil {
+		return domain.Message{}, err
+	}
+	m.FromID = fromID.Int64
+	m.Text = text.String
+	m.ReplyTo = replyTo.Int64
+	m.Date = time.Unix(date, 0).UTC()
+	m.RawBlob = rawBlob
+	if mediaKind.Valid && mediaKind.String != "" {
+		m.Media = &domain.MediaInfo{
+			Kind:          domain.MediaKind(mediaKind.String),
+			FileID:        mediaID.Int64,
+			AccessHash:    mediaAH.Int64,
+			FileReference: mediaRef,
+			DC:            int(mediaDC.Int64),
+			Filename:      mediaName.String,
+			Size:          mediaSize.Int64,
+			MimeType:      mediaMime.String,
+			ThumbSize:     mediaThSz.String,
+		}
+	}
+	return m, nil
+}
 
 // Search parses raw with the search grammar (operators, phrases,
 // exclusions) and runs the resulting Query against messages_fts.
@@ -210,6 +271,11 @@ func (s *Service) Search(ctx context.Context, raw string, limit int) ([]Hit, err
 	args = append(args, extraArgs...)
 	args = append(args, limit)
 
+	// Media columns are pulled here too so a hit on a media message
+	// surfaces with its attachment metadata intact — the JumpContext
+	// path also reads media so the badge and Ctrl-D download stay
+	// consistent whether the user reads a hit standalone or jumps into
+	// the surrounding context.
 	sqlText := `
         SELECT m.id,
                m.chat_id,
@@ -218,6 +284,15 @@ func (s *Service) Search(ctx context.Context, raw string, limit int) ([]Hit, err
                m.text,
                m.reply_to,
                m.raw_blob,
+               m.media_kind,
+               m.media_id,
+               m.media_access_hash,
+               m.media_file_reference,
+               m.media_dc,
+               m.media_filename,
+               m.media_size,
+               m.media_mime_type,
+               m.media_thumb_size,
                snippet(messages_fts, 0, '<b>', '</b>', '...', 16) AS snippet,
                bm25(messages_fts) AS score
         FROM messages_fts
@@ -236,16 +311,30 @@ func (s *Service) Search(ctx context.Context, raw string, limit int) ([]Hit, err
 	var hits []Hit
 	for rows.Next() {
 		var (
-			m       domain.Message
-			fromID  sql.NullInt64
-			text    sql.NullString
-			replyTo sql.NullInt64
-			date    int64
-			rawBlob []byte
-			snippet string
-			score   float64
+			m         domain.Message
+			fromID    sql.NullInt64
+			text      sql.NullString
+			replyTo   sql.NullInt64
+			date      int64
+			rawBlob   []byte
+			mediaKind sql.NullString
+			mediaID   sql.NullInt64
+			mediaAH   sql.NullInt64
+			mediaRef  []byte
+			mediaDC   sql.NullInt64
+			mediaName sql.NullString
+			mediaSize sql.NullInt64
+			mediaMime sql.NullString
+			mediaThSz sql.NullString
+			snippet   string
+			score     float64
 		)
-		if err := rows.Scan(&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &rawBlob, &snippet, &score); err != nil {
+		if err := rows.Scan(
+			&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &rawBlob,
+			&mediaKind, &mediaID, &mediaAH, &mediaRef,
+			&mediaDC, &mediaName, &mediaSize, &mediaMime, &mediaThSz,
+			&snippet, &score,
+		); err != nil {
 			return nil, fmt.Errorf("search scan: %w", err)
 		}
 		m.FromID = fromID.Int64
@@ -253,6 +342,19 @@ func (s *Service) Search(ctx context.Context, raw string, limit int) ([]Hit, err
 		m.ReplyTo = replyTo.Int64
 		m.Date = time.Unix(date, 0).UTC()
 		m.RawBlob = rawBlob
+		if mediaKind.Valid && mediaKind.String != "" {
+			m.Media = &domain.MediaInfo{
+				Kind:          domain.MediaKind(mediaKind.String),
+				FileID:        mediaID.Int64,
+				AccessHash:    mediaAH.Int64,
+				FileReference: mediaRef,
+				DC:            int(mediaDC.Int64),
+				Filename:      mediaName.String,
+				Size:          mediaSize.Int64,
+				MimeType:      mediaMime.String,
+				ThumbSize:     mediaThSz.String,
+			}
+		}
 		hits = append(hits, Hit{
 			Message: m,
 			Snippet: snippet,

@@ -91,6 +91,33 @@ type Model struct {
 	// simplicity, but oldestID is exposed so future callers (cursor-
 	// based MTProto backfill) can ask for "older than X".
 	oldestID int64
+
+	// hasNewer is true when forward pagination can still load messages
+	// strictly newer than forwardCursorID. Set by LoadJumpWindow (the
+	// jump landed in the middle of history, so the present is reachable
+	// only through scroll-down) and cleared by applyLoaded /
+	// OpenChat (initial load lands at the tail) or when forward
+	// pagination returns an empty / short page.
+	hasNewer bool
+	// forwardCursorID is the upper boundary of the contiguously-loaded
+	// prefix that grew out of LoadJumpWindow's installed window. Forward
+	// pagination uses this as the "id > X" SQL cursor. We track it
+	// separately from a "newest in m.messages" computation because live
+	// MessageReceived events can land far above the loaded window
+	// (creating a visual gap) — using their id as the cursor would skip
+	// over the unloaded gap and break the "scroll down to fill toward
+	// present" UX.
+	forwardCursorID int64
+
+	// loadGen is bumped on every state-resetting transition (OpenChat,
+	// SwitchTo, LoadJumpWindow). loadCmd / paginateCmd / paginateNewerCmd
+	// capture the value at scheduling time; the corresponding apply*
+	// handlers drop messages whose gen no longer matches the current
+	// model. Without this, a slow initial load (or a still-in-flight
+	// older-page pagination) for the same chat could land after a
+	// search-jump's LoadJumpWindow and yank the user back to the
+	// freshly-loaded chat tail.
+	loadGen uint64
 }
 
 // New returns a placeholder model with no repo wired. Used by app
@@ -140,7 +167,13 @@ func (m Model) Init() tea.Cmd { return nil }
 // to the chat that produced them and switching chats discards stale
 // pendings (the SendService still owns the underlying record in the
 // outgoing table — the UI just stops rendering it here).
+//
+// loadGen is bumped before scheduling loadCmd so any in-flight load
+// from a prior OpenChat / SwitchTo / pagination (for any chat,
+// including this one) is dropped on arrival. Same-chat re-opens
+// otherwise race against their own previous loads.
 func (m Model) OpenChat(chatID int64) (Model, tea.Cmd) {
+	m.loadGen++
 	m.chatID = chatID
 	m.messages = nil
 	m.outgoing = nil
@@ -148,13 +181,49 @@ func (m Model) OpenChat(chatID int64) (Model, tea.Cmd) {
 	m.finalizedLocalIDs = make(map[string]struct{})
 	m.oldestID = 0
 	m.hasMore = false
+	m.hasNewer = false
+	m.forwardCursorID = 0
 	m.loading = true
 	m.viewport.SetContent("")
 	if m.repo == nil {
 		m.loading = false
 		return m, nil
 	}
-	return m, loadCmd(m.repo, chatID, 0, initialPageSize)
+	return m, loadCmd(m.repo, chatID, 0, initialPageSize, m.loadGen)
+}
+
+// ReloadAfterJumpFailure schedules a fresh chat-tail load following a
+// failed JumpContext. Like OpenChat it bumps loadGen, clears the
+// rendered messages and cursors, and fires loadCmd. UNLIKE OpenChat it
+// PRESERVES outgoing optimistic state (outgoing / pendingServerIDs /
+// finalizedLocalIDs).
+//
+// The preservation matters because the search-jump path rebinds the
+// input pane to the target chat the moment the user picks a hit; the
+// user may issue a send during the async JumpContext window. That send
+// flows through ApplyDispatched into outgoing before the context query
+// returns. Wiping it on the failure-recovery path would silently drop
+// the optimistic row — for 1:1 chats Telegram emits only
+// UpdateShortSentMessage and never re-publishes a corresponding
+// UpdateNewMessage echo, so the user would see the message disappear
+// until manual reload. The success path (LoadJumpWindow) already
+// preserves outgoing for the same reason; this method makes the
+// failure recovery symmetric.
+func (m Model) ReloadAfterJumpFailure(chatID int64) (Model, tea.Cmd) {
+	m.loadGen++
+	m.chatID = chatID
+	m.messages = nil
+	m.oldestID = 0
+	m.hasMore = false
+	m.hasNewer = false
+	m.forwardCursorID = 0
+	m.loading = true
+	m.viewport.SetContent("")
+	if m.repo == nil {
+		m.loading = false
+		return m, nil
+	}
+	return m, loadCmd(m.repo, chatID, 0, initialPageSize, m.loadGen)
 }
 
 // ChatID returns the currently displayed chat id (test helper).
@@ -173,6 +242,16 @@ func (m Model) Messages() []domain.Message {
 // beyond what is currently loaded. Test helper; the live UI uses this
 // to decide whether a scroll-up should trigger pagination.
 func (m Model) HasMore() bool { return m.hasMore }
+
+// HasNewer reports whether forward pagination can still load messages
+// newer than the current forward cursor. True only after LoadJumpWindow
+// (the symmetric post-jump path); false once forward pagination
+// catches up to the chat tail or when no jump is active.
+func (m Model) HasNewer() bool { return m.hasNewer }
+
+// ForwardCursorID exposes the upper boundary of contiguously-loaded
+// messages from the bottom of the jump window. Test helper.
+func (m Model) ForwardCursorID() int64 { return m.forwardCursorID }
 
 // Loading reports whether a fetch is currently in flight.
 func (m Model) Loading() bool { return m.loading }
@@ -328,6 +407,129 @@ func (m Model) Outgoing() []OutgoingMessage {
 	return out
 }
 
+// SwitchTo resets the rendered state and binds the pane to chatID
+// without firing a repo load. The search-jump path uses this to
+// pre-position the thread on the target chat while a JumpContext
+// query runs asynchronously — the result is then applied via
+// LoadJumpWindow.
+//
+// SwitchTo always resets, even when chatID matches the currently
+// displayed chat. The reset is required so that LoadJumpWindow's
+// "preserve messages newer than the window" merge only retains
+// genuine live appends that arrived after the jump kicked off.
+// Without the reset, a same-chat jump would keep the entire prior
+// tail (e.g. [70..100]) and the loaded ±N window around an older
+// hit (e.g. [25..35]) would render alongside it as
+// [25..35, 70..100] — a discontinuous thread with a missing gap
+// in the middle.
+//
+// loadGen is bumped so any in-flight initial load / pagination from
+// before the jump is dropped on arrival — without the bump, a slow
+// OpenChat fetch for the same chat could clobber the freshly-installed
+// jump window with the chat's tail.
+func (m Model) SwitchTo(chatID int64) Model {
+	m.loadGen++
+	m.chatID = chatID
+	m.messages = nil
+	m.outgoing = nil
+	m.pendingServerIDs = make(map[int64]string)
+	m.finalizedLocalIDs = make(map[string]struct{})
+	m.oldestID = 0
+	m.hasMore = false
+	m.hasNewer = false
+	m.forwardCursorID = 0
+	m.loading = false
+	m.viewport.SetContent("")
+	return m
+}
+
+// LoadJumpWindow replaces the rendered slice with messages (a context
+// window typically produced by search.Service.JumpContext: ±N around a
+// hit) and scrolls the viewport to scrollToID. Used by the search-jump
+// path so that picking an old hit does not drop the user at the bottom
+// of the freshly-loaded chat — the surrounding context loads in one
+// step and the viewport lands on the match. hasMore is set to true
+// because older history is still reachable via pagination from the
+// oldest id in the window.
+//
+// hasNewer / forwardCursorID are set so the symmetric forward
+// pagination is reachable: scroll-down at the bottom of the loaded
+// window walks the model toward the present (id > forwardCursorID)
+// rather than stranding the user in an isolated ±N slice. The cursor
+// pins to the loaded window's max id, NOT the live tail's max id,
+// because forward pagination needs to fill the gap between the window
+// and any live appends that landed during the async JumpContext.
+//
+// chatID switches to the supplied id even when the window is empty —
+// the caller (app handleSearchJump) has already decided to surface this
+// chat. An empty window leaves the thread visually empty until the next
+// load, which is acceptable for the missing-target edge case.
+//
+// Messages already present in the model whose id is strictly greater
+// than the loaded window's max id are preserved at the tail. This
+// covers the race where a live MessageReceived event lands between
+// SwitchTo and LoadJumpWindow: applyIncoming appends the new row to
+// m.messages while JumpContext is still running, and a naive "replace
+// with the loaded window" would silently drop that row from the UI
+// until the next reload. Preserved entries are deduplicated against
+// the window so a freshly-persisted live row that the SQL also picked
+// up does not render twice.
+//
+// loadGen is bumped so any older-page pagination still in flight from
+// before the jump (the symmetric problem to SwitchTo's bump) is
+// dropped on arrival rather than prepending unrelated history into
+// the freshly-installed window.
+//
+// Optimistic-UI state (outgoing / pendingServerIDs / finalizedLocalIDs)
+// is *preserved* here. SwitchTo (always called by handleSearchJump
+// before this) already cleared the slate, so any rows that exist now
+// were inserted by ApplyDispatched / applyOutgoingState while
+// JumpContext was running asynchronously — the user issued sends after
+// the input was rebound to the target chat but before the window load
+// returned. Wiping here would silently drop those rows; for 1:1 chats
+// where Telegram emits only UpdateShortSentMessage (no later
+// UpdateNewMessage echo) the message would disappear from the UI until
+// manual reload.
+func (m Model) LoadJumpWindow(chatID int64, messages []domain.Message, scrollToID int64, around int) Model {
+	m.loadGen++
+	m.chatID = chatID
+
+	var maxWindowID int64
+	windowIDs := make(map[int64]struct{}, len(messages))
+	for _, msg := range messages {
+		windowIDs[msg.ID] = struct{}{}
+		if msg.ID > maxWindowID {
+			maxWindowID = msg.ID
+		}
+	}
+
+	var tail []domain.Message
+	for _, prev := range m.messages {
+		if prev.ID <= maxWindowID {
+			continue
+		}
+		if _, dup := windowIDs[prev.ID]; dup {
+			continue
+		}
+		tail = append(tail, prev)
+	}
+
+	merged := append([]domain.Message(nil), messages...)
+	merged = append(merged, tail...)
+	m.messages = merged
+
+	m.loading = false
+	m.hasMore = len(messages) > 0
+	m.hasNewer = len(messages) > 0
+	m.forwardCursorID = maxWindowID
+	m.recomputeOldestID()
+	m.viewport.SetContent(m.renderAll())
+	if scrollToID == 0 {
+		return m
+	}
+	return m.ScrollTo(scrollToID, around)
+}
+
 // LatestMediaMessage returns the most recent message in the thread
 // that carries downloadable media, or nil when the thread is empty or
 // has no media-bearing rows. Stage 3 wires the Ctrl-D chord through
@@ -347,13 +549,18 @@ func (m Model) LatestMediaMessage() *domain.Message {
 // emits messagesLoadedMsg or messagesLoadFailedMsg. We over-fetch by
 // one row (limit+1) so the caller can detect hasMore without a second
 // COUNT(*) round-trip.
-func loadCmd(repo Repository, chatID int64, offset, limit int) tea.Cmd {
+//
+// gen is the model's loadGen at scheduling time. The result carries it
+// back so applyLoaded can drop the message when the model has moved
+// on (chat switch, search jump) — without it a slow load would
+// clobber whichever state the user has navigated to since.
+func loadCmd(repo Repository, chatID int64, offset, limit int, gen uint64) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 		defer cancel()
 		raw, err := repo.GetMessages(ctx, chatID, limit+1, offset)
 		if err != nil {
-			return messagesLoadFailedMsg{chatID: chatID, err: err}
+			return messagesLoadFailedMsg{chatID: chatID, gen: gen, err: err}
 		}
 		hasMore := len(raw) > limit
 		if hasMore {
@@ -361,6 +568,7 @@ func loadCmd(repo Repository, chatID int64, offset, limit int) tea.Cmd {
 		}
 		return messagesLoadedMsg{
 			chatID:   chatID,
+			gen:      gen,
 			messages: reverseMessages(raw),
 			hasMore:  hasMore,
 		}
@@ -377,13 +585,17 @@ func loadCmd(repo Repository, chatID int64, offset, limit int) tea.Cmd {
 // at the boundary. The cursor pins the boundary to a concrete id, so
 // pagination remains correct regardless of how many messages have
 // arrived live in between.
-func paginateCmd(repo Repository, chatID, beforeID int64, limit int) tea.Cmd {
+//
+// gen mirrors loadCmd's gen — applyPagination drops the message on
+// mismatch so a still-in-flight scroll-up from before a search-jump
+// does not prepend stray rows into the freshly-installed window.
+func paginateCmd(repo Repository, chatID, beforeID int64, limit int, gen uint64) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
 		defer cancel()
 		raw, err := repo.GetMessagesBefore(ctx, chatID, beforeID, limit+1)
 		if err != nil {
-			return messagesLoadFailedMsg{chatID: chatID, err: err}
+			return messagesLoadFailedMsg{chatID: chatID, gen: gen, err: err}
 		}
 		hasMore := len(raw) > limit
 		if hasMore {
@@ -391,7 +603,40 @@ func paginateCmd(repo Repository, chatID, beforeID int64, limit int) tea.Cmd {
 		}
 		return messagesPaginationLoadedMsg{
 			chatID:   chatID,
+			gen:      gen,
 			messages: reverseMessages(raw),
+			hasMore:  hasMore,
+		}
+	}
+}
+
+// paginateNewerCmd is the symmetric scroll-down companion. It fetches
+// the next batch of rows newer than afterID via repo.GetMessagesAfter
+// (already ASC) and emits messagesPaginationNewerLoadedMsg. The
+// initiator is the search-jump path: after LoadJumpWindow lands, the
+// user can scroll down to walk the model toward the present rather
+// than staying stranded in the isolated ±N window.
+//
+// gen carries the model's loadGen at scheduling time so a stale forward
+// page (e.g. user re-jumped to a different hit while this fetch was in
+// flight) is dropped on arrival.
+func paginateNewerCmd(repo Repository, chatID, afterID int64, limit int, gen uint64) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
+		defer cancel()
+		raw, err := repo.GetMessagesAfter(ctx, chatID, afterID, limit+1)
+		if err != nil {
+			return messagesLoadFailedMsg{chatID: chatID, gen: gen, err: err}
+		}
+		hasMore := len(raw) > limit
+		if hasMore {
+			raw = raw[:limit]
+		}
+		// repo.GetMessagesAfter returns ASC by contract — no reverse.
+		return messagesPaginationNewerLoadedMsg{
+			chatID:   chatID,
+			gen:      gen,
+			messages: raw,
 			hasMore:  hasMore,
 		}
 	}

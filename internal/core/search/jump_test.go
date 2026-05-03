@@ -138,3 +138,67 @@ func TestService_JumpContext_Missing(t *testing.T) {
 		t.Fatalf("expected ErrJumpTargetMissing, got %v", err)
 	}
 }
+
+// TestService_JumpContext_HydratesMedia verifies the loaded window
+// carries MediaInfo for messages that have an attachment, so the
+// thread pane can keep rendering the [📎 …] badge after a search jump
+// (and Ctrl-D download still finds a target). Without media columns
+// the jumped-to attachment would regress to plain text vs. the
+// regular GetMessages path.
+func TestService_JumpContext_HydratesMedia(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+	const chatID int64 = 30005
+	seedChat(t, repo, ctx, chatID, "Media")
+
+	for i := 1; i <= 5; i++ {
+		msg := domain.Message{
+			ID:     int64(i),
+			ChatID: chatID,
+			FromID: 9,
+			Date:   time.Date(2026, 1, 1, 0, 0, i, 0, time.UTC),
+			Text:   "around",
+		}
+		if i == 3 {
+			msg.Text = "report"
+			msg.Media = &domain.MediaInfo{
+				Kind:       domain.MediaKindDocument,
+				FileID:     7777,
+				AccessHash: 8888,
+				DC:         2,
+				Filename:   "report.pdf",
+				Size:       12345,
+				MimeType:   "application/pdf",
+			}
+		}
+		if err := repo.SaveMessage(ctx, msg); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+	}
+
+	svc := search.NewService(repo, nil, nil)
+	hit := search.Hit{Message: domain.Message{ID: 3, ChatID: chatID}, ChatID: chatID}
+	msgs, target, err := svc.JumpContext(ctx, hit, 2)
+	if err != nil {
+		t.Fatalf("JumpContext: %v", err)
+	}
+	if msgs[target].Media == nil {
+		t.Fatalf("target media: want non-nil, got nil")
+	}
+	if got := msgs[target].Media.Filename; got != "report.pdf" {
+		t.Errorf("filename: want report.pdf, got %q", got)
+	}
+	if got := msgs[target].Media.Kind; got != domain.MediaKindDocument {
+		t.Errorf("kind: want document, got %q", got)
+	}
+	if got := msgs[target].Media.Size; got != 12345 {
+		t.Errorf("size: want 12345, got %d", got)
+	}
+	for i, m := range msgs {
+		if i == target {
+			continue
+		}
+		if m.Media != nil {
+			t.Errorf("non-target msg id=%d has Media set", m.ID)
+		}
+	}
+}

@@ -13,9 +13,11 @@ package app
 import (
 	"context"
 	"log/slog"
+	"sync"
 
 	"github.com/pgmac/lazytg/internal/core/domain"
 	"github.com/pgmac/lazytg/internal/core/events"
+	"github.com/pgmac/lazytg/internal/core/search"
 	"github.com/pgmac/lazytg/internal/ui/input"
 	"github.com/pgmac/lazytg/internal/ui/keymap"
 	"github.com/pgmac/lazytg/internal/ui/overlay"
@@ -42,6 +44,20 @@ type FileDownloader interface {
 // a fake.
 type FileUploader interface {
 	SendFile(ctx context.Context, chatID int64, path, caption string, replyTo int) (uploadID int64, err error)
+}
+
+// JumpContextProvider is the contract App.handleSearchJump uses to
+// load the surrounding-message window for a search hit. The concrete
+// implementation is *search.Service; tests substitute a fake to assert
+// the routing without exercising the SQL window query.
+//
+// Returns the messages ordered oldest-first plus the index of the
+// target inside that slice. Returning an error makes the app fall back
+// to the legacy "OpenChat + deferred ScrollTo" path so a transient
+// JumpContext failure does not break the jump entirely — the user
+// still lands in the chat, only without the ±around context window.
+type JumpContextProvider interface {
+	JumpContext(ctx context.Context, hit search.Hit, around int) ([]domain.Message, int, error)
 }
 
 // Minimum terminal size below which we refuse to render the layout. 80x24 is
@@ -121,6 +137,14 @@ type Deps struct {
 	// open / browse / submit but the actual SendFile call becomes a
 	// no-op so tests stay compilable without the upload pipeline.
 	Uploader FileUploader
+
+	// Jumper, if set, is invoked by handleSearchJump to load the
+	// ±N context window for a search hit so the thread pane lands
+	// on the matched message even when it predates the most recent
+	// initial-page slice. nil falls back to the legacy "OpenChat
+	// + deferred ScrollTo" path which only works when the target
+	// is still within the freshly-loaded 200-message head.
+	Jumper JumpContextProvider
 }
 
 // App is the root Bubble Tea model. Sub-pane fields are concrete types
@@ -152,6 +176,23 @@ type App struct {
 	// overlay still opens but Submit silently no-ops.
 	uploader FileUploader
 
+	// jumper is the search-jump collaborator wired through
+	// Deps.Jumper. nil means "no jump-context wired" — the search
+	// jump path falls back to OpenChat + deferred ScrollTo, which
+	// only locates the target when it still fits in the initial
+	// 200-message page.
+	jumper JumpContextProvider
+
+	// inFlightDownloads tracks fileIDs whose Ctrl-D goroutine is
+	// currently running so a repeated chord on the same media does
+	// not spawn an overlapping Download call. Two writers to the
+	// same .partial path would clobber each other mid-stream
+	// (documented in core/files.DownloadService). The guard is a
+	// shared pointer so all value-copies of App see the same
+	// registry — Bubble Tea's immutable model would otherwise
+	// reset state on every Update.
+	inFlightDownloads *downloadRegistry
+
 	// preSearchFocus remembers the focus target the user was on
 	// before opening the search overlay so Esc / SearchJump can
 	// restore it. -1 means "no overlay open" so the field is
@@ -176,6 +217,17 @@ type App struct {
 	// messagesLoadedMsg. nil means no pending scroll.
 	pendingScroll *pendingThreadScroll
 
+	// jumpGen is the search-jump generation counter. Incremented on
+	// every handleSearchJump kickoff, every handleChatSelected, and
+	// every handlePaletteSelected — anything that should invalidate
+	// an in-flight async jump. jumpContextCmd captures the value at
+	// kickoff and applySearchJumpLoaded drops the result when the
+	// generation no longer matches. Without this guard a stale
+	// JumpContext completion can yank the thread back to the earlier
+	// hit (or, on the error path, re-open the old chat) after the
+	// user already moved on.
+	jumpGen uint64
+
 	width    int
 	height   int
 	focus    FocusTarget
@@ -192,27 +244,70 @@ type App struct {
 // "(unfocused)" body, focus starts on Chats.
 func New(deps Deps) App {
 	app := App{
-		chats:           chooseModel(deps.Chats, chats.New),
-		thread:          chooseModel(deps.Thread, thread.New),
-		input:           chooseModel(deps.Input, input.New),
-		status:          chooseStatus(deps.Status),
-		help:            overlay.New(deps.Keymap),
-		search:          chooseSearch(deps.Search),
-		palette:         choosePalette(deps.Palette),
-		attach:          chooseAttach(deps.Attach, deps.Log),
-		paletteFrecency: deps.PaletteFrecency,
-		downloader:      deps.Downloader,
-		uploader:        deps.Uploader,
-		preSearchFocus:  -1,
-		prePaletteFocus: -1,
-		preAttachFocus:  -1,
-		focus:           FocusChats,
-		keymap:          deps.Keymap,
-		bus:             deps.Bus,
-		log:             deps.Log,
+		chats:             chooseModel(deps.Chats, chats.New),
+		thread:            chooseModel(deps.Thread, thread.New),
+		input:             chooseModel(deps.Input, input.New),
+		status:            chooseStatus(deps.Status),
+		help:              overlay.New(deps.Keymap),
+		search:            chooseSearch(deps.Search),
+		palette:           choosePalette(deps.Palette),
+		attach:            chooseAttach(deps.Attach, deps.Log),
+		paletteFrecency:   deps.PaletteFrecency,
+		downloader:        deps.Downloader,
+		uploader:          deps.Uploader,
+		jumper:            deps.Jumper,
+		inFlightDownloads: newDownloadRegistry(),
+		preSearchFocus:    -1,
+		prePaletteFocus:   -1,
+		preAttachFocus:    -1,
+		focus:             FocusChats,
+		keymap:            deps.Keymap,
+		bus:               deps.Bus,
+		log:               deps.Log,
 	}
 	app.chats = app.chats.SetFocus(true)
 	return app
+}
+
+// downloadRegistry is a tiny mutex-guarded set of in-flight FileIDs.
+// The pointer receivership keeps every value-copy of App pointing at
+// the same map so reserve/release calls from different Update tick
+// goroutines see each other's state. Use reserve to gate a fresh
+// download attempt and release on goroutine exit.
+type downloadRegistry struct {
+	mu      sync.Mutex
+	pending map[int64]struct{}
+}
+
+func newDownloadRegistry() *downloadRegistry {
+	return &downloadRegistry{pending: make(map[int64]struct{})}
+}
+
+// reserve atomically inserts fileID and returns true if the slot was
+// free, false if a download for that fileID was already in flight.
+// fileID == 0 always returns true so the caller never blocks on a
+// missing FileID — the download service itself rejects that case
+// with a clearer error.
+func (r *downloadRegistry) reserve(fileID int64) bool {
+	if fileID == 0 {
+		return true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, busy := r.pending[fileID]; busy {
+		return false
+	}
+	r.pending[fileID] = struct{}{}
+	return true
+}
+
+func (r *downloadRegistry) release(fileID int64) {
+	if fileID == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.pending, fileID)
 }
 
 // chooseSearch returns *src if non-nil, else a no-service overlay

@@ -24,9 +24,19 @@ import (
 // boundary, leaving a one-message gap in displayed history. Cursor
 // paging (id < oldestID) is stable under live appends because the cursor
 // pins the boundary to a concrete id.
+//
+// GetMessagesAfter returns rows with id strictly greater than afterID,
+// ordered by id asc. Used for the symmetric scroll-down pagination
+// after a search-jump landed the user in the middle of history —
+// without it, the loaded ±N context window would strand the user
+// because they can scroll up (loading older history via
+// GetMessagesBefore) but the messages newer than the window are
+// unreachable. Cursor-based for the same race-stability reason as
+// GetMessagesBefore.
 type Repository interface {
 	GetMessages(ctx context.Context, chatID int64, limit, offset int) ([]domain.Message, error)
 	GetMessagesBefore(ctx context.Context, chatID, beforeID int64, limit int) ([]domain.Message, error)
+	GetMessagesAfter(ctx context.Context, chatID, afterID int64, limit int) ([]domain.Message, error)
 }
 
 // HistoryProvider mirrors core/sync.HistoryProvider so the thread pane

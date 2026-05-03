@@ -587,6 +587,36 @@ func (r *Repo) GetMessagesBefore(ctx context.Context, chatID, beforeID int64, li
 	return scanMessages(rows)
 }
 
+// GetMessagesAfter returns up to limit messages from chatID with id strictly
+// greater than afterID, ordered by id asc. Used by the thread pane for
+// forward pagination after a search-jump landed the user in the middle
+// of history — scroll-down at the bottom of the loaded ±N window asks
+// for the next batch of newer rows. Cursor-based for the same reason
+// GetMessagesBefore is: live appends between the jump and a scroll-down
+// would otherwise shift any offset semantics out from under us.
+//
+// Pass limit <= 0 to get an empty slice. afterID == 0 yields nil — the
+// "after nothing" case has no defined semantics; callers reaching that
+// branch are working with a thread pane in a non-jump state where
+// forward pagination is meaningless.
+func (r *Repo) GetMessagesAfter(ctx context.Context, chatID, afterID int64, limit int) ([]domain.Message, error) {
+	if limit <= 0 || afterID <= 0 {
+		return nil, nil
+	}
+	rows, err := r.db.QueryContext(ctx, messageSelectColumns+`
+        FROM messages
+        WHERE chat_id = ? AND id > ?
+        ORDER BY id ASC
+        LIMIT ?
+    `, chatID, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query messages after chat=%d id=%d: %w", chatID, afterID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	return scanMessages(rows)
+}
+
 // nullableUnix returns a sql.NullInt64 for the Unix timestamp of t, or NULL if
 // t is the zero value (so we can distinguish "never had a message" chats).
 func nullableUnix(t time.Time) sql.NullInt64 {

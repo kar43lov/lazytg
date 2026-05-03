@@ -83,6 +83,24 @@ func (f *fakeThreadRepo) GetMessagesBefore(_ context.Context, chatID, beforeID i
 	return out, nil
 }
 
+// GetMessagesAfter returns up to limit messages with id strictly
+// greater than afterID, ordered by id asc. f.byChat[chatID] is sorted
+// DESC; we walk from the end toward the start collecting matches and
+// then reverse for ASC order.
+func (f *fakeThreadRepo) GetMessagesAfter(_ context.Context, chatID, afterID int64, limit int) ([]domain.Message, error) {
+	all := f.byChat[chatID]
+	if limit <= 0 || afterID <= 0 {
+		return nil, nil
+	}
+	out := make([]domain.Message, 0, limit)
+	for i := len(all) - 1; i >= 0 && len(out) < limit; i-- {
+		if all[i].ID > afterID {
+			out = append(out, all[i])
+		}
+	}
+	return out, nil
+}
+
 // fakeSender records SendText invocations and returns a fixed local id.
 type fakeSender struct {
 	mu     sync.Mutex

@@ -27,7 +27,11 @@ type fakeRepo struct {
 	// was invoked with. Cursor-based pagination is the production path
 	// for scroll-up; offset-based is only used for the initial load.
 	cursorCalls [][2]int64
-	err         error
+	// forwardCursorCalls records every (afterID, limit) pair
+	// GetMessagesAfter was invoked with. Tests assert that scroll-down
+	// after a search jump triggers the symmetric forward pagination.
+	forwardCursorCalls [][2]int64
+	err                error
 }
 
 func newFakeRepo(n int) *fakeRepo {
@@ -114,6 +118,28 @@ func (r *fakeRepo) GetMessagesBefore(_ context.Context, _ int64, beforeID int64,
 	}
 	out := make([]domain.Message, end-start)
 	copy(out, r.messages[start:end])
+	return out, nil
+}
+
+// GetMessagesAfter returns up to limit messages with id strictly
+// greater than afterID, ordered by id asc. r.messages is sorted DESC,
+// so we walk from the end (oldest) toward the start collecting matches
+// — that gives ASC order naturally because the smallest ID > afterID
+// appears first.
+func (r *fakeRepo) GetMessagesAfter(_ context.Context, _ int64, afterID int64, limit int) ([]domain.Message, error) {
+	r.forwardCursorCalls = append(r.forwardCursorCalls, [2]int64{afterID, int64(limit)})
+	if r.err != nil {
+		return nil, r.err
+	}
+	if limit <= 0 || afterID <= 0 {
+		return nil, nil
+	}
+	out := make([]domain.Message, 0, limit)
+	for i := len(r.messages) - 1; i >= 0 && len(out) < limit; i-- {
+		if r.messages[i].ID > afterID {
+			out = append(out, r.messages[i])
+		}
+	}
 	return out, nil
 }
 

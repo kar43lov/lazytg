@@ -50,7 +50,7 @@ func (f *fakeDownloader) snapshot() []dlCall {
 // newAppWithDownloader builds an App with a fake downloader wired and
 // the thread pane pre-loaded with one media-bearing message — the
 // minimum the Ctrl-D path needs to fire.
-func newAppWithDownloader(t *testing.T, dl *fakeDownloader, withMedia bool) App {
+func newAppWithDownloader(t *testing.T, dl FileDownloader, withMedia bool) App {
 	t.Helper()
 	threadModel := thread.New()
 	if withMedia {
@@ -214,6 +214,119 @@ func TestDownloadEvents_RoutedToStatusbar(t *testing.T) {
 	if contains(out, "f.bin") {
 		t.Fatalf("failed download must drop from status bar: %q", excerpt(out))
 	}
+}
+
+func TestDownloadChord_InFlightGuardDropsDuplicate(t *testing.T) {
+	t.Parallel()
+	// Block the fake downloader on a release channel so the second
+	// Ctrl-D press lands while the first goroutine is still running.
+	// Without the in-flight guard the second goroutine would race the
+	// first over the same .partial path; the guard turns the second
+	// chord into a quiet no-op.
+	release := make(chan struct{})
+	dl := &blockingDownloader{release: release}
+	a := newAppWithDownloader(t, dl, true)
+
+	req := thread.DownloadRequestedMsg{
+		ChatID: 42, MessageID: 2, ChatTitle: "title",
+		Media: domain.MediaInfo{
+			Kind: domain.MediaKindDocument, FileID: 7777,
+			Filename: "report.pdf", Size: 1024,
+		},
+	}
+	// First request — reserve+spawn.
+	model, _ := a.Update(req)
+	a = model.(App)
+	// Wait until the goroutine actually entered Download (so we know
+	// the FileID is reserved).
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if dl.entered() == 1 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if dl.entered() != 1 {
+		t.Fatalf("first download must have started, got entered=%d", dl.entered())
+	}
+
+	// Second request — must be dropped by the guard.
+	model, _ = a.Update(req)
+	a = model.(App)
+	// Give a brief window for any (unwanted) goroutine to enter.
+	time.Sleep(20 * time.Millisecond)
+	if got := dl.entered(); got != 1 {
+		t.Fatalf("second chord must be dropped while first in flight, entered=%d", got)
+	}
+
+	// Release the first goroutine, wait for it to exit.
+	close(release)
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if dl.exited() == 1 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if dl.exited() != 1 {
+		t.Fatalf("first goroutine must have returned, exited=%d", dl.exited())
+	}
+
+	// Third request after release — fileID is free again, must spawn.
+	model, _ = a.Update(thread.DownloadRequestedMsg{
+		ChatID: 42, MessageID: 3, ChatTitle: "title",
+		Media: domain.MediaInfo{
+			Kind: domain.MediaKindDocument, FileID: 7777,
+			Filename: "report.pdf", Size: 1024,
+		},
+	})
+	a = model.(App)
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if dl.entered() == 2 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if dl.entered() != 2 {
+		t.Fatalf("third chord (after release) must spawn, entered=%d", dl.entered())
+	}
+	_ = a
+}
+
+// blockingDownloader holds inside Download until release is closed
+// so tests can observe the in-flight window without flakiness.
+type blockingDownloader struct {
+	mu       sync.Mutex
+	enterCnt int
+	exitCnt  int
+	release  chan struct{}
+}
+
+func (d *blockingDownloader) Download(ctx context.Context, _ int64, _ string, _ domain.MediaInfo) (string, error) {
+	d.mu.Lock()
+	d.enterCnt++
+	d.mu.Unlock()
+	select {
+	case <-d.release:
+	case <-ctx.Done():
+	}
+	d.mu.Lock()
+	d.exitCnt++
+	d.mu.Unlock()
+	return "/tmp/x", nil
+}
+
+func (d *blockingDownloader) entered() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.enterCnt
+}
+
+func (d *blockingDownloader) exited() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.exitCnt
 }
 
 func TestDownloadFailureLog_NoOpWithoutLogger(t *testing.T) {

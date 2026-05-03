@@ -7,7 +7,9 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/pgmac/lazytg/internal/core/domain"
 	"github.com/pgmac/lazytg/internal/core/events"
+	"github.com/pgmac/lazytg/internal/core/search"
 	"github.com/pgmac/lazytg/internal/ui/input"
 	"github.com/pgmac/lazytg/internal/ui/palette"
 	"github.com/pgmac/lazytg/internal/ui/panes/attach"
@@ -35,6 +37,18 @@ const uploadTimeout = 30 * time.Minute
 // only protects against a stuck SQLite VFS lock leaking a goroutine
 // indefinitely.
 const recordVisitTimeout = 2 * time.Second
+
+// jumpContextTimeout caps the JumpContext window query that fires
+// when the user presses Enter on a search hit. The query is two
+// SELECTs against the local SQLite — micros in steady state — but a
+// stuck VFS lock should not strand the chat switch.
+const jumpContextTimeout = 5 * time.Second
+
+// jumpAround is the ±N context window used by the search-jump path.
+// Mirrors search.DefaultJumpContext (= 5) so the user sees five
+// messages before and after the matched one, matching the Stage 3
+// plan ("scroll к контексту ±5 сообщений").
+const jumpAround = 5
 
 // Init is the initial Cmd batch. Each sub-pane gets its own Init so they can
 // kick off their own loaders (Task 7+: chats reads from repo, etc.). Stage 2
@@ -107,6 +121,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// future stages can plug a status-bar / overlay handler in
 		// without a routing change.
 		return a, nil
+	case searchJumpLoadedMsg:
+		return a.applySearchJumpLoaded(m)
 	case thread.DownloadRequestedMsg:
 		return a.handleDownloadRequest(m)
 	case uisearch.OpenedMsg:
@@ -165,8 +181,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd, handled := a.handleGlobalKey(k); handled {
 			return a, cmd
 		}
-		if updated, handled := a.applyScrollKey(k); handled {
-			return updated, nil
+		if updated, scrollCmd, handled := a.applyScrollKey(k); handled {
+			return updated, scrollCmd
 		}
 		return a.delegateToFocused(msg)
 	}
@@ -220,6 +236,14 @@ func (a App) broadcastToPanes(msg tea.Msg) (tea.Model, tea.Cmd) {
 // than in the chats pane) keeps the panes decoupled — chats only knows
 // "user pressed Enter on row X", everyone else listens.
 func (a App) handleChatSelected(msg chats.ChatSelectedMsg) (tea.Model, tea.Cmd) {
+	// Any chat switch invalidates a pending search-jump: the user
+	// just pointed at a different chat, so a stale JumpContext
+	// completion must not yank them back. Bump the generation
+	// counter (drops the async result) and clear pendingScroll
+	// (drops the legacy fallback's deferred ScrollTo target).
+	a.jumpGen++
+	a.pendingScroll = nil
+
 	var cmds []tea.Cmd
 
 	updatedThread, cmd := a.thread.OpenChat(msg.ChatID)
@@ -411,36 +435,29 @@ func (a App) closeSearch() App {
 }
 
 // handleSearchJump consumes a JumpMsg from the overlay: switches
-// focus to the target chat, opens the thread on it, scrolls to the
-// matched message with surrounding context, and (if a bus is wired)
-// publishes a SearchJumpRequested event so other subscribers can
-// react. The overlay is closed as part of the jump because the user
+// focus to the target chat, loads the surrounding ±jumpAround context
+// window via the wired JumpContextProvider, and scrolls the thread
+// pane to the matched message. When no jumper is wired (tests, early
+// boot) it falls back to the legacy "OpenChat + deferred ScrollTo"
+// path — that locates the target only when it still fits inside the
+// initial 200-message page, but the chat switch itself still works.
+// The overlay is closed as part of the jump because the user
 // signalled they want to read the chat now.
-//
-// The actual ScrollTo is deferred via a.pendingScroll: the thread
-// pane's applyLoaded calls GotoBottom unconditionally, so a
-// synchronous scroll would be overwritten by the loadCmd's
-// messagesLoadedMsg. broadcastToPanes (which routes the loaded
-// message to thread) honours pendingScroll on its way out so the
-// scroll always lands after the history was rendered.
 func (a App) handleSearchJump(msg uisearch.JumpMsg) (tea.Model, tea.Cmd) {
 	chatID := msg.Hit.ChatID
 	messageID := msg.Hit.Message.ID
 
 	a = a.closeSearch()
-
-	a.pendingScroll = &pendingThreadScroll{
-		ChatID:    chatID,
-		MessageID: messageID,
-		Around:    5,
-	}
-
-	updatedThread, cmd := a.thread.OpenChat(chatID)
-	a.thread = updatedThread
-	cmds := []tea.Cmd{}
-	if cmd != nil {
-		cmds = append(cmds, cmd)
-	}
+	// Bump the jump generation so any in-flight JumpContext from a
+	// prior jump is treated as stale by applySearchJumpLoaded — the
+	// user signalled a new target and the older async result must not
+	// yank the thread back.
+	a.jumpGen++
+	// Drop any pendingScroll left over from a prior jump for the same
+	// reason: the legacy fallback path uses pendingScroll to scroll
+	// once the messagesLoadedMsg lands, but that target now belongs to
+	// a superseded jump.
+	a.pendingScroll = nil
 
 	if title, ok := a.chatTitle(chatID); ok {
 		a.status.ChatTitle = title
@@ -455,14 +472,125 @@ func (a App) handleSearchJump(msg uisearch.JumpMsg) (tea.Model, tea.Cmd) {
 
 	updatedInput, inputCmd := a.input.Update(input.SetChatMsg{ChatID: chatID})
 	a.input = updatedInput
+
+	cmds := []tea.Cmd{}
 	if inputCmd != nil {
 		cmds = append(cmds, inputCmd)
+	}
+
+	if a.jumper != nil {
+		cmds = append(cmds, jumpContextCmd(a.jumper, msg.Hit, jumpAround, a.jumpGen))
+		// Pre-position the thread on the target chat so any
+		// concurrent live event lands in the right place. SwitchTo
+		// also clears the existing message slice — required even
+		// for same-chat jumps so LoadJumpWindow's tail-preserve
+		// merge only retains genuine live appends that arrived
+		// after kickoff (rather than the entire prior tail, which
+		// would render as a discontinuous window+tail).
+		a.thread = a.thread.SwitchTo(chatID)
+	} else {
+		a.pendingScroll = &pendingThreadScroll{
+			ChatID:    chatID,
+			MessageID: messageID,
+			Around:    jumpAround,
+		}
+		updatedThread, openCmd := a.thread.OpenChat(chatID)
+		a.thread = updatedThread
+		if openCmd != nil {
+			cmds = append(cmds, openCmd)
+		}
 	}
 
 	if len(cmds) == 0 {
 		return a, nil
 	}
 	return a, tea.Batch(cmds...)
+}
+
+// searchJumpLoadedMsg carries the result of the async JumpContext
+// lookup back into Update. Err non-nil indicates a JumpContext
+// failure — the handler falls back to the legacy OpenChat + deferred
+// ScrollTo path so the user still lands in the chat without the
+// surrounding context window.
+//
+// Gen is the jump-generation snapshot captured when jumpContextCmd
+// was created. applySearchJumpLoaded compares it against the current
+// App.jumpGen and discards the message when they differ — the user
+// triggered a newer jump (or switched chats) before this completion
+// landed, and applying the stale window would yank the thread back.
+type searchJumpLoadedMsg struct {
+	Gen       uint64
+	ChatID    int64
+	MessageID int64
+	Messages  []domain.Message
+	Err       error
+}
+
+// jumpContextCmd returns a tea.Cmd that calls JumpContext on the
+// supplied jumper and emits a searchJumpLoadedMsg with the loaded
+// window (or the error, which the caller treats as a fallback
+// trigger). gen is the App.jumpGen value at kickoff so the handler
+// can drop stale results — see searchJumpLoadedMsg.Gen.
+func jumpContextCmd(jumper JumpContextProvider, hit search.Hit, around int, gen uint64) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), jumpContextTimeout)
+		defer cancel()
+		msgs, _, err := jumper.JumpContext(ctx, hit, around)
+		return searchJumpLoadedMsg{
+			Gen:       gen,
+			ChatID:    hit.ChatID,
+			MessageID: hit.Message.ID,
+			Messages:  msgs,
+			Err:       err,
+		}
+	}
+}
+
+// applySearchJumpLoaded routes the loaded ±N window into the thread
+// pane. On error the handler falls through to the legacy OpenChat +
+// deferred ScrollTo path so the user still lands in the chat — the
+// only thing they lose is the surrounding context. Returns the load
+// cmd from OpenChat so the deferred ScrollTo path actually receives
+// a messagesLoadedMsg; without it the thread would stay in
+// loading=true state and applyPendingScroll would never fire.
+//
+// Stale completions (msg.Gen != a.jumpGen) are dropped silently. The
+// generation counter is bumped by every jump kickoff and every chat
+// switch (chats / palette), so by the time the JumpContext goroutine
+// returns the world may already have moved on — applying the result
+// then would yank the thread back to the earlier hit (or, on the
+// error path, OpenChat the wrong chat).
+func (a App) applySearchJumpLoaded(msg searchJumpLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.Gen != a.jumpGen {
+		if a.log != nil {
+			a.log.Debug("search: dropping stale jump completion",
+				"got_gen", msg.Gen, "current_gen", a.jumpGen,
+				"chat_id", msg.ChatID, "message_id", msg.MessageID)
+		}
+		return a, nil
+	}
+	if msg.Err != nil || len(msg.Messages) == 0 {
+		if a.log != nil && msg.Err != nil {
+			a.log.Warn("search: jump context load failed",
+				"chat_id", msg.ChatID, "message_id", msg.MessageID, "err", msg.Err)
+		}
+		a.pendingScroll = &pendingThreadScroll{
+			ChatID:    msg.ChatID,
+			MessageID: msg.MessageID,
+			Around:    jumpAround,
+		}
+		// ReloadAfterJumpFailure (not OpenChat) so any optimistic-UI
+		// rows the user added during the async JumpContext window
+		// (input pane was already rebound to chatID by handleSearchJump)
+		// survive into the recovered tail. Mirrors the success path —
+		// LoadJumpWindow preserves outgoing too.
+		updatedThread, loadCmd := a.thread.ReloadAfterJumpFailure(msg.ChatID)
+		a.thread = updatedThread
+		return a, loadCmd
+	}
+	a.thread = a.thread.LoadJumpWindow(msg.ChatID, msg.Messages, msg.MessageID, jumpAround)
+	a.pendingScroll = nil
+	return a, nil
 }
 
 // openAttach flips the attach overlay visible (capturing the chat
@@ -565,6 +693,11 @@ func (a App) closePalette() App {
 func (a App) handlePaletteSelected(msg palette.SelectedMsg) (tea.Model, tea.Cmd) {
 	chatID := msg.ChatID
 	a = a.closePalette()
+	// Same rationale as handleChatSelected: a palette pick is a
+	// chat switch and must invalidate any in-flight search-jump
+	// (stale window load) and the legacy fallback's pendingScroll.
+	a.jumpGen++
+	a.pendingScroll = nil
 
 	updatedThread, cmd := a.thread.OpenChat(chatID)
 	a.thread = updatedThread
@@ -652,9 +785,25 @@ func (a App) handleDownloadRequest(req thread.DownloadRequestedMsg) (tea.Model, 
 		}
 		return a, nil
 	}
+	// In-flight guard: a repeated Ctrl-D on the same media before the
+	// previous goroutine finishes would write to the same .partial
+	// path concurrently and corrupt the output. Reserve the FileID
+	// for the duration of this download; release on goroutine exit.
+	if a.inFlightDownloads != nil && !a.inFlightDownloads.reserve(req.Media.FileID) {
+		if a.log != nil {
+			a.log.Debug("download: already in flight, ignoring chord",
+				"file_id", req.Media.FileID)
+		}
+		return a, nil
+	}
 	dl := a.downloader
 	log := a.log
+	registry := a.inFlightDownloads
+	fileID := req.Media.FileID
 	go func() {
+		if registry != nil {
+			defer registry.release(fileID)
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), downloadTimeout)
 		defer cancel()
 		if _, err := dl.Download(ctx, req.ChatID, req.ChatTitle, req.Media); err != nil && log != nil {
@@ -828,22 +977,52 @@ func (a App) cmdDownloadLatestMedia() (tea.Cmd, bool) {
 // character motion the textarea expects, and stealing it would break
 // every emacs muscle memory.
 //
-// Returns (updated app, true) when the chord was consumed, otherwise
-// the original app and false so the caller can fall through to the
-// regular delegate path.
-func (a App) applyScrollKey(k tea.KeyPressMsg) (App, bool) {
+// After the scroll lands, drives backward / forward pagination via
+// the thread model's PaginateOlderIfAtTop / PaginateNewerIfAtBottom
+// helpers. Without this the configured chord would page the viewport
+// but never trigger the in-Update pagination check (which only runs
+// from handleKey on keys that reach delegateToFocused — and the
+// chord is intercepted before that).
+//
+// Direction-aware fallback mirrors handleKey: in the small-window
+// case (AtTop && AtBottom both true) the primary direction can be a
+// no-op, so fall through to the opposite direction. ScrollDown
+// prefers forward (walk toward the live tail) but loads older
+// history when there is nothing newer; ScrollUp prefers backward
+// but falls forward in the symmetric post-jump case where only
+// forward pagination is reachable. Without this fallback pgdown /
+// ctrl+f on a chat that fits entirely in the viewport (default
+// keymap binds both to ScrollDown) would do nothing — handleKey
+// would have paged older, but the chord interception bypasses it.
+//
+// Returns (updated app, cmd, true) when the chord was consumed,
+// otherwise the original app, nil cmd, and false so the caller can
+// fall through to the regular delegate path.
+func (a App) applyScrollKey(k tea.KeyPressMsg) (App, tea.Cmd, bool) {
 	if a.focus == FocusInput {
-		return a, false
+		return a, nil, false
 	}
 	switch {
 	case key.Matches(k, a.keymap.ScrollUp):
 		a.thread = a.thread.ScrollUp()
-		return a, true
+		updated, cmd := a.thread.PaginateOlderIfAtTop()
+		a.thread = updated
+		if cmd == nil {
+			updated, cmd = a.thread.PaginateNewerIfAtBottom()
+			a.thread = updated
+		}
+		return a, cmd, true
 	case key.Matches(k, a.keymap.ScrollDown):
 		a.thread = a.thread.ScrollDown()
-		return a, true
+		updated, cmd := a.thread.PaginateNewerIfAtBottom()
+		a.thread = updated
+		if cmd == nil {
+			updated, cmd = a.thread.PaginateOlderIfAtTop()
+			a.thread = updated
+		}
+		return a, cmd, true
 	}
-	return a, false
+	return a, nil, false
 }
 
 // applyFocusChange shifts focus by +/-1 (mod 3) and propagates the change

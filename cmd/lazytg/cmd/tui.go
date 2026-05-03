@@ -92,6 +92,7 @@ func runTUI(cmd *cobra.Command, _ []string) error {
 		Search:          &searchModel,
 		Palette:         &paletteModel,
 		PaletteFrecency: runtime.Frecency,
+		Jumper:          runtime.SearchSvc,
 	}
 	if runtime.DownloadSvc != nil {
 		deps.Downloader = runtime.DownloadSvc
