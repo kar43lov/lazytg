@@ -53,10 +53,19 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Action and linter versions have to move together. v6 rejects any
+      # golangci-lint v2 outright ("v2 is not supported by golangci-lint-action
+      # v6"), while v9 requires v2.1.0 or later — so the previously pinned
+      # v2.0.2 could not run under either. The result was a Lint job that never
+      # linted anything: it failed during install, which no local run reproduces
+      # because locally the binary is already there.
+      #
+      # The pinned version matches what developers run locally (2.12.x), since a
+      # version skew here means CI and local disagree about findings.
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.0.2
+          version: v2.12.1
           args: --timeout=5m
 
   secret-scan:
