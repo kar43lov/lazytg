@@ -30,9 +30,13 @@ corresponding env var before launching lazytg.
 Files that may exist inside these directories:
 
 - `<config>/keymap.toml` — optional keymap overrides (this page).
-- `<config>/secrets.age` — created only when no OS keyring is available;
-  encrypted with [age](https://age-encryption.org) and a master passphrase
-  prompted at startup. Mode `0600` (audited).
+- `<config>/secrets.age` — where session blobs live (the keyring holds only its passphrase);
+  encrypted with [age](https://age-encryption.org). The passphrase is generated
+  once and read from the OS keyring; only a box without a keyring prompts for
+  it at startup. Mode `0600` (audited).
+- `<config>/secrets.age.lock` — empty sidecar used for the cross-process write
+  lock (`flock`). Safe to delete while lazytg is not running; it is recreated on
+  the next write.
 - `<data>/lazytg.db` — SQLite database (messages, FTS5 index, accounts,
   reindex state). Mode `0600` (audited).
 - `<data>/lazytg.db-wal`, `<data>/lazytg.db-shm` — SQLite WAL companions.
@@ -206,7 +210,7 @@ A dedicated UI switcher (Ctrl+1 / Ctrl+2 inside the TUI) is on the v0.2
 roadmap. Until then, attach the `--account` flag every time you need to
 operate on a non-default phone.
 
-`lazytg logout --account <phone>` drops the session blob from the keyring
+`lazytg logout --account <phone>` drops the session blob from `secrets.age`
 (or the age-encrypted file) without touching the cached database — your
 locally indexed messages survive logout, only the auth state is purged.
 
