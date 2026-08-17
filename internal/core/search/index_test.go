@@ -14,9 +14,21 @@ import (
 
 // openTestRepo opens a fresh SQLite repo with all migrations applied (incl.
 // 0005_fts) and returns it together with a context bounded to the test.
+//
+// 10s suits a test whose fixture is a handful of rows. A test that writes
+// thousands must ask for its own budget via openTestRepoWithBudget: the
+// returned context bounds the fixture and the assertions alike, so a fixture
+// that outgrows the deadline fails during setup with "context deadline
+// exceeded" and says nothing about the behaviour under test.
 func openTestRepo(t *testing.T) (*sqlite.Repo, context.Context) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	return openTestRepoWithBudget(t, 10*time.Second)
+}
+
+// openTestRepoWithBudget is openTestRepo with an explicit context deadline.
+func openTestRepoWithBudget(t *testing.T, budget time.Duration) (*sqlite.Repo, context.Context) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), budget)
 	t.Cleanup(cancel)
 
 	path := filepath.Join(t.TempDir(), "search.db")

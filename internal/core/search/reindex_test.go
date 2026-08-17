@@ -98,16 +98,21 @@ func TestReindex_RunAll_ProgressEvents(t *testing.T) {
 // cancelReturnBudget is how long RunAll may take to unwind after its context
 // is cancelled. Cancellation is observed between chats, so the budget has to
 // cover finishing the chat already in flight — 200 messages indexed under
-// -race on whatever disk the runner happens to have.
-//
-// It was 5s, which held on an Apple Silicon laptop (RunAll returns in ~2s) and
-// failed on ubuntu-latest the first time this suite ran in CI. The generous
-// value keeps the assertion meaningful — it still catches a hang or a panic,
-// which is the actual failure mode — without turning runner speed into a test
-// result. Shrinking the fixture instead would be worse: the volume is what
-// guarantees the cancel lands mid-run rather than after RunAll already
-// finished, which would quietly reduce this to a no-op.
+// -race on whatever disk the runner happens to have. It stays generous on
+// purpose: the failure this assertion exists for is a hang or a panic, not a
+// slow disk.
 const cancelReturnBudget = 30 * time.Second
+
+// fixtureBudget bounds the whole test, fixture included. 10 000 rows written
+// under -race do not fit the 10s default of openTestRepo on a CI runner — the
+// test then dies mid-seed with "context deadline exceeded" at chat 31 of 50,
+// which reads like a cancellation bug and is not one.
+//
+// The fixture keeps its size rather than shrinking to fit: the volume is what
+// guarantees the 50 ms cancel lands while RunAll is still working, instead of
+// after it has already finished, which would quietly reduce this test to a
+// no-op that passes for the wrong reason.
+const fixtureBudget = 2 * time.Minute
 
 // TestReindex_GracefulCancel arms a sizeable orphan workload (the AFTER
 // INSERT trigger is dropped, 50 chats × 200 messages are written without
@@ -117,7 +122,7 @@ const cancelReturnBudget = 30 * time.Second
 // internally consistent — verified via PRAGMA integrity_check and the
 // FTS5-built-in 'integrity-check' invocation.
 func TestReindex_GracefulCancel(t *testing.T) {
-	repo, ctx := openTestRepo(t)
+	repo, ctx := openTestRepoWithBudget(t, fixtureBudget)
 	db := repo.DB()
 
 	if _, err := db.ExecContext(ctx, `DROP TRIGGER messages_ai`); err != nil {
