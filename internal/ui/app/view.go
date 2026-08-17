@@ -68,7 +68,7 @@ func (a App) renderBody() string {
 		Width(a.thread.Width).
 		Height(a.thread.Height).
 		Render(a.thread.View())
-	separator := verticalSeparator(a.chats.Height)
+	separator := verticalSeparator(a.chats.Height, a.draggingSep)
 
 	upper := lipgloss.JoinHorizontal(lipgloss.Top, chatsView, separator, threadView)
 
@@ -102,12 +102,17 @@ func inputStyle(focused bool) lipgloss.Style {
 	return style
 }
 
-// verticalSeparator returns a column of "│" matching pane height.
-func verticalSeparator(height int) string {
+// verticalSeparator returns a column of "│" matching pane height. While the
+// user is dragging it, the column is highlighted: a one-column-wide grab handle
+// gives no other feedback that the pointer actually caught it.
+func verticalSeparator(height int, dragging bool) string {
 	if height <= 0 {
-		return "│"
+		height = 1
 	}
 	col := strings.Repeat("│\n", height-1) + "│"
+	if dragging {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render(col) // ANSI bright blue
+	}
 	return col
 }
 

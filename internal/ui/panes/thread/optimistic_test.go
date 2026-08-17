@@ -3,6 +3,7 @@ package thread
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kar43lov/lazytg/internal/core/events"
 )
@@ -253,5 +254,95 @@ func TestOpenChatResetsOptimistic(t *testing.T) {
 	m, _ = m.OpenChat(2)
 	if got := len(m.Outgoing()); got != 0 {
 		t.Fatalf("OpenChat must reset outgoing; got %d", got)
+	}
+}
+
+// TestRenderOptimistic_CarriesTimeAndAuthor is the fix for what the first live
+// session showed: a message you had just sent rendered as bare text — no time,
+// no author — while every message around it carried "[HH:MM] name". The user
+// reported it as "неудобно", and it is: the row reads as a different kind of
+// thing until the server echo replaces it, which can take the whole session
+// when live updates never deliver one.
+func TestRenderOptimistic_CarriesTimeAndAuthor(t *testing.T) {
+	t.Parallel()
+
+	sent := time.Date(2026, 8, 17, 19, 39, 0, 0, time.Local)
+	cases := []struct {
+		name       string
+		state      string
+		wantGlyph  string
+		wantInBody string
+	}{
+		{"pending", events.OutgoingStatePending, "⏳", "234"},
+		{"sent", events.OutgoingStateSent, "", "234"},
+		{"failed", events.OutgoingStateFailed, "✗", "234"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			out := stripANSI(RenderOptimistic(OutgoingMessage{
+				LocalID: "l1", ChatID: 7, Text: "234", State: tc.state, SentAt: sent,
+			}))
+			first, rest, found := strings.Cut(out, "\n")
+			if !found {
+				t.Fatalf("no header line in %q", out)
+			}
+			if !strings.HasPrefix(first, "[19:39] you") {
+				t.Errorf("header = %q, want it to start with \"[19:39] you\"", first)
+			}
+			if tc.wantGlyph != "" && !strings.Contains(first, tc.wantGlyph) {
+				t.Errorf("header %q is missing the %q state glyph", first, tc.wantGlyph)
+			}
+			if !strings.Contains(rest, tc.wantInBody) {
+				t.Errorf("body %q is missing the message text", rest)
+			}
+		})
+	}
+}
+
+// TestRenderOptimistic_WithoutTimeStaysBare covers the ordering where a state
+// event arrives before the composer's own dispatch: no send time is known, and
+// inventing one would print a timestamp the user would read as real.
+func TestRenderOptimistic_WithoutTimeStaysBare(t *testing.T) {
+	t.Parallel()
+
+	out := stripANSI(RenderOptimistic(OutgoingMessage{
+		LocalID: "l1", ChatID: 7, Text: "hi", State: events.OutgoingStatePending,
+	}))
+	if strings.Contains(out, "\n") {
+		t.Errorf("expected a single bare line, got %q", out)
+	}
+	if !strings.Contains(out, "hi") {
+		t.Errorf("text missing from %q", out)
+	}
+}
+
+// TestOutgoingStateChange_KeepsSendTime pins the transition path: the state
+// events rebuild the row, and dropping SentAt there would make a message lose
+// its timestamp at the moment it was confirmed sent — the worst possible time.
+func TestOutgoingStateChange_KeepsSendTime(t *testing.T) {
+	t.Parallel()
+
+	m, _ := sized(New()).OpenChat(7)
+	m = m.ApplyDispatched("l1", 7, "234")
+	rows := m.Outgoing()
+	if len(rows) != 1 || rows[0].SentAt.IsZero() {
+		t.Fatalf("dispatch did not record a send time: %+v", rows)
+	}
+	dispatched := rows[0].SentAt
+
+	m, _ = m.Update(events.OutgoingMessageStateChanged{
+		LocalID: "l1", ChatID: 7, State: events.OutgoingStateSent,
+	})
+	rows = m.Outgoing()
+	if len(rows) != 1 {
+		t.Fatalf("row count after the Sent event: %d", len(rows))
+	}
+	if !rows[0].SentAt.Equal(dispatched) {
+		t.Errorf("send time changed on the Sent event: %v → %v", dispatched, rows[0].SentAt)
+	}
+	if rows[0].Text != "234" {
+		t.Errorf("text lost on the Sent event: %q", rows[0].Text)
 	}
 }

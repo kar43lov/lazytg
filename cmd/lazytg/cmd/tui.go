@@ -15,7 +15,23 @@ import (
 	"github.com/kar43lov/lazytg/internal/ui/panes/chats"
 	uisearch "github.com/kar43lov/lazytg/internal/ui/panes/search"
 	"github.com/kar43lov/lazytg/internal/ui/panes/thread"
+	"github.com/kar43lov/lazytg/internal/ui/statusbar"
 )
+
+// initialConnState maps the attach outcome onto the connection indicator.
+//
+// statusbar.New starts at "connecting", and in v0.1 nothing ever moves it off:
+// events.ConnectionStateChanged is published only by ReconnectManager, which
+// runs on reconnect attempts and not on the initial attach. So a fully working
+// session showed a yellow "connecting" for the whole run, and an offline one
+// claimed it was still trying — the indicator was decorative. Found on the
+// first live smoke.
+func initialConnState(attached bool) string {
+	if attached {
+		return statusbar.StateOnline
+	}
+	return statusbar.StateOffline
+}
 
 // newTuiCmd builds the default "no subcommand" entry point. Running
 // `lazytg` without arguments dispatches here so the user gets the TUI
@@ -93,7 +109,13 @@ func runTUI(cmd *cobra.Command, _ []string) error {
 	searchModel := uisearch.New(runtime.SearchSvc, 0, logger)
 	paletteModel := palette.New(runtime.Frecency, runtime.Repo, logger)
 
+	// runtime.Client is set by AttachClient and nowhere else, so it is the
+	// direct answer to "did the attach above succeed".
+	status := statusbar.New()
+	status.ConnState = initialConnState(runtime.Client != nil)
+
 	deps := uiapp.Deps{
+		Status:          &status,
 		Bus:             runtime.Bus,
 		Log:             logger,
 		Keymap:          runtime.Keymap,

@@ -291,6 +291,33 @@ Common remedies:
 
 ---
 
+### Dragging with the mouse selects nothing outside the thread
+
+**Symptom.** Dragging across the chat list, the composer or the status bar
+highlights nothing, so there is nothing to copy. (Inside the thread pane
+dragging *does* select — that is lazytg's own selection, and releasing
+copies it.)
+
+**Diagnosis.** Not a bug. lazytg puts the terminal in mouse-reporting mode
+so clicks can pick a chat and the wheel can scroll, which means mouse
+events go to the application instead of the terminal's own selection.
+lazytg implements selection for the thread — where message text lives —
+and leaves the rest to the terminal.
+
+**Fix.** Hold the terminal's override key while dragging:
+
+- iTerm2, Terminal.app: <kbd>Option</kbd>
+- most Linux terminals (GNOME Terminal, Konsole, xterm): <kbd>Shift</kbd>
+- tmux: prefix + `[` enters copy mode, which bypasses the application
+  entirely
+
+If the thread selection copies nothing, the clipboard leg is the suspect:
+lazytg writes through OSC 52, which `tmux` passes on only with
+`set -g set-clipboard on`, and a few terminals disable it for security.
+The highlight appearing but the paste staying empty is exactly that case.
+
+---
+
 ### Ctrl+Space does nothing (cannot open the command palette)
 
 **Symptom.** The default `Ctrl+Space` binding for `open_palette` is

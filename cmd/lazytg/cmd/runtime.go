@@ -107,8 +107,85 @@ func (p *stdinPrompter) Phone(_ context.Context) (string, error) {
 	return p.readLine("Phone (e.g. +79991112233): ")
 }
 
-func (p *stdinPrompter) Code(_ context.Context, _ *tg.AuthSentCode) (string, error) {
-	return p.readLine("Code from Telegram: ")
+func (p *stdinPrompter) Code(_ context.Context, sent *tg.AuthSentCode) (string, error) {
+	return p.readLine("Code from Telegram" + codeDelivery(sent) + codeFallback(sent) + ": ")
+}
+
+// codeFallback reports what Telegram says it would do next, which matters when
+// the first channel delivers nothing: an app code is only useful if another
+// session is online to receive it, and Telegram's own clients offer "resend as
+// SMS" once Timeout elapses. Neither is visible from the prompt otherwise, so a
+// user with no code has no idea whether waiting helps or what to wait for.
+func codeFallback(sent *tg.AuthSentCode) string {
+	if sent == nil {
+		return ""
+	}
+	next, ok := sent.GetNextType()
+	if !ok {
+		return ""
+	}
+	var channel string
+	switch next.(type) {
+	case *tg.AuthCodeTypeSMS:
+		channel = "SMS"
+	case *tg.AuthCodeTypeCall:
+		channel = "a voice call"
+	case *tg.AuthCodeTypeFlashCall:
+		channel = "a flash call"
+	case *tg.AuthCodeTypeMissedCall:
+		channel = "a missed call"
+	case *tg.AuthCodeTypeFragmentSMS:
+		channel = "Fragment"
+	default:
+		channel = next.TypeName()
+	}
+	if timeout, ok := sent.GetTimeout(); ok {
+		return fmt.Sprintf(" [not arrived? resend switches to %s, allowed after %ds]", channel, timeout)
+	}
+	return fmt.Sprintf(" [not arrived? resend switches to %s]", channel)
+}
+
+// codeDelivery renders where Telegram says it put the code.
+//
+// The bare "Code from Telegram:" prompt costs real time on a first login: the
+// code is routinely *not* an SMS but a service message inside an app that is
+// already authorised, and it can equally be a missed call whose caller number
+// is the code, an email, or a Fragment link. Telegram tells us which in the
+// sentCode reply, and hiding that leaves the user hunting through devices while
+// the code expires — every retry is another SendCode against an unofficial
+// client, which is exactly the behavioural trace to avoid.
+func codeDelivery(sent *tg.AuthSentCode) string {
+	if sent == nil || sent.Type == nil {
+		return ""
+	}
+	switch t := sent.Type.(type) {
+	case *tg.AuthSentCodeTypeApp:
+		return " (service message in the Telegram app on your other devices, not an SMS)"
+	case *tg.AuthSentCodeTypeSMS:
+		return " (SMS)"
+	case *tg.AuthSentCodeTypeSMSWord:
+		return " (SMS containing a single word)"
+	case *tg.AuthSentCodeTypeSMSPhrase:
+		return " (SMS containing a phrase)"
+	case *tg.AuthSentCodeTypeCall:
+		return " (voice call)"
+	case *tg.AuthSentCodeTypeMissedCall:
+		return fmt.Sprintf(" (missed call from %s… — the code is the last %d digits of the caller number)", t.Prefix, t.Length)
+	case *tg.AuthSentCodeTypeFlashCall:
+		return " (flash call — read the code off the caller number)"
+	case *tg.AuthSentCodeTypeEmailCode:
+		return fmt.Sprintf(" (email to %s)", t.EmailPattern)
+	case *tg.AuthSentCodeTypeFragmentSMS:
+		return fmt.Sprintf(" (Fragment — collect it at %s)", t.URL)
+	case *tg.AuthSentCodeTypeFirebaseSMS:
+		return " (SMS via Firebase)"
+	case *tg.AuthSentCodeTypeSetUpEmailRequired:
+		return " (Telegram wants a login email configured first — do that once in an official client)"
+	default:
+		// A type we do not know yet is still worth naming: it tells the user
+		// what to search for instead of leaving them with a bare prompt.
+		return fmt.Sprintf(" (%s)", sent.Type.TypeName())
+	}
 }
 
 func (p *stdinPrompter) Password(_ context.Context) (string, error) {

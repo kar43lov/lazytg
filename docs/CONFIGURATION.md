@@ -146,6 +146,8 @@ for the rationale.
 | `toggle_help`  | `?`                     | Toggle the help overlay        |
 | `focus_next`   | `tab`                   | Cycle focus to the next pane   |
 | `focus_prev`   | `shift+tab`             | Cycle focus to the previous pane |
+| `next_chat`    | `ctrl+tab`, `alt+n`     | Open the next chat in the list |
+| `prev_chat`    | `ctrl+shift+tab`, `alt+p` | Open the previous chat       |
 | `scroll_up`    | `ctrl+b`, `pgup`        | Scroll the focused pane up     |
 | `scroll_down`  | `ctrl+f`, `pgdown`      | Scroll the focused pane down   |
 | `search`       | `/`                     | Open the search overlay        |
@@ -156,6 +158,14 @@ for the rationale.
 
 Each key may be a single chord (`ctrl+r`) or any value `parseKey` recognises;
 see `internal/ui/keymap/parse.go` for the named-key dictionary.
+
+`next_chat` / `prev_chat` work from any pane, the composer included, and wrap
+around the list in the order it is displayed (pinned first, then by last
+message). Note that `ctrl+tab` only reaches an application in terminals that
+implement key disambiguation — the Kitty keyboard protocol, supported by
+Ghostty, kitty, WezTerm and recent iTerm2. Elsewhere the terminal sends a plain
+`tab`, which cycles focus instead; that is why `alt+n` / `alt+p` are bound as
+portable aliases, and either can be rebound below.
 
 ### Overriding bindings
 
@@ -173,6 +183,10 @@ open_palette = "ctrl+p"
 
 # Use Esc as quit
 quit = "esc"
+
+# Chat cycling on a terminal that swallows ctrl+tab
+next_chat = "ctrl+n"
+prev_chat = "ctrl+p"
 ```
 
 Behaviour:

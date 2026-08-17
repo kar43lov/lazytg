@@ -1,6 +1,8 @@
 package thread
 
 import (
+	"time"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
@@ -55,6 +57,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.applyOutgoingState(typed)
 	case tea.KeyPressMsg:
 		return m.handleKey(typed)
+	case tea.MouseWheelMsg:
+		return m.handleWheel(typed)
 	}
 	return m, nil
 }
@@ -279,13 +283,10 @@ func (m Model) applyOutgoingState(ev events.OutgoingMessageStateChanged) (Model,
 		// finalizedLocalIDs guard tells ApplyDispatched not to re-create
 		// it, and applyIncoming will dedupe the echo via
 		// pendingServerIDs.
-		if text := findOutgoingText(m.outgoing, ev.LocalID); text != "" {
-			m.outgoing = upsertOutgoing(m.outgoing, OutgoingMessage{
-				LocalID: ev.LocalID,
-				ChatID:  ev.ChatID,
-				Text:    text,
-				State:   events.OutgoingStateSent,
-			})
+		if row, ok := findOutgoing(m.outgoing, ev.LocalID); ok && row.Text != "" {
+			row.ChatID = ev.ChatID
+			row.State = events.OutgoingStateSent
+			m.outgoing = upsertOutgoing(m.outgoing, row)
 		}
 	case events.OutgoingStateFailed:
 		m.finalizedLocalIDs[ev.LocalID] = struct{}{}
@@ -294,14 +295,11 @@ func (m Model) applyOutgoingState(ev events.OutgoingMessageStateChanged) (Model,
 		// produce a [✗]-glyph row with empty text — uglier than no row
 		// at all. The finalizedLocalIDs guard suppresses the late
 		// Dispatched insert, so the user sees nothing instead.
-		if text := findOutgoingText(m.outgoing, ev.LocalID); text != "" {
-			m.outgoing = upsertOutgoing(m.outgoing, OutgoingMessage{
-				LocalID: ev.LocalID,
-				ChatID:  ev.ChatID,
-				Text:    text,
-				State:   events.OutgoingStateFailed,
-				Error:   ev.Error,
-			})
+		if row, ok := findOutgoing(m.outgoing, ev.LocalID); ok && row.Text != "" {
+			row.ChatID = ev.ChatID
+			row.State = events.OutgoingStateFailed
+			row.Error = ev.Error
+			m.outgoing = upsertOutgoing(m.outgoing, row)
 		}
 	}
 	m.viewport.SetContent(m.renderAll())
@@ -337,6 +335,7 @@ func (m Model) ApplyDispatched(localID string, chatID int64, text string) Model 
 		ChatID:  chatID,
 		Text:    text,
 		State:   events.OutgoingStatePending,
+		SentAt:  time.Now(),
 	})
 	wasAtBottom := m.viewport.AtBottom()
 	m.viewport.SetContent(m.renderAll())
@@ -374,13 +373,13 @@ func removeOutgoing(list []OutgoingMessage, localID string) []OutgoingMessage {
 // only carries State + ServerID + Error — not the original message
 // body. The body comes from the entry already inserted via
 // applyDispatched.
-func findOutgoingText(list []OutgoingMessage, localID string) string {
+func findOutgoing(list []OutgoingMessage, localID string) (OutgoingMessage, bool) {
 	for _, m := range list {
 		if m.LocalID == localID {
-			return m.Text
+			return m, true
 		}
 	}
-	return ""
+	return OutgoingMessage{}, false
 }
 
 // handleKey forwards the key to the viewport for scrolling, then
@@ -405,8 +404,34 @@ func findOutgoingText(list []OutgoingMessage, localID string) string {
 func (m Model) handleKey(k tea.KeyPressMsg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(k)
+	return m.paginateAfterScroll(cmd, isScrollDownKey(k))
+}
 
-	if isScrollDownKey(k) {
+// handleWheel is handleKey's mouse twin. The viewport handles MouseWheelMsg
+// itself (MouseWheelEnabled is on by default in bubbles), so the only work here
+// is the pagination decision — which must be the same one keyboard scrolling
+// makes, or the wheel would stop at the loaded window's edge and look like the
+// history simply ends.
+func (m Model) handleWheel(w tea.MouseWheelMsg) (Model, tea.Cmd) {
+	// Only the vertical wheel scrolls this pane. A sideways nudge is not "up":
+	// treating it as one asks for another page of older history every time a
+	// trackpad drifts horizontally at the top of the thread. The app filters
+	// horizontal wheels today, so this guards the pane's own contract rather
+	// than a live path.
+	if w.Button != tea.MouseWheelUp && w.Button != tea.MouseWheelDown {
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.viewport, cmd = m.viewport.Update(w)
+	return m.paginateAfterScroll(cmd, w.Button == tea.MouseWheelDown)
+}
+
+// paginateAfterScroll decides whether a scroll that just happened should pull
+// another page, and in which direction. down disambiguates the small-window
+// case where the viewport reports AtTop and AtBottom at once: without it the
+// older side always wins and scrolling down through a jump window stalls.
+func (m Model) paginateAfterScroll(cmd tea.Cmd, down bool) (Model, tea.Cmd) {
+	if down {
 		if m.shouldPaginateNewer() {
 			m.loading = true
 			return m, tea.Batch(cmd, paginateNewerCmd(m.repo, m.chatID, m.forwardCursorID, pageSize, m.loadGen))

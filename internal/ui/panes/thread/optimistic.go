@@ -1,6 +1,8 @@
 package thread
 
 import (
+	"time"
+
 	"charm.land/lipgloss/v2"
 
 	"github.com/kar43lov/lazytg/internal/core/events"
@@ -16,6 +18,12 @@ type OutgoingMessage struct {
 	Text    string
 	State   string
 	Error   string
+
+	// SentAt is when the composer dispatched the message, used for the row's
+	// timestamp until the server echo replaces it with the real one. A zero
+	// value renders without a header — the state transitions that rebuild this
+	// struct must carry it over.
+	SentAt time.Time
 }
 
 // pendingStyle / failedStyle decorate the optimistic prefix glyphs.
@@ -43,18 +51,36 @@ var (
 // future state we forgot to handle is visually obvious during
 // development.
 func RenderOptimistic(msg OutgoingMessage) string {
+	var glyph, body string
 	switch msg.State {
 	case events.OutgoingStatePending:
-		return pendingStyle.Render("[⏳] ") + msg.Text
+		glyph = pendingStyle.Render("⏳")
+		body = msg.Text
 	case events.OutgoingStateFailed:
-		out := failedStyle.Render("[✗] ") + msg.Text
+		glyph = failedStyle.Render("✗")
+		body = msg.Text
 		if msg.Error != "" {
-			out += "\n" + failedStyle.Render("error: "+msg.Error)
+			body += "\n" + failedStyle.Render("error: "+msg.Error)
 		}
-		return out
 	case events.OutgoingStateSent:
-		return msg.Text
+		body = msg.Text
 	default:
-		return "[?] " + msg.Text
+		glyph = "?"
+		body = msg.Text
 	}
+	if msg.SentAt.IsZero() {
+		// No dispatch time recorded (a state event that arrived before the
+		// composer's own message). A header with a fabricated time would be
+		// worse than none: it would read as a real timestamp.
+		if glyph != "" {
+			return "[" + glyph + "] " + body
+		}
+		return body
+	}
+	return renderHeader(msg.SentAt, selfAuthorLabel, glyph) + "\n" + body
 }
+
+// selfAuthorLabel names the account's own messages while they are in flight.
+// "you" rather than the numeric id: the id is meaningless to the reader, and
+// the row is by definition theirs.
+const selfAuthorLabel = "you"

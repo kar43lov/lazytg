@@ -32,8 +32,37 @@ func stripANSI(s string) string {
 
 // fixedDate returns a deterministic timestamp. All format tests use
 // the same hour:minute so the "[15:04]" header is stable.
+//
+// Deliberately in time.Local, not UTC: the header renders in the user's zone,
+// so a UTC fixture would make the golden files pass only on a UTC machine (CI)
+// and fail everywhere else. The UTC→local conversion itself is pinned by
+// TestFormatHeader_RendersInLocalZone, which fixes the zone explicitly.
 func fixedDate() time.Time {
-	return time.Date(2026, 5, 2, 15, 42, 0, 0, time.UTC)
+	return time.Date(2026, 5, 2, 15, 42, 0, 0, time.Local)
+}
+
+// TestFormatHeader_RendersInLocalZone pins the conversion the first live smoke
+// caught: the domain keeps Date in UTC, and formatting it directly printed the
+// UTC wall clock — a message sent at 19:32 MSK appeared as [16:32], three hours
+// in the past, which reads as a stale thread rather than a formatting bug.
+//
+// Not parallel: it swaps time.Local for the duration.
+func TestFormatHeader_RendersInLocalZone(t *testing.T) {
+	orig := time.Local
+	time.Local = time.FixedZone("TEST+03", 3*60*60)
+	t.Cleanup(func() { time.Local = orig })
+
+	msg := domain.Message{
+		ID:     1,
+		ChatID: 777000,
+		FromID: 0,
+		Date:   time.Date(2026, 8, 17, 16, 32, 0, 0, time.UTC),
+		Text:   "Login code: 94532",
+	}
+	got := stripANSI(renderHeader(msg.Date, authorLabel(msg.FromID), ""))
+	if !strings.HasPrefix(got, "[19:32]") {
+		t.Errorf("header = %q, want it to start with [19:32] (16:32 UTC in a +03:00 zone)", got)
+	}
 }
 
 func TestFormatMessageGolden(t *testing.T) {
@@ -387,5 +416,68 @@ func TestLatestMediaMessage(t *testing.T) {
 	}
 	if got.ID != 2 || got.Media == nil || got.Media.FileID != 99 {
 		t.Fatalf("wrong media row: %+v", got)
+	}
+}
+
+// TestResolveAuthor covers the sender naming the first live session made
+// unavoidable: every line, including the reader's own, was labelled
+// "user-8385473863".
+func TestResolveAuthor(t *testing.T) {
+	t.Parallel()
+
+	const peer = 862242381
+	names := map[int64]string{peer: "Иван Егошин"}
+
+	cases := []struct {
+		name    string
+		msg     domain.Message
+		chatID  int64
+		private bool
+		want    string
+	}{
+		{"service message", domain.Message{FromID: 0}, peer, true, "system"},
+		{"known peer by name", domain.Message{FromID: peer}, peer, true, "Иван Егошин"},
+		{"own message in a private chat", domain.Message{FromID: 8385473863}, peer, true, "you"},
+		{"unknown sender in a group", domain.Message{FromID: 555}, -100123, false, "user-555"},
+		{"named sender in a group", domain.Message{FromID: peer}, -100123, false, "Иван Егошин"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := resolveAuthor(tc.msg, tc.chatID, tc.private, names); got != tc.want {
+				t.Errorf("resolveAuthor = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSetDirectory_NamesRenderedMessages is the end-to-end: names supplied by
+// the app must reach the rendered thread, not just the resolver.
+func TestSetDirectory_NamesRenderedMessages(t *testing.T) {
+	t.Parallel()
+
+	const peer = 862242381
+	m := sized(New())
+	m, _ = m.OpenChat(peer)
+	m, _ = m.Update(messagesLoadedMsg{
+		chatID: peer,
+		gen:    m.loadGen,
+		messages: []domain.Message{
+			{ID: 1, ChatID: peer, FromID: peer, Date: fixedDate(), Text: "from them"},
+			{ID: 2, ChatID: peer, FromID: 8385473863, Date: fixedDate(), Text: "from me"},
+		},
+	})
+	m = m.SetDirectory(map[int64]string{peer: "Иван Егошин"}, true)
+
+	view := stripANSI(m.View())
+	if !strings.Contains(view, "Иван Егошин") {
+		t.Errorf("peer name missing from the rendered thread:\n%s", view)
+	}
+	if !strings.Contains(view, "you") {
+		t.Errorf("own message not labelled \"you\":\n%s", view)
+	}
+	if strings.Contains(view, "user-862242381") {
+		t.Errorf("raw numeric id still rendered:\n%s", view)
 	}
 }

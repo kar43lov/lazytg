@@ -44,6 +44,8 @@ func bindingFields(km *Keymap) map[string]*key.Binding {
 		"toggle_help":  &km.ToggleHelp,
 		"focus_next":   &km.FocusNext,
 		"focus_prev":   &km.FocusPrev,
+		"next_chat":    &km.NextChat,
+		"prev_chat":    &km.PrevChat,
 		"scroll_up":    &km.ScrollUp,
 		"scroll_down":  &km.ScrollDown,
 		"search":       &km.Search,

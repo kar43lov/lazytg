@@ -3,6 +3,7 @@ package thread
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 
@@ -51,12 +52,18 @@ var (
 // The output ends with a trailing newline so callers can concatenate
 // messages with a blank-line separator without bookkeeping.
 func FormatMessage(msg domain.Message, width int, replyTo *domain.Message) string {
+	return formatMessageAs(msg, width, replyTo, authorLabel(msg.FromID))
+}
+
+// formatMessageAs is FormatMessage with the author label decided by the caller,
+// which is how the pane substitutes a real name for the numeric id.
+func formatMessageAs(msg domain.Message, width int, replyTo *domain.Message, author string) string {
 	if width < minBodyWidth {
 		width = minBodyWidth
 	}
 
 	var b strings.Builder
-	b.WriteString(formatHeader(msg))
+	b.WriteString(renderHeader(msg.Date, author, ""))
 	b.WriteByte('\n')
 
 	if replyTo != nil {
@@ -133,22 +140,62 @@ var (
 	hintStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
 )
 
-// formatHeader produces "[HH:MM] author" with the canonical styling.
-// Author resolution is a Stage 3 concern — for now we surface the
-// numeric FromID so the user can at least disambiguate two parties in a
-// 1:1 chat.
-func formatHeader(msg domain.Message) string {
-	timestamp := msg.Date.Format("15:04")
-	return timeStyle.Render(fmt.Sprintf("[%s]", timestamp)) + " " + nameStyle.Render(authorLabel(msg.FromID))
+// renderHeader is the one place a message header is composed, shared by stored
+// messages and by the optimistic rows of messages still in flight. Before this
+// was shared, an outgoing message rendered as bare text: no time, no author,
+// visually unlike every line around it, until the server echo replaced it —
+// which can take the whole session if live updates never deliver the echo.
+//
+// suffix carries an optional state glyph (⏳ / ✗) so an in-flight row says so
+// in its header instead of prefixing the body and shifting the text column.
+//
+// Local() is load-bearing: every layer below the UI keeps time in UTC on
+// purpose (storage, tg mapping, search), and formatting that instant as-is
+// prints UTC to a user sitting in another zone. Found on the first live smoke —
+// a message sent at 19:32 MSK rendered as [16:32].
+func renderHeader(ts time.Time, author, suffix string) string {
+	head := timeStyle.Render(fmt.Sprintf("[%s]", ts.Local().Format("15:04"))) + " " + nameStyle.Render(author)
+	if suffix != "" {
+		head += " " + suffix
+	}
+	return head
 }
 
-// authorLabel maps a from_id to a display string. Zero means "service
-// message / system" (Telegram uses this for join/leave notifications).
+// authorLabel maps a from_id to a display string with no directory to consult.
+// Zero means "service message / system" (Telegram uses this for join/leave
+// notifications); anything else falls back to the numeric id.
 func authorLabel(fromID int64) string {
 	if fromID == 0 {
 		return "system"
 	}
 	return fmt.Sprintf("user-%d", fromID)
+}
+
+// resolveAuthor names the sender of msg as well as the pane can.
+//
+// A raw "user-8385473863" is what the thread used to print for every line,
+// including the reader's own messages — unreadable, and the id is not something
+// a human can map back to a person. Three sources, in order:
+//
+//  1. names — titles from the chat list, which covers the other party of a
+//     private chat and any group/channel that has its own dialog row.
+//  2. the private-chat rule: in a 1:1 dialog every message is either from the
+//     peer (from_id == chat id) or from the account itself, so a sender that is
+//     not the peer is the reader. No RPC and no self-id plumbing needed.
+//  3. the numeric fallback, for group members with no dialog of their own —
+//     a proper member directory needs peer names in storage, which v0.1 does
+//     not keep.
+func resolveAuthor(msg domain.Message, chatID int64, private bool, names map[int64]string) string {
+	if msg.FromID == 0 {
+		return "system"
+	}
+	if name, ok := names[msg.FromID]; ok && name != "" {
+		return name
+	}
+	if private && msg.FromID != chatID {
+		return selfAuthorLabel
+	}
+	return authorLabel(msg.FromID)
 }
 
 // formatReplyHint truncates the parent message preview to replyPreviewMax

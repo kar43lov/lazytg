@@ -62,6 +62,7 @@ Current capabilities:
 | Binding         | Action                                |
 |-----------------|---------------------------------------|
 | Tab / Shift+Tab | cycle focus between panes             |
+| Ctrl+Tab / Ctrl+Shift+Tab | next / previous chat (also Alt+N / Alt+P) |
 | Enter           | send message                          |
 | Alt+Enter       | newline in input                      |
 | Ctrl+R          | reply to focused message              |
@@ -72,6 +73,31 @@ Current capabilities:
 | Ctrl+U          | attach file (upload)                  |
 | `?`             | toggle help overlay                   |
 | Ctrl+C / Ctrl+Q | quit                                  |
+
+### Mouse
+
+| Gesture                  | Action                                      |
+|--------------------------|---------------------------------------------|
+| Left click on a chat row | focus the chat list and open that chat      |
+| Left click on the thread | focus the thread                            |
+| Left click on the input  | focus the composer                          |
+| Wheel over the chat list | move the highlight one chat per notch       |
+| Wheel over the thread    | scroll, loading older history at the top    |
+| Drag over the thread     | select text; release copies it to the clipboard |
+| Double click a message   | select and copy that message whole          |
+| Drag the pane separator  | move the split between the chat list and the thread |
+
+Selection follows Telegram Desktop: a drag inside one message is
+character-exact, and the moment it crosses into another message both are taken
+whole — collecting messages, not characters. Copying goes through OSC 52, the
+terminal's own clipboard channel, so it works over `ssh` and inside `tmux`
+(which needs `set -g set-clipboard on`).
+
+The keyboard remains the primary interface — nothing needs the mouse. Outside
+the thread the terminal's own selection still applies, and because lazytg puts
+the terminal in mouse-reporting mode it needs the usual override: hold
+<kbd>Option</kbd> (iTerm2, Terminal.app) or <kbd>Shift</kbd> (most Linux
+terminals) while dragging.
 
 See [docs/SEARCH.md](docs/SEARCH.md) for the search query syntax and [docs/FILES.md](docs/FILES.md) for the download/upload pipeline.
 

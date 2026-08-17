@@ -376,10 +376,24 @@ func (r *Repo) SaveChat(ctx context.Context, c domain.Chat) error {
 
 // GetChats returns all chats ordered by pinned-first, then last_message_date desc.
 func (r *Repo) GetChats(ctx context.Context) ([]domain.Chat, error) {
+	// The preview subquery rides idx_messages_chat_date (chat_id, date DESC),
+	// so it is an index seek per row rather than a scan. It is part of the same
+	// statement on purpose: a second round-trip per chat would make the list
+	// load O(chats) queries, and the pane renders an empty description line
+	// without it — which is what the first live session looked like.
+	//
+	// substr caps what crosses the driver boundary: the list shows one clipped
+	// line, so pulling a 4 KB message body for each of 500 chats is memory spent
+	// on characters nothing will ever render. SQLite's substr counts characters,
+	// not bytes, so this cannot split a rune.
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT id, type, title, username, last_message_date, unread_count, pinned
-        FROM chats
-        ORDER BY pinned DESC, COALESCE(last_message_date, 0) DESC, id ASC
+        SELECT c.id, c.type, c.title, c.username, c.last_message_date, c.unread_count, c.pinned,
+               (SELECT substr(m.text, 1, 200) FROM messages m
+                 WHERE m.chat_id = c.id
+                 ORDER BY m.date DESC, m.id DESC
+                 LIMIT 1)
+        FROM chats c
+        ORDER BY c.pinned DESC, COALESCE(c.last_message_date, 0) DESC, c.id ASC
     `)
 	if err != nil {
 		return nil, fmt.Errorf("query chats: %w", err)
@@ -395,10 +409,12 @@ func (r *Repo) GetChats(ctx context.Context) ([]domain.Chat, error) {
 			username sql.NullString
 			lastDate sql.NullInt64
 			pinned   int
+			preview  sql.NullString
 		)
-		if err := rows.Scan(&c.ID, &typ, &title, &username, &lastDate, &c.UnreadCount, &pinned); err != nil {
+		if err := rows.Scan(&c.ID, &typ, &title, &username, &lastDate, &c.UnreadCount, &pinned, &preview); err != nil {
 			return nil, fmt.Errorf("scan chat: %w", err)
 		}
+		c.LastMessagePreview = preview.String
 		c.Type = domain.ChatType(typ)
 		c.Title = title.String
 		c.Username = username.String
@@ -412,6 +428,40 @@ func (r *Repo) GetChats(ctx context.Context) ([]domain.Chat, error) {
 		return nil, fmt.Errorf("iterate chats: %w", err)
 	}
 	return out, nil
+}
+
+// ChatHistoryFreshness reports two timestamps for one chat: what the dialog
+// list says the last message is (chats.last_message_date) and what the local
+// mirror actually holds (max(messages.date)). Either may be zero — an unknown
+// chat, a chat the dialog sync has not dated, or one with no messages cached.
+//
+// It exists so a caller can tell "the mirror is current" from "the mirror is
+// behind" without a network round-trip. Both values come from one statement so
+// the answer cannot straddle a concurrent write, and max(date) rides the
+// existing idx_messages_chat_date index rather than scanning the chat.
+func (r *Repo) ChatHistoryFreshness(ctx context.Context, chatID int64) (dialogNewest, localNewest time.Time, err error) {
+	var dialogDate, localDate sql.NullInt64
+	err = r.db.QueryRowContext(ctx, `
+        SELECT c.last_message_date,
+               (SELECT MAX(m.date) FROM messages m WHERE m.chat_id = c.id)
+        FROM chats c
+        WHERE c.id = ?
+    `, chatID).Scan(&dialogDate, &localDate)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// No chat row yet: the caller knows nothing, which is not an error —
+		// it is the "fetch it" answer.
+		return time.Time{}, time.Time{}, nil
+	case err != nil:
+		return time.Time{}, time.Time{}, fmt.Errorf("query chat freshness %d: %w", chatID, err)
+	}
+	if dialogDate.Valid {
+		dialogNewest = time.Unix(dialogDate.Int64, 0).UTC()
+	}
+	if localDate.Valid {
+		localNewest = time.Unix(localDate.Int64, 0).UTC()
+	}
+	return dialogNewest, localNewest, nil
 }
 
 // SaveMessage inserts or replaces a message. The composite primary key is
