@@ -46,8 +46,8 @@ Files that may exist inside these directories:
 
 | Variable          | Purpose                                                                                                | Default / required           |
 |-------------------|--------------------------------------------------------------------------------------------------------|------------------------------|
-| `LAZYTG_API_ID`   | Telegram MTProto API ID. Get from <https://my.telegram.org/apps>.                                       | **required**                 |
-| `LAZYTG_API_HASH` | Telegram MTProto API hash (32 hex chars).                                                              | **required**                 |
+| `LAZYTG_API_ID`   | Telegram MTProto API ID. Get from <https://my.telegram.org/apps>.                                       | embedded in releases; **required for source builds** |
+| `LAZYTG_API_HASH` | Telegram MTProto API hash (32 hex chars).                                                              | embedded in releases; **required for source builds** |
 | `LAZYTG_DOWNLOADS`| Root directory for `Ctrl+D` file downloads. The chat title becomes a sub-folder; the filename is sanitised. | `~/Downloads/lazytg/`  |
 | `EDITOR`          | Command launched by `Ctrl+E` to compose long messages. Inherits the rest of the env (sandbox is v0.2). | `vi` if unset                |
 | `XDG_CONFIG_HOME` | Override for the config directory base.                                                                 | platform default             |
@@ -55,9 +55,39 @@ Files that may exist inside these directories:
 | `XDG_STATE_HOME`  | Override for the state directory base.                                                                 | platform default             |
 | `XDG_CACHE_HOME`  | Override for the cache directory base.                                                                 | platform default             |
 
-`LAZYTG_API_ID` and `LAZYTG_API_HASH` are read by `internal/tg/client.go`
-on every command that opens a Telegram session (`login`, the TUI). The
-`accounts` and `version` commands do not require them.
+### API credentials: three sources
+
+`internal/tg/client.go::ResolveCredentials` checks three layers on every
+command that opens a Telegram session (`login`, the TUI). `accounts` does not
+need them; `version` reports them without requiring them.
+
+| Precedence | Source     | Set by                                                                 |
+|------------|------------|------------------------------------------------------------------------|
+| 1          | `flags`    | `--api-id` / `--api-hash`                                              |
+| 2          | `env`      | `LAZYTG_API_ID` / `LAZYTG_API_HASH`                                    |
+| 3          | `embedded` | `-ldflags` injection at release time, from repository secrets           |
+
+Rules that follow from this:
+
+- **Both halves or neither.** Setting only `LAZYTG_API_ID` is an error, not a
+  fall-through to the next layer. A silent fall-through would let you believe
+  you are running on your own credentials when you are not — a difference that
+  only becomes visible as an unexplained ban.
+- **Source builds have no layer 3.** The repository carries no credentials
+  (`API_ID_PUBLISHED_FLOOD` is permanent), so `make build` output requires
+  layer 1 or 2. The startup error says exactly this.
+- **`--api-hash` leaks into `ps`.** It exists for scripted one-offs; the env
+  var is the normal path.
+
+Check what is in effect with `lazytg version`:
+
+```
+api:    env (build embeds credentials: yes)
+```
+
+The value is the source name, never the credentials. Release binaries built
+without the secrets configured report `none` and fall back to asking for the
+env vars.
 
 ---
 

@@ -26,6 +26,10 @@
 /.goreleaser.yaml                @pgmac
 /.github/workflows/              @pgmac
 
+# Credential-leak gate. A PR that weakens this script runs CI in its already
+# weakened form, so reviewer attention is the control that actually holds.
+/scripts/                        @pgmac
+
 # Security docs & policy
 /SECURITY.md                     @pgmac
 /docs/SECURITY.md                @pgmac

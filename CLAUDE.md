@@ -40,19 +40,19 @@
 ```
 cmd/lazytg/                                                      cobra entry point
 └── cmd/{root,root_cmd,login,logout,accounts,version,debug,
-       logger,runtime,reindex,tui}.go
+       logger,runtime,reindex,tui,attach}.go                      attach.go = MTProto wire-up
 
 internal/
 ├── tg/                                                              MTProto (gotd обёртка)
 │   └── {client,auth,session,send,history,updates,files,
-        floodwait,polling}.go
+        floodwait,polling,dialogs}.go                              dialogs.go = messages.getDialogs
 ├── core/                                                            Domain + storage + sync. БЕЗ gotd/bubbletea.
 │   ├── events/{events,bus}.go
 │   ├── domain/types.go                                          Account/Chat/Message/ChatType/MediaInfo
 │   ├── config/{paths,secrets}.go
 │   ├── obs/{redact,logger,fanout,bundle,dbsize}.go
 │   ├── sync/{history,live,send,ratelimit,reconnect,
-        backfill,degradation}.go
+        backfill,degradation,dialogs}.go                          dialogs.go = наполняет список чатов
 │   ├── search/{index,parser,query,query_builder,reindex,
         service,lazy}.go
 │   ├── files/{download,upload,store,dedup,progress,
@@ -112,6 +112,7 @@ internal/
 
 ## Безопасность
 
+- **API credentials — 3 слоя** (`internal/tg.ResolveCredentials`): флаги `--api-id`/`--api-hash` → env `LAZYTG_API_ID`/`LAZYTG_API_HASH` → вшитое при релизе через `-ldflags` из repo secrets `LAZYTG_RELEASE_API_*`. Половинчатый слой = ошибка, не проваливание в следующий. Релизные бинарники работают из коробки; сборка из исходников требует своих кредов. 🔴 **Кредов в репе нет и быть не может** — опубликованный в исходниках `api_id` Telegram блокирует навсегда (`API_ID_PUBLISHED_FLOOD`), а ключ у всех пользователей релиза общий. Гейты: `scripts/secret-scan.sh` в lefthook pre-commit + CI job `secret-scan` (любая 32-hex строка вне documented placeholder). `lazytg version` печатает источник, не значения
 - **Session storage:** `zalando/go-keyring` (Keychain/Secret Service/wincred). Fallback — `filippo.io/age`-encrypted file с master-passphrase из stdin
 - **Permissions check** при старте: session/config файлы `0600`, директории `0700` → fail-fast
 - **Rate-limit guard на send:** max 10 msg/sec — снижает поведенческий ban-trigger
@@ -141,7 +142,9 @@ internal/
 | Stage 3 план (выполнен) | [`docs/plans/completed/20260503-lazytg-stage3-search-files.md`](docs/plans/completed/20260503-lazytg-stage3-search-files.md) | FTS5 search + files + debug-bundle + security minimal |
 | Stage 4 план (выполнен) | [`docs/plans/completed/20260503-lazytg-stage4-release.md`](docs/plans/completed/20260503-lazytg-stage4-release.md) | GoReleaser + cosign + brew + .deb/.rpm + commitlint + memory budgets + user docs |
 
-v0.1.0 готов к тегированию: код-функционал Stages 1-3 + release infra Stage 4. Manual smoke и stable tag — за maintainer'ом (см. [`docs/RELEASE_PROCESS.md`](docs/RELEASE_PROCESS.md)).
+**Текущее состояние (17.08.2026):** MTProto подключён к TUI (`cmd/lazytg/cmd/attach.go`) и список чатов загружается (`internal/tg/dialogs.go` + `internal/core/sync/dialogs.go`). До этого TUI рисовал только пустой локальный кеш: `SaveChat` вызывался исключительно из тестов, загрузки диалогов в коде не было вовсе. Read + send работают в теории — **на живом аккаунте не проверялось**, только unit-тесты и офлайн-запуск.
+
+Остаётся до v0.1.0: ручной smoke на тестовом аккаунте, `--polling` wire-up, реальный reconnect (`reconnectAdapter.Connect` — заглушка), `updates.Manager` для gap recovery. См. `CHANGELOG.md` → Known gaps.
 
 ---
 

@@ -60,6 +60,24 @@ type JumpContextProvider interface {
 	JumpContext(ctx context.Context, hit search.Hit, around int) ([]domain.Message, int, error)
 }
 
+// maxConcurrentHistoryRequests bounds how many history requests may be waiting
+// on the backfill service at once. Well above what hand-driven navigation
+// produces, low enough that a stalled consumer cannot accumulate goroutines
+// without limit.
+const maxConcurrentHistoryRequests = 8
+
+// HistoryBackfiller asks for a chat's history to be pulled from Telegram into
+// the local mirror. The production implementation is
+// internal/core/sync.BackfillService, which rate-limits and de-duplicates
+// requests; tests substitute a recorder or leave it nil.
+//
+// Enqueue is fire-and-forget on purpose: the pane must not block the UI thread
+// on a network fetch. The rows appear when the backfill publishes
+// DialogUpdated and the thread reloads from storage.
+type HistoryBackfiller interface {
+	Enqueue(chatID int64)
+}
+
 // Minimum terminal size below which we refuse to render the layout. 80x24 is
 // the historical VT100 floor and matches the threshold every other TUI in
 // our reference set (lazygit, k9s, weechat) draws the line at.
@@ -145,6 +163,12 @@ type Deps struct {
 	// + deferred ScrollTo" path which only works when the target
 	// is still within the freshly-loaded 200-message head.
 	Jumper JumpContextProvider
+
+	// Backfiller, if set, is asked to pull history from Telegram when the
+	// user opens a chat. Without it the thread pane shows only what the
+	// local mirror already holds — which for a freshly synced chat list is
+	// nothing at all, so the chat opens empty.
+	Backfiller HistoryBackfiller
 }
 
 // App is the root Bubble Tea model. Sub-pane fields are concrete types
@@ -175,6 +199,17 @@ type App struct {
 	// Deps.Uploader. nil means "no uploader wired" — the Attach
 	// overlay still opens but Submit silently no-ops.
 	uploader FileUploader
+
+	// backfiller is the history-pull collaborator wired through
+	// Deps.Backfiller. nil means "offline" — the thread shows only
+	// what storage already holds.
+	backfiller HistoryBackfiller
+
+	// historyGate caps concurrent history requests. Enqueue blocks on a
+	// full queue and takes no context, so an unbounded goroutine per chat
+	// open would pile up permanently once its consumer stops. Shared by
+	// value-copies of App because a channel is a reference.
+	historyGate chan struct{}
 
 	// jumper is the search-jump collaborator wired through
 	// Deps.Jumper. nil means "no jump-context wired" — the search
@@ -256,6 +291,8 @@ func New(deps Deps) App {
 		downloader:        deps.Downloader,
 		uploader:          deps.Uploader,
 		jumper:            deps.Jumper,
+		backfiller:        deps.Backfiller,
+		historyGate:       make(chan struct{}, maxConcurrentHistoryRequests),
 		inFlightDownloads: newDownloadRegistry(),
 		preSearchFocus:    -1,
 		prePaletteFocus:   -1,

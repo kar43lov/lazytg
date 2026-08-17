@@ -8,6 +8,7 @@ import (
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 )
 
 // CodePrompter abstracts how lazytg asks the human for the bits gotd needs to
@@ -72,7 +73,48 @@ func Login(ctx context.Context, client *telegram.Client, phone string, prompter 
 		auth.SendCodeOptions{},
 	)
 	if err := client.Auth().IfNecessary(ctx, flow); err != nil {
-		return fmt.Errorf("auth flow: %w", err)
+		return fmt.Errorf("auth flow: %w", ExplainCredentialError(err))
 	}
 	return nil
+}
+
+// ExplainCredentialError rewrites the two api_id-level rejections Telegram
+// returns into something a user can act on. Both arrive as opaque RPC codes
+// that mean nothing outside the MTProto world, and both have the same fix
+// (bring your own api_id), so the remediation is attached here rather than
+// left for every call site to reinvent.
+//
+// API_ID_PUBLISHED_FLOOD means the api_id has been seen in public source and
+// is now refused for end-user logins — if it fires against a release build it
+// means the shipped key burned and every user is affected at once.
+// API_ID_INVALID means the id/hash pair does not exist or does not match.
+//
+// Errors that are not credential-related pass through untouched. The original
+// RPC error stays wrapped in every branch, so retry policies that match on the
+// code keep working.
+//
+//nolint:staticcheck // ST1005: multi-line user-facing remediation text
+func ExplainCredentialError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case tgerr.Is(err, "API_ID_PUBLISHED_FLOOD"):
+		return fmt.Errorf("%w\n"+
+			"  Telegram refuses logins with this api_id because it was found in\n"+
+			"  public source. Supply your own credentials from\n"+
+			"  https://my.telegram.org/apps:\n"+
+			"    export %s=1234567\n"+
+			"    export %s=<32-hex api_hash>\n"+
+			"  Run `lazytg version` to see which credential source is active.",
+			err, EnvAPIID, EnvAPIHash)
+	case tgerr.Is(err, "API_ID_INVALID"):
+		return fmt.Errorf("%w\n"+
+			"  The api_id/api_hash pair is not valid. They must come from the\n"+
+			"  same application at https://my.telegram.org/apps — a hash from\n"+
+			"  one app with the id of another is rejected.\n"+
+			"  Run `lazytg version` to see which credential source is active.",
+			err)
+	default:
+		return err
+	}
 }

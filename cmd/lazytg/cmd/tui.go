@@ -66,12 +66,23 @@ func runTUI(cmd *cobra.Command, _ []string) error {
 	defer cancelBG()
 	bgDone := runtime.RunBackground(bgCtx)
 
-	// Build the Bubble Tea model on top of the runtime. The pane wiring
-	// uses the production sqlite repo for chats/thread reads — the TUI
-	// is read-mostly until login attaches the MTProto client.
+	// Connect to Telegram before building the UI, so the panes below receive
+	// live services instead of nil. Doing it the other way round would mean
+	// handing the composer a nil sender and swapping it in mid-flight, which
+	// is a data race on fields the Bubble Tea goroutine already captured.
+	//
+	// Never fatal: with no session, no network, or a revoked authorisation we
+	// fall through to the cached-only view — which is the documented offline
+	// behaviour, not a failure.
+	stopTelegram := attachTelegram(bgCtx, runtime, logger)
+	defer stopTelegram()
+
+	// Build the Bubble Tea model on top of the runtime. Chats and thread read
+	// through the sqlite mirror; the sender and history provider are live only
+	// when the attach above succeeded, and both panes treat nil as "offline".
 	chatsModel := chats.NewWithRepo(runtime.Repo, logger)
-	threadModel := thread.NewWithRepo(runtime.Repo, nil, logger)
-	inputModel := input.NewWithDeps(nil, runtime.Keymap, logger)
+	threadModel := thread.NewWithRepo(runtime.Repo, threadHistoryProvider(runtime), logger)
+	inputModel := input.NewWithDeps(composerSender(runtime), runtime.Keymap, logger)
 
 	// Stage 3 overlays: search runs on the lazy-indexed FTS pipeline,
 	// palette feeds from the frecency store, attach is folded in via
@@ -99,6 +110,9 @@ func runTUI(cmd *cobra.Command, _ []string) error {
 	}
 	if runtime.UploadSvc != nil {
 		deps.Uploader = runtime.UploadSvc
+	}
+	if runtime.Backfill != nil {
+		deps.Backfiller = runtime.Backfill
 	}
 	uiModel := uiapp.New(deps)
 

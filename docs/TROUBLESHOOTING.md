@@ -32,24 +32,88 @@ or a previous login attempt that aged out without finishing.
 
 ---
 
-### "credentials missing: set LAZYTG_API_ID and LAZYTG_API_HASH"
+### "no Telegram API credentials available"
 
 **Symptom.** Any subcommand that opens a Telegram session refuses to start.
 
-**Diagnosis.** lazytg never bundles `api_id` / `api_hash` (deliberately —
-sharing them across users would mass-flag accounts). The two env vars
-must be in scope.
+**Diagnosis.** This binary was built from source. Release binaries carry
+credentials injected at build time; the repository does not contain them,
+because an `api_id` found in public source is blocked by Telegram forever.
+Confirm with:
 
-**Fix.**
+```sh
+lazytg version | grep api      # → api:    none (no credentials — …)
+```
+
+**Fix.** Either install a release binary, or register your own application:
 
 ```sh
 export LAZYTG_API_ID=...        # from https://my.telegram.org/apps
 export LAZYTG_API_HASH=...
 ```
 
-Add them to your shell rc so future sessions inherit them. The
-`accounts`, `version`, and `debug-bundle` subcommands do **not** need
-the credentials — only `login` and the TUI do.
+Add them to your shell rc so future sessions inherit them. The `accounts`,
+`version`, and `debug-bundle` subcommands do **not** need the credentials —
+only `login` and the TUI do.
+
+---
+
+### "misconfigured: LAZYTG_API_ID is set but LAZYTG_API_HASH is empty"
+
+**Symptom.** `lazytg version` reports `misconfigured: …`; login refuses to
+start even though the binary is a release build with embedded credentials.
+
+**Diagnosis.** Deliberate. Credential layers are all-or-nothing: setting one
+half never falls through to the next layer, because silently running on the
+embedded key while you believe you are on your own is a difference that shows
+up only as an unexplained ban weeks later.
+
+**Fix.** Set both halves, or unset both to fall back to the embedded key:
+
+```sh
+unset LAZYTG_API_ID LAZYTG_API_HASH   # → back to the embedded credentials
+```
+
+---
+
+### `API_ID_PUBLISHED_FLOOD` during login
+
+**Symptom.** Login fails with `API_ID_PUBLISHED_FLOOD`, followed by
+instructions pointing at my.telegram.org.
+
+**Diagnosis.** Telegram has seen this `api_id` in public source and refuses
+end-user logins with it, permanently. Check whose key you are on:
+
+```sh
+lazytg version | grep api
+```
+
+`embedded` means the shipped release key burned — every release user is
+affected at once, and it needs a maintainer-side rotation ([open an
+issue](https://github.com/kar43lov/lazytg/issues)). Anything else means the
+credentials you supplied have been published somewhere.
+
+**Fix (either case, immediate).** Register your own application at
+<https://my.telegram.org/apps> and export the pair — that bypasses the
+embedded key without reinstalling:
+
+```sh
+export LAZYTG_API_ID=...
+export LAZYTG_API_HASH=...
+```
+
+---
+
+### `API_ID_INVALID` during login
+
+**Symptom.** Login fails immediately with `API_ID_INVALID`.
+
+**Diagnosis.** The `api_id` and `api_hash` do not belong to the same
+application — the most common cause is copying the hash from one app and the
+id from another, or a truncated paste (`api_hash` is exactly 32 hex chars).
+
+**Fix.** Re-copy both values from the same application block at
+<https://my.telegram.org/apps>.
 
 ---
 

@@ -59,6 +59,42 @@ jobs:
           version: v2.0.2
           args: --timeout=5m
 
+  secret-scan:
+    name: Secret scan (api_hash)
+    runs-on: ubuntu-latest
+    # The lefthook pre-commit hook runs the same script, but a hook is local
+    # and skippable (--no-verify) and does not exist at all for a fork's PR.
+    # This job is the actual gate: a published api_id is blocked by Telegram
+    # permanently and would break login for every release user at once.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history: the range scan below needs the PR base commit, and a
+          # shallow clone would make it fail to resolve rather than pass.
+          fetch-depth: 0
+
+      # Verify the matching rules before trusting their verdict. The gate has
+      # leaked once already (an anchored pattern made `grep -o` skip every hex
+      # run after the first on a line), and a scanner that silently stops
+      # matching reports "clean" exactly like a scanner that found nothing.
+      - name: Self-test the scanner
+        run: ./scripts/secret-scan.sh --self-test
+
+      - name: Scan tracked files
+        run: ./scripts/secret-scan.sh --all
+
+      # A tree scan only sees the branch tip. The likeliest real leak is a key
+      # committed, noticed, and deleted in a follow-up commit: the tip is clean
+      # while the key still rides into main in the history — which is precisely
+      # what Telegram treats as published.
+      - name: Scan commits added by this PR
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: ./scripts/secret-scan.sh --range "$BASE...$HEAD"
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

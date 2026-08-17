@@ -16,8 +16,38 @@ Concretely:
 - The send path runs through a hard built-in rate-limit guard (`max 10 messages/sec`, burst 30 — `internal/core/security/send_ratelimit.go`). The guard covers both text sends (`coresync.SendService`) and file uploads (`files.UploadService`); `messages.SendMedia` waits on the same token bucket as `messages.SendMessage`. Not user-tunable.
 - lazytg avoids "machine-like" patterns: no message scraping at high rate, no automated mass actions, no message editing loops. New features that introduce such patterns will not be accepted upstream.
 - Telegram's official policy on `api_id` / `api_hash` is documented at <https://core.telegram.org/api/obtaining_api_id>. Read it.
+- Release binaries carry lazytg's own `api_id`, shared by everyone who installs one. Observation applies to accounts logging in through *any* unofficial client, so this does not make you more visible than your own key would — but it does mean one shared blast radius (see below). Exporting `LAZYTG_API_ID` / `LAZYTG_API_HASH` opts you out.
 
 If your account is restricted, lazytg cannot help you get it back. That outcome is on the user.
+
+### Shipped credentials: the accepted risk
+
+Release binaries have credentials injected at build time from repository
+secrets so that installing lazytg does not require registering an application
+first — which is impossible from some countries, where <https://my.telegram.org>
+is unreachable without a VPN and blocks application creation over one.
+
+The risks this accepts, stated plainly:
+
+- **Single point of failure.** All release users share one `api_id`. If
+  Telegram blocks it, every one of them loses login simultaneously. The escape
+  hatch is built in: export your own credentials and the embedded key is
+  bypassed, no reinstall needed.
+- **Extractable from the binary.** `strings` on a release binary reveals the
+  `api_hash`. Obfuscation would be theatre; the same is true of every client
+  that ships credentials, official ones included. What actually matters is that
+  the key is not in *source*, because Telegram permanently blocks a published
+  `api_id` (`API_ID_PUBLISHED_FLOOD`) — the block follows publication, not
+  extraction.
+- **Not in this repository, enforced.** `scripts/secret-scan.sh` fails a commit
+  (lefthook `pre-commit`) and fails CI (`secret-scan` job) on any 32-hex string
+  outside the documented placeholder. The credentials live only in repository
+  secrets (`LAZYTG_RELEASE_API_ID` / `LAZYTG_RELEASE_API_HASH`) and in built
+  artefacts.
+
+`lazytg version` prints which source is in effect (`flags` / `env` /
+`embedded` / `none`) and never the values — that line is the first thing to ask
+for in a credential-related bug report.
 
 ## Threat model
 

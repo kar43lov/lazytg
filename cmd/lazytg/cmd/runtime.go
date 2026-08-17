@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/tg"
 	"golang.org/x/term"
 
@@ -147,17 +148,27 @@ func (p *stdinPrompter) readLine(prompt string) (string, error) {
 	return line, nil
 }
 
-// newClient is a thin convenience that builds tg.Client from env credentials
-// and the supplied session store. Returns an error early if credentials are
-// missing so subcommands can short-circuit before opening a DB connection.
+// newClient is a thin convenience that builds tg.Client from the resolved
+// credentials (flags → env → embedded) and the supplied session store.
+// Returns an error early if no layer supplied credentials, so subcommands
+// short-circuit before opening a DB connection.
 func newClient(store *tgclient.SessionStore) (*tgclient.Client, error) {
-	apiID, apiHash, err := tgclient.CredentialsFromEnv()
+	return newClientWithUpdates(store, nil)
+}
+
+// newClientWithUpdates is newClient plus a live-update handler. gotd only
+// accepts the handler when the client is constructed, so the TUI builds its
+// dispatcher first and passes it in here; one-shot commands (login, logout)
+// have no use for updates and go through newClient.
+func newClientWithUpdates(store *tgclient.SessionStore, handler telegram.UpdateHandler) (*tgclient.Client, error) {
+	apiID, apiHash, _, err := tgclient.ResolveCredentials(flagAPIID, flagAPIHash)
 	if err != nil {
 		return nil, err
 	}
 	return tgclient.New(tgclient.ClientConfig{
-		APIID:        apiID,
-		APIHash:      apiHash,
-		SessionStore: store,
+		APIID:         apiID,
+		APIHash:       apiHash,
+		SessionStore:  store,
+		UpdateHandler: handler,
 	})
 }

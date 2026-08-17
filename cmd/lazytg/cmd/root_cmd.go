@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kar43lov/lazytg/internal/core/obs"
+	tgclient "github.com/kar43lov/lazytg/internal/tg"
 )
 
 // newRootCmd builds the lazytg root command with persistent flags. A factory
@@ -32,6 +33,14 @@ func newRootCmd() *cobra.Command {
 	pf.BoolVar(&flagDebug, "debug", false, "enable verbose logging to stderr")
 	pf.StringVar(&flagLogLevel, "log-level", "info", "logging level: debug|info|warn|error")
 	pf.BoolVar(&flagPolling, "polling", false, "force history polling instead of updates.Manager (fallback for gap-prone connections)")
+	pf.StringVar(&flagAPIID, "api-id", "", "Telegram api_id, overrides "+tgclient.EnvAPIID+" and the embedded value")
+	// Passing a secret on the command line puts it in `ps` output and shell
+	// history. The flag exists for scripted one-offs; the help text steers
+	// people to the env var, which is why the wording is a warning rather
+	// than a description. No backquotes in the usage string: cobra reads a
+	// backquoted word as the flag's value placeholder, which printed
+	// "--api-hash ps" instead of "--api-hash string" in the help output.
+	pf.StringVar(&flagAPIHash, "api-hash", "", "Telegram api_hash (visible in process list — prefer "+tgclient.EnvAPIHash+")")
 
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		level, err := obs.ParseLevel(flagLogLevel)

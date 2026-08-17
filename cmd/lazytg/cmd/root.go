@@ -11,6 +11,8 @@ var (
 	flagDebug    bool
 	flagLogLevel string
 	flagPolling  bool
+	flagAPIID    string
+	flagAPIHash  string
 )
 
 // Execute runs the root command. Invoked from cmd/lazytg/main.go and returns

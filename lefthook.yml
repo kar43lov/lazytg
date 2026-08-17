@@ -11,6 +11,13 @@ pre-commit:
     gotest:
       glob: "*.go"
       run: go test -short ./...
+    secretscan:
+      # Telegram api_hash must never reach a commit: a published api_id is
+      # blocked permanently, and release binaries carry the credential
+      # injected from CI secrets, so one leak breaks login for every user.
+      # Runs on every commit regardless of file type — a leak in a YAML or
+      # Markdown file is just as fatal as one in Go.
+      run: ./scripts/secret-scan.sh --staged
 
 commit-msg:
   commands:

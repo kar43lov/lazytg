@@ -157,6 +157,16 @@ type App struct {
 	DownloadSvc *files.DownloadService
 	UploadSvc   *files.UploadService
 
+	// Dialogs fills the chats table from Telegram. Nothing else populates
+	// it, so until this runs the TUI has an empty chat list no matter how
+	// healthy the connection is.
+	Dialogs *coresync.DialogsService
+
+	// HistoryFetcher is the raw MTProto history provider, handed to the
+	// thread pane so it can pull older messages when the local cache is
+	// thinner than the viewport.
+	HistoryFetcher *tgclient.HistoryFetcher
+
 	// Polling controls whether the cmd layer should engage PollingFallback
 	// instead of subscribing to UpdatesDispatcher. The fallback itself is
 	// constructed in cmd/tui.go because it takes the active-chat source
@@ -371,16 +381,47 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client) {
 	a.Client = client
 
 	historyFetcher := tgclient.NewHistoryFetcher(client.API())
+	a.HistoryFetcher = historyFetcher
 	a.History = coresync.NewHistoryService(historyFetcher, peerLookupAdapter{peers: a.Peers}, a.Repo, a.Bus, a.Log)
-	backfill, _ := coresync.NewBackfillService(a.History, a.Log, coresync.BackfillConfig{})
-	a.Backfill = backfill
+	// Log rather than swallow: a nil Backfill means chats open with whatever
+	// history is already cached and never fetch more, which is indistinguishable
+	// from a network problem unless the construction failure is stated.
+	if backfill, err := coresync.NewBackfillService(a.History, a.Log, coresync.BackfillConfig{}); err != nil {
+		a.Log.Warn("attach: backfill service init failed — chats will not fetch history", "err", err)
+	} else {
+		a.Backfill = backfill
+	}
+
+	// The chat list has to come from somewhere before any of the services
+	// below have a chat to act on. A construction failure is logged rather
+	// than fatal: the rest of the attach still yields a usable session over
+	// whatever is already cached locally.
+	if dialogs, err := coresync.NewDialogsService(
+		tgclient.NewDialogsFetcher(client.API()),
+		a.Repo,
+		a.Peers,
+		a.Bus,
+		a.Log,
+		coresync.DialogsConfig{},
+	); err != nil {
+		a.Log.Warn("attach: dialogs service init failed", "err", err)
+	} else {
+		a.Dialogs = dialogs
+	}
 
 	sender := tgclient.NewSender(client.API(), peerResolverAdapter{peers: a.Peers})
 	a.Sender = coresync.NewSendService(senderAdapter{sender: sender}, outgoingStoreAdapter{repo: a.Repo}, a.Bus, a.Log, coresync.SendConfig{}).
 		WithBackgroundContext(bgCtx).
 		WithRateLimiter(a.SendGuard)
 
-	a.Updates = tgclient.NewUpdatesDispatcher(a.Bus, a.Log)
+	// Preserve a dispatcher installed before attach. The cmd layer has to
+	// build one ahead of the client (gotd takes the update handler at
+	// construction time only) and hands it in through App.Updates;
+	// overwriting it here would leave the live-update path pointing at a
+	// dispatcher nobody is feeding.
+	if a.Updates == nil {
+		a.Updates = tgclient.NewUpdatesDispatcher(a.Bus, a.Log)
+	}
 	a.Reconnect = coresync.NewReconnectManager(reconnectAdapter{client: client}, a.Bus, a.Log, coresync.ReconnectConfig{})
 
 	// Stage 3 file pipelines: tg.Downloader streams bytes, tg.Uploader

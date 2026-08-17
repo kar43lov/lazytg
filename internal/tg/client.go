@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
@@ -19,6 +20,50 @@ const (
 	EnvAPIHash = "LAZYTG_API_HASH"
 )
 
+// Build-time credentials, injected by GoReleaser via -ldflags from repository
+// secrets (see .goreleaser.yaml). They are empty in every build made from the
+// source tree, which is the point: Telegram blocks an api_id that appears in
+// public source with API_ID_PUBLISHED_FLOOD, so the value may live in CI
+// secrets and in shipped binaries but never in this repository.
+//
+// Kept as strings rather than an int because -ldflags -X can only write to
+// string variables; ResolveCredentials does the conversion.
+var (
+	embeddedAPIID   string
+	embeddedAPIHash string
+)
+
+// CredentialsSource records which layer supplied the credentials actually in
+// use. `lazytg version` prints it (never the values) so a user hitting an
+// api_id-level ban can tell at a glance whether they are on the shipped
+// release key or on their own.
+type CredentialsSource string
+
+// The credential layers, in descending precedence. SourceNone means no layer
+// supplied usable credentials.
+const (
+	SourceFlags    CredentialsSource = "flags"
+	SourceEnv      CredentialsSource = "env"
+	SourceEmbedded CredentialsSource = "embedded"
+	SourceNone     CredentialsSource = "none"
+)
+
+// ErrNoCredentials is returned when no layer supplied credentials — the normal
+// case for a binary built from source, where the embedded values are empty.
+// The message doubles as the user-facing remediation because this is the first
+// wall a self-builder hits: the CLI prints it verbatim, so it is deliberately
+// multi-line and capitalised, which is what the exemption below is for.
+//
+//nolint:staticcheck // ST1005: multi-line user-facing remediation text
+var ErrNoCredentials = fmt.Errorf(
+	"no Telegram API credentials available\n"+
+		"  This binary was built from source, so it carries no embedded api_id.\n"+
+		"  Create an application at https://my.telegram.org/apps and export:\n"+
+		"    export %s=1234567\n"+
+		"    export %s=<32-hex api_hash>\n"+
+		"  Official release binaries ship with credentials already embedded.",
+	EnvAPIID, EnvAPIHash)
+
 // ClientConfig is the dependency-injection bag for tg.Client construction.
 // All fields are mandatory; gotd's own logger is left at its default zap.Nop
 // for Stage 1 — wiring an slog→zap adapter is deferred until we actually need
@@ -27,6 +72,13 @@ type ClientConfig struct {
 	APIID        int
 	APIHash      string
 	SessionStore session.Storage
+
+	// UpdateHandler receives live MTProto updates. Optional: leaving it nil
+	// yields a client that can read and send but never learns about incoming
+	// messages. gotd only accepts the handler at construction time, so the
+	// dispatcher has to exist before the client does — which is why this is a
+	// config field rather than something AttachClient could set later.
+	UpdateHandler telegram.UpdateHandler
 }
 
 // Client is the lazytg-specific wrapper around gotd's *telegram.Client. The
@@ -48,13 +100,17 @@ type Client struct {
 // Telegram — call Run to do that.
 func New(cfg ClientConfig) (*Client, error) {
 	if cfg.APIID == 0 || cfg.APIHash == "" {
-		return nil, fmt.Errorf("api credentials missing (set %s and %s)", EnvAPIID, EnvAPIHash)
+		// Callers are expected to come through ResolveCredentials, which
+		// already produces the actionable message; this is the last-ditch
+		// guard for a caller that built the config by hand.
+		return nil, fmt.Errorf("api credentials missing (see ResolveCredentials: flags, %s/%s, or a release build)", EnvAPIID, EnvAPIHash)
 	}
 	if cfg.SessionStore == nil {
 		return nil, errors.New("session storage is required")
 	}
 	tgClient := telegram.NewClient(cfg.APIID, cfg.APIHash, telegram.Options{
 		SessionStorage: cfg.SessionStore,
+		UpdateHandler:  cfg.UpdateHandler,
 	})
 	return &Client{
 		tg:         tgClient,
@@ -62,23 +118,76 @@ func New(cfg ClientConfig) (*Client, error) {
 	}, nil
 }
 
-// CredentialsFromEnv reads APIID/APIHash from the standard env vars. Returns
-// a friendly error pointing at the variable names rather than just whatever
-// strconv produces, because new contributors hit this most often.
-func CredentialsFromEnv() (apiID int, apiHash string, err error) {
-	raw := os.Getenv(EnvAPIID)
-	if raw == "" {
-		return 0, "", fmt.Errorf("env %s is empty", EnvAPIID)
+// ResolveCredentials picks the credentials to run with, checking three layers
+// in descending precedence: explicit flags, environment variables, values
+// embedded at build time. The first layer that is touched at all wins — a
+// half-filled layer is an error rather than a silent fall-through to the next
+// one, because "I set LAZYTG_API_ID and it still used the release key" is a
+// failure mode that surfaces only as an unexplained ban weeks later.
+//
+// The returned CredentialsSource is safe to log and display; the credentials
+// themselves are not.
+func ResolveCredentials(flagID, flagHash string) (apiID int, apiHash string, src CredentialsSource, err error) {
+	if flagID != "" || flagHash != "" {
+		id, hash, err := parseCredentialPair(flagID, flagHash, "--api-id", "--api-hash")
+		if err != nil {
+			return 0, "", SourceNone, err
+		}
+		return id, hash, SourceFlags, nil
 	}
-	apiID, err = strconv.Atoi(raw)
+
+	envID, envHash := os.Getenv(EnvAPIID), os.Getenv(EnvAPIHash)
+	if envID != "" || envHash != "" {
+		id, hash, err := parseCredentialPair(envID, envHash, EnvAPIID, EnvAPIHash)
+		if err != nil {
+			return 0, "", SourceNone, err
+		}
+		return id, hash, SourceEnv, nil
+	}
+
+	if embeddedAPIID != "" || embeddedAPIHash != "" {
+		id, hash, err := parseCredentialPair(embeddedAPIID, embeddedAPIHash,
+			"embedded api_id", "embedded api_hash")
+		if err != nil {
+			// A release built with a broken secret is a build bug, not user
+			// error — say so, otherwise the user hunts their own config.
+			return 0, "", SourceNone, fmt.Errorf("build-time credentials are malformed (report this): %w", err)
+		}
+		return id, hash, SourceEmbedded, nil
+	}
+
+	return 0, "", SourceNone, ErrNoCredentials
+}
+
+// HasEmbeddedCredentials reports whether this binary was built with baked-in
+// credentials. Used by `lazytg version` to describe the build without
+// resolving (and thus without caring about the current env).
+func HasEmbeddedCredentials() bool {
+	return embeddedAPIID != "" && embeddedAPIHash != ""
+}
+
+// parseCredentialPair validates one credential layer. idName/hashName are the
+// user-visible names of the inputs so the error tells people exactly which
+// knob to turn.
+func parseCredentialPair(rawID, hash, idName, hashName string) (int, string, error) {
+	if rawID == "" {
+		return 0, "", fmt.Errorf("%s is set but %s is empty — both are required", hashName, idName)
+	}
+	if hash == "" {
+		return 0, "", fmt.Errorf("%s is set but %s is empty — both are required", idName, hashName)
+	}
+	apiID, err := strconv.Atoi(strings.TrimSpace(rawID))
 	if err != nil {
-		return 0, "", fmt.Errorf("env %s: parse int: %w", EnvAPIID, err)
+		// The offending value is deliberately not echoed. Swapping the two
+		// variables is a common mistake, which would put the api_hash in
+		// this message — and cobra prints it straight to stderr, bypassing
+		// the slog redaction handler that scrubs hex secrets from logs.
+		return 0, "", fmt.Errorf("%s: want an integer (did you swap it with %s?)", idName, hashName)
 	}
-	apiHash = os.Getenv(EnvAPIHash)
-	if apiHash == "" {
-		return 0, "", fmt.Errorf("env %s is empty", EnvAPIHash)
+	if apiID <= 0 {
+		return 0, "", fmt.Errorf("%s: want a positive integer, got %d", idName, apiID)
 	}
-	return apiID, apiHash, nil
+	return apiID, strings.TrimSpace(hash), nil
 }
 
 // Raw exposes the underlying *telegram.Client so the tg package's own helper

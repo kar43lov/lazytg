@@ -230,6 +230,49 @@ func (a App) broadcastToPanes(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, tea.Batch(cmds...)
 }
 
+// requestHistory asks for a chat's history to be pulled from Telegram.
+//
+// Called from every path that opens a chat — row pick, palette pick, search
+// jump — because the thread pane reads the local mirror only, and a chat that
+// just arrived from the dialog sync holds no messages: without this it opens
+// empty and stays empty.
+//
+// The call runs off the update loop because BackfillService.Enqueue blocks when
+// its queue is full, and blocking here would freeze the Bubble Tea loop — the
+// one goroutine that must never wait on I/O. Ordering does not matter: the
+// service de-duplicates in-flight requests by chat id and rate-limits itself
+// globally.
+//
+// historyGate bounds how many of those goroutines can exist. Enqueue takes no
+// context, so once its consumer stops (session torn down) a send into a full
+// queue blocks forever — one goroutine per chat opened, none of them ever
+// returning. Dropping the request when the gate is full is the right trade:
+// history is re-requested the next time the chat is opened.
+//
+// Re-opening a chat deliberately asks again rather than being suppressed by an
+// "already fetched" set. Live updates arrive without gap recovery, so anything
+// that landed while the process was elsewhere is missing from the mirror; the
+// repeat fetch on open is what closes that hole.
+func (a App) requestHistory(chatID int64) {
+	if a.backfiller == nil || chatID == 0 {
+		return
+	}
+	backfiller := a.backfiller
+	gate := a.historyGate
+	select {
+	case gate <- struct{}{}:
+	default:
+		// Gate full: too many requests are already stuck. Skipping keeps the
+		// goroutine count bounded instead of piling up on a dead consumer.
+		a.log.Warn("history request dropped, backfill is not draining", "chat_id", chatID)
+		return
+	}
+	go func() {
+		defer func() { <-gate }()
+		backfiller.Enqueue(chatID)
+	}()
+}
+
 // handleChatSelected fans the user's chat-pick out to every pane that
 // cares: the thread loads the chat, the input binds itself to the new
 // chat id, and the status bar updates its title. Routing here (rather
@@ -243,6 +286,8 @@ func (a App) handleChatSelected(msg chats.ChatSelectedMsg) (tea.Model, tea.Cmd) 
 	// (drops the legacy fallback's deferred ScrollTo target).
 	a.jumpGen++
 	a.pendingScroll = nil
+
+	a.requestHistory(msg.ChatID)
 
 	var cmds []tea.Cmd
 
@@ -458,6 +503,7 @@ func (a App) handleSearchJump(msg uisearch.JumpMsg) (tea.Model, tea.Cmd) {
 	// once the messagesLoadedMsg lands, but that target now belongs to
 	// a superseded jump.
 	a.pendingScroll = nil
+	a.requestHistory(chatID)
 
 	if title, ok := a.chatTitle(chatID); ok {
 		a.status.ChatTitle = title
@@ -698,6 +744,7 @@ func (a App) handlePaletteSelected(msg palette.SelectedMsg) (tea.Model, tea.Cmd)
 	// (stale window load) and the legacy fallback's pendingScroll.
 	a.jumpGen++
 	a.pendingScroll = nil
+	a.requestHistory(chatID)
 
 	updatedThread, cmd := a.thread.OpenChat(chatID)
 	a.thread = updatedThread

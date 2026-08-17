@@ -79,20 +79,15 @@ See [docs/SEARCH.md](docs/SEARCH.md) for the search query syntax and [docs/FILES
 - Go ≥ 1.25 to build (`go.mod` toolchain pin).
 - On Linux: a running D-Bus session with a Secret Service provider (gnome-keyring, KWallet, etc.) for keyring storage. Headless boxes fall back to an `age`-encrypted file gated by a master passphrase.
 - SQLite ≥ 3.34 is bundled by `modernc.org/sqlite` — no system SQLite required.
-- Telegram API credentials in `LAZYTG_API_ID` / `LAZYTG_API_HASH` (see <https://my.telegram.org/apps>).
+- Telegram API credentials — already embedded in release binaries. Builds from source need your own in `LAZYTG_API_ID` / `LAZYTG_API_HASH` (see <https://my.telegram.org/apps>); the repository carries no key, because an `api_id` published in source is blocked by Telegram permanently.
 
-## Quickstart (3 steps)
+## Quickstart (2 steps)
 
 ```sh
-# 1. install
+# 1. install — release binaries ship with API credentials embedded
 brew install kar43lov/lazytg/lazytg
 
-# 2. point lazytg at your Telegram API credentials
-#    (get them from https://my.telegram.org/apps — never share api_hash)
-export LAZYTG_API_ID=1234567
-export LAZYTG_API_HASH=0123456789abcdef0123456789abcdef
-
-# 3. log in (phone → code → 2FA)
+# 2. log in (phone → code → 2FA)
 lazytg login --account +71234567890
 # → Telegram sends a code, lazytg prompts for it
 # → If 2FA is enabled, lazytg asks for the cloud password (no echo)
@@ -112,6 +107,10 @@ git clone https://github.com/kar43lov/lazytg.git
 cd lazytg
 make build          # → bin/lazytg
 ```
+
+A source build carries no API credentials — register an application at
+<https://my.telegram.org/apps> and export `LAZYTG_API_ID` / `LAZYTG_API_HASH`
+before logging in. `lazytg version` reports which credential source is active.
 
 Once a release is tagged, `go install github.com/kar43lov/lazytg/cmd/lazytg@latest` will also work.
 
@@ -138,6 +137,7 @@ lazytg logout   --account +71234567890   # drop the session blob
 All subcommands accept:
 
 - `--account <phone>` — phone number to operate on.
+- `--api-id` / `--api-hash` — override the API credentials for one run (takes precedence over the env vars and the embedded release key; `--api-hash` is visible in `ps`, so prefer `LAZYTG_API_HASH`).
 - `--debug` — duplicates JSON logs to stderr in addition to the rotated file sink.
 - `--log-level debug|info|warn|error` (default `info`).
 - `--polling` — reserved, currently a no-op (wire-up deferred to a v0.1 follow-up; see CHANGELOG `Known gaps`).

@@ -157,14 +157,18 @@ Rely instead on:
 
 ---
 
-## One-time setup: API credentials
+## API credentials
 
-lazytg uses **your own** Telegram API credentials, not a bundled key. Get
-them from <https://my.telegram.org/apps> — log in, create an application,
-copy the `api_id` and `api_hash`.
+**Release binaries need no setup.** Downloads from the releases page (and
+everything installed through brew, `.deb` or `.rpm`) carry lazytg's own
+`api_id` / `api_hash`, injected at build time from repository secrets. Install,
+run `lazytg login`, done.
 
-Export the values into your shell. The two env vars are mandatory; lazytg
-fails fast if either is missing:
+**Builds from source do.** The credentials are not in this repository — an
+`api_id` found in public source is refused by Telegram forever with
+`API_ID_PUBLISHED_FLOOD` — so `go build` and `go install` produce a binary with
+no key. Register your own application at <https://my.telegram.org/apps> and
+export the values:
 
 ```sh
 # add to ~/.zshrc / ~/.bashrc
@@ -172,11 +176,42 @@ export LAZYTG_API_ID=1234567
 export LAZYTG_API_HASH=0123456789abcdef0123456789abcdef
 ```
 
-Why your own credentials? Telegram automatically observes accounts that
-share an `api_id` with many users; bundling a project-wide key would put
-every lazytg user on the same observation list. Reading the official
-[obtaining api_id](https://core.telegram.org/api/obtaining_api_id) page
-before continuing is recommended.
+`lazytg version` prints which of the three sources is in effect:
+
+```
+api:    embedded (build embeds credentials: yes)
+```
+
+| Source     | Set by                                  | Precedence |
+|------------|-----------------------------------------|------------|
+| `flags`    | `--api-id` / `--api-hash`               | highest    |
+| `env`      | `LAZYTG_API_ID` / `LAZYTG_API_HASH`     | middle     |
+| `embedded` | baked into official release binaries    | lowest     |
+
+Both halves of a source must be set together. Exporting only `LAZYTG_API_ID`
+is an error, not a silent fall-back to the embedded key — otherwise you would
+believe you are running on your own credentials while you are not.
+
+`--api-hash` puts a secret in `ps` output and shell history; prefer the env
+var and keep the flag for scripted one-offs.
+
+### When to bring your own anyway
+
+The shipped key is a convenience, not a guarantee:
+
+- Everyone using a release shares one `api_id`. If Telegram blocks it — for
+  abuse by any user, or because the key leaks and gets flagged as published —
+  every release user loses login at once, and the fix on your side is exporting
+  your own credentials.
+- Telegram automatically puts accounts under observation when they log in
+  through an unofficial client. That happens regardless of whose `api_id` you
+  use, so the shipped key does not make you more visible than your own would —
+  but read the official [obtaining api_id](https://core.telegram.org/api/obtaining_api_id)
+  page and decide for yourself.
+
+Registering your own application takes two minutes and isolates you from both
+failure modes. If <https://my.telegram.org> is unreachable from your country,
+the embedded credentials are the fallback that keeps lazytg usable.
 
 ---
 

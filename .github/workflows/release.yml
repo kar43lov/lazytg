@@ -68,6 +68,53 @@ jobs:
           fi
           echo "Stable tag $TAG — HOMEBREW_TAP_GITHUB_TOKEN present."
 
+      - name: Guard Telegram API credentials
+        # An unset secret expands to an empty string, which is a *valid*
+        # -ldflags value: goreleaser succeeds, the release publishes, and every
+        # binary reports `api: none` — users hit "no credentials available" on
+        # first login while CI stayed green throughout. Nothing else in the
+        # pipeline notices, so the check has to be explicit.
+        #
+        # Stable tags fail; prereleases warn, since an alpha built for a
+        # maintainer who exports their own credentials is still useful.
+        env:
+          REF: ${{ github.ref_name }}
+          LAZYTG_RELEASE_API_ID: ${{ secrets.LAZYTG_RELEASE_API_ID }}
+          LAZYTG_RELEASE_API_HASH: ${{ secrets.LAZYTG_RELEASE_API_HASH }}
+        run: |
+          set -euo pipefail
+          TAG="$REF"
+          MISSING=""
+          # Written as a plain `if` rather than `[[ … ]] && VAR=…`: the latter
+          # evaluates to false when the secret IS present, and whether `set -e`
+          # then aborts depends on a subtlety of how bash treats && lists.
+          if [[ -z "$LAZYTG_RELEASE_API_ID" ]]; then
+            MISSING="LAZYTG_RELEASE_API_ID"
+          fi
+          if [[ -z "$LAZYTG_RELEASE_API_HASH" ]]; then
+            MISSING="${MISSING:+$MISSING and }LAZYTG_RELEASE_API_HASH"
+          fi
+          if [[ -z "$MISSING" ]]; then
+            echo "Telegram API credentials present — binaries will report 'api: embedded'."
+            exit 0
+          fi
+          # Exactly one secret set is worse than neither, and fails on every
+          # tag type. Neither set degrades cleanly to "ask the user for env
+          # vars"; a half-set pair builds a binary whose embedded layer is
+          # malformed, so ResolveCredentials reports "build-time credentials
+          # are malformed (report this)" — an alarming error about a defect
+          # the user cannot fix.
+          if [[ "$MISSING" != *" and "* ]]; then
+            echo "::error title=$MISSING missing::Only one of the two release secrets is set. That ships a binary that reports 'misconfigured: build-time credentials are malformed' on startup. Set both, or neither."
+            exit 1
+          fi
+          if [[ "$TAG" =~ -(alpha|beta|rc)\. ]]; then
+            echo "::warning title=release credentials unset::Prerelease $TAG will ship binaries without embedded credentials (api: none). Users must export LAZYTG_API_ID/LAZYTG_API_HASH themselves."
+            exit 0
+          fi
+          echo "::error title=release credentials unset::Stable tag $TAG would ship binaries that cannot log in out of the box (api: none). Configure both secrets and re-run via 'gh workflow run release.yml --ref $TAG'. See docs/RELEASE_PROCESS.md."
+          exit 1
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -85,3 +132,11 @@ jobs:
           # .goreleaser.yaml via `release.prerelease: auto` and
           # `brews[].skip_upload: '{{ if .Prerelease }}true{{ end }}'`.
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          # Baked into the shipped binaries via -ldflags so users can log in
+          # without registering their own application. Absent secrets yield
+          # empty strings, which produces a working binary that asks the user
+          # for LAZYTG_API_ID/LAZYTG_API_HASH instead — degraded, not broken.
+          # Never echo these: the redaction handler covers lazytg's own logs,
+          # not workflow output.
+          LAZYTG_RELEASE_API_ID: ${{ secrets.LAZYTG_RELEASE_API_ID }}
+          LAZYTG_RELEASE_API_HASH: ${{ secrets.LAZYTG_RELEASE_API_HASH }}

@@ -23,6 +23,19 @@ builds:
       - -X github.com/kar43lov/lazytg/cmd/lazytg/cmd.version={{.Version}}
       - -X github.com/kar43lov/lazytg/cmd/lazytg/cmd.commit={{.Commit}}
       - -X github.com/kar43lov/lazytg/cmd/lazytg/cmd.date={{.Date}}
+      # Telegram API credentials, injected from repository secrets so release
+      # binaries work out of the box while the repo itself stays clean — an
+      # api_id found in public source is refused by Telegram forever
+      # (API_ID_PUBLISHED_FLOOD).
+      #
+      # `index .Env "…"` yields "" for an unset variable instead of failing
+      # the template, which keeps `--snapshot` builds working locally. The
+      # names are deliberately NOT LAZYTG_API_ID/LAZYTG_API_HASH: those are
+      # the user-facing runtime vars and are likely exported in a
+      # maintainer's own shell, which would silently bake personal
+      # credentials into a public release.
+      - -X github.com/kar43lov/lazytg/internal/tg.embeddedAPIID={{ index .Env "LAZYTG_RELEASE_API_ID" }}
+      - -X github.com/kar43lov/lazytg/internal/tg.embeddedAPIHash={{ index .Env "LAZYTG_RELEASE_API_HASH" }}
     flags:
       - -trimpath
 

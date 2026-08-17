@@ -13,11 +13,24 @@
 1. Создать репо `kar43lov/homebrew-lazytg` на GitHub (пустой, с одним каталогом `Formula/`).
 2. Сгенерировать Personal Access Token с scope `contents:write` на этот репо. Можно классический PAT или fine-grained.
 3. Добавить токен в org/repo secrets текущего репозитория `kar43lov/lazytg` под именем `HOMEBREW_TAP_GITHUB_TOKEN`. Это используется goreleaser-action.
-4. Установить локально (для генерации changelog и snapshot-тестов):
+4. **Telegram API credentials в repo secrets.** Создать приложение на <https://my.telegram.org/apps> и добавить два secret'а в `kar43lov/lazytg`:
+   - `LAZYTG_RELEASE_API_ID` — целое число;
+   - `LAZYTG_RELEASE_API_HASH` — 32 hex-символа.
+
+   `release.yml` пробрасывает их в goreleaser, а `.goreleaser.yaml` вшивает через `-ldflags` в бинарники — пользователь скачивает релиз и логинится без регистрации своего приложения. Имена намеренно не совпадают с runtime-переменными `LAZYTG_API_ID` / `LAZYTG_API_HASH`: те, скорее всего, экспортированы в шелле мейнтейнера, и совпадение имён привело бы к тихой публикации личных кредов в релизе.
+
+   🔴 **Эти значения не должны попадать в git.** `scripts/secret-scan.sh` блокирует коммит (lefthook `pre-commit`) и валит CI (job `secret-scan`) на любой 32-hex строке. Опубликованный в исходниках `api_id` Telegram блокирует навсегда (`API_ID_PUBLISHED_FLOOD`) — это отзовётся у всех пользователей релиза разом.
+
+   Что гейт **не** ловит (перечислено в шапке самого скрипта): намеренно разбитый на части или закодированный ключ, hex длиннее 32 символов, содержащий ключ, uppercase-hex, и — главное — уже существующую git-историю. Гейт защищает от случайной вставки, а не от обхода. Сделать `secret-scan` **required status check** в branch protection: без этого PR с утечкой можно смержить, пока job ещё идёт.
+
+   🔴 **Не запускать goreleaser с `--debug` на release-раннере.** GitHub маскирует значения `secrets.*` в логах, но debug-вывод печатает собранную команду `go build` целиком, и на частичных совпадениях маскирование не гарантировано.
+
+   Если secrets не заданы — релиз соберётся, но бинарники будут требовать от пользователя свои креды (`api: none` в `lazytg version`). Это деградация, не поломка.
+5. Установить локально (для генерации changelog и snapshot-тестов):
    ```sh
    brew install git-cliff cosign goreleaser
    ```
-5. (Опционально) Установить `actionlint` и `act` для local-validation workflow-файлов.
+6. (Опционально) Установить `actionlint` и `act` для local-validation workflow-файлов.
 
 ---
 
@@ -37,6 +50,15 @@
    ```
    В `dist/` должны появиться tar.gz для всех 4 платформ + `.deb` + `.rpm`.
    `--skip=sign` обязателен локально — cosign keyless OIDC требует GitHub Actions runtime context и без него сборка падает на signs step. Подпись валидируется в release.yml.
+6. **Креды вшиты в релизный бинарник.** Шаг `Guard Telegram API credentials` в `release.yml` валит stable-тег при пустых secrets (для alpha/beta/rc — только `::warning`), так что молча уехать без кредов релиз уже не может. Финальная проверка на скачанном артефакте всё равно нужна — guard проверяет наличие secrets, а не то, что goreleaser их применил:
+   ```sh
+   ./lazytg version | grep api      # → api:    embedded (build embeds credentials: yes)
+   ```
+
+   Локальный snapshot по умолчанию даёт `api: none` — это правильно: `LAZYTG_RELEASE_API_*` не заданы на машине мейнтейнера. Проверить инъекцию локально можно, подставив фиктивные значения:
+   ```sh
+   LAZYTG_RELEASE_API_ID=1 LAZYTG_RELEASE_API_HASH=deadbeef goreleaser build --snapshot --clean --single-target
+   ```
 
 ---
 
@@ -184,6 +206,10 @@ GitHub Releases можно пометить как deprecated, но **удаля
 | Тег от prerelease.yml не запустил release.yml | GitHub блокирует recursive workflow dispatch для тегов от GITHUB_TOKEN | `gh workflow run release.yml --ref <tag>` (workflow_dispatch добавлен) |
 | GitHub Release создан, но без assets | goreleaser завершился до upload — смотреть логи job | Перезапустить workflow вручную через `gh workflow run release.yml --ref <tag>` |
 | `cosign verify-blob` падает у пользователя | Mismatch certificate-identity-regexp | Убедиться что pattern в VERIFY.md соответствует реальному pattern в OIDC claim |
+| `lazytg version` в релизе показывает `api: none` | Оба secret'а не заданы. Шаг `Guard Telegram API credentials` пропускает это для alpha/beta/rc (только warning) и валит для stable | Добавить оба secret'а, перевыпустить релиз. Пустой шаблон `index .Env` не роняет сборку — отсюда возможность тихой деградации на prerelease |
+| `lazytg version` показывает `misconfigured: build-time credentials are malformed` | Задан ровно один из двух secret'ов — половинчатый embedded-слой. Такой бинарник не логинится из коробки и пугает пользователя ошибкой «report this» | Guard валит этот случай на **любом** типе тега. Если релиз всё же уехал — задать второй secret и выпустить patch |
+| Пользователи массово получают `API_ID_PUBLISHED_FLOOD` | Релизный `api_id` заблокирован Telegram | Зарегистрировать новое приложение, обновить secrets, выпустить patch-релиз. В release notes — инструкция про `LAZYTG_API_ID`/`LAZYTG_API_HASH` как немедленный обход без ожидания релиза |
+| `secret-scan` job красный | В отслеживаемых файлах 32-hex строка | Убрать значение из файлов и из истории коммитов ветки; если это ложное срабатывание — добавить в allowlist `scripts/secret-scan.sh` |
 
 ---
 
