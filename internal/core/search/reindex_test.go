@@ -95,6 +95,20 @@ func TestReindex_RunAll_ProgressEvents(t *testing.T) {
 	}
 }
 
+// cancelReturnBudget is how long RunAll may take to unwind after its context
+// is cancelled. Cancellation is observed between chats, so the budget has to
+// cover finishing the chat already in flight — 200 messages indexed under
+// -race on whatever disk the runner happens to have.
+//
+// It was 5s, which held on an Apple Silicon laptop (RunAll returns in ~2s) and
+// failed on ubuntu-latest the first time this suite ran in CI. The generous
+// value keeps the assertion meaningful — it still catches a hang or a panic,
+// which is the actual failure mode — without turning runner speed into a test
+// result. Shrinking the fixture instead would be worse: the volume is what
+// guarantees the cancel lands mid-run rather than after RunAll already
+// finished, which would quietly reduce this to a no-op.
+const cancelReturnBudget = 30 * time.Second
+
 // TestReindex_GracefulCancel arms a sizeable orphan workload (the AFTER
 // INSERT trigger is dropped, 50 chats × 200 messages are written without
 // being indexed, the trigger is restored, RunAll is then started in a
@@ -163,8 +177,8 @@ func TestReindex_GracefulCancel(t *testing.T) {
 		} else if !errors.Is(err, context.Canceled) {
 			t.Fatalf("RunAll returned non-cancel error: %v", err)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatalf("RunAll did not return within 5s after cancel")
+	case <-time.After(cancelReturnBudget):
+		t.Fatalf("RunAll did not return within %s after cancel", cancelReturnBudget)
 	}
 
 	// PRAGMA integrity_check returns a single-row result with "ok" on
