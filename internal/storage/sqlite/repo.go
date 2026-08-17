@@ -121,7 +121,59 @@ func buildDSN(path string) string {
 
 // pragmaQuery is the URL-encoded set of PRAGMAs that must run on every
 // connection in the pool. Order matches what applyPragmas used to do.
-const pragmaQuery = "_pragma=journal_mode(wal)&_pragma=foreign_keys(1)&_pragma=synchronous(normal)"
+//
+// busy_timeout is not optional. SQLite allows exactly one writer at a time,
+// and without a busy timeout a connection that finds the write lock taken
+// fails the statement instantly with SQLITE_BUSY instead of waiting. lazytg
+// has several write paths that run concurrently by design — live drain,
+// history backfill, dialog sync, FTS reindex — so this was not a rare race:
+// measured on a burst of 4 goroutines × 300 writes, 973 of the 1200 were lost
+// this way. TestConcurrentWriters_NoBusyFailures reproduces the same shape at
+// 4 × 150 (kept smaller to stay quick) and asserts zero failures.
+//
+// 5s covers the longest transaction this app issues by a wide margin: a full
+// 5000-row Indexer.Backfill, the biggest single write transaction here, was
+// measured at 151ms.
+const pragmaQuery = "_pragma=journal_mode(wal)&_pragma=foreign_keys(1)&_pragma=synchronous(normal)&_pragma=busy_timeout(5000)"
+
+// SQLite primary result codes that mean "the lock is taken" rather than
+// "storage refuses writes".
+//
+// Masking is required, not defensive: the driver enables extended result
+// codes on every connection (modernc.org/sqlite conn.go, extendedResultCodes),
+// so BUSY arrives as e.g. SQLITE_BUSY_SNAPSHOT (517) and LOCKED as
+// SQLITE_LOCKED_VTAB (518). Extended codes keep the primary code in the low
+// byte (sqlite3.h), so compare after masking.
+const (
+	sqliteBusy   = 5 // SQLITE_BUSY: another connection holds the write lock.
+	sqliteLocked = 6 // SQLITE_LOCKED: the table is locked, typically within
+	// the same connection or a shared cache. Unlike BUSY, SQLite's busy
+	// handler does not retry it, and BEGIN IMMEDIATE on a dedicated
+	// connection should not produce it — it is accepted here because it
+	// still describes a lock rather than a storage failure.
+)
+
+// isContention reports whether err is SQLite saying the lock is taken.
+//
+// The check goes through an interface rather than the driver's concrete error
+// type because the driver is selected by build tag (driver_modernc.go /
+// driver_sqlcipher.go) and this file is compiled under both.
+//
+// No genuine storage failure masks into these two: PERM(3), READONLY(8),
+// IOERR(10), CORRUPT(11), FULL(13), CANTOPEN(14) and NOTADB(26) all keep a
+// low byte of their own, so classification cannot swallow them.
+func isContention(err error) bool {
+	var coder interface{ Code() int }
+	if !errors.As(err, &coder) {
+		return false
+	}
+	switch coder.Code() & 0xFF {
+	case sqliteBusy, sqliteLocked:
+		return true
+	default:
+		return false
+	}
+}
 
 // Close releases the underlying database connection.
 func (r *Repo) Close() error { return r.db.Close() }
@@ -136,12 +188,18 @@ func (r *Repo) IsReadOnly() bool { return r.readOnly.Load() }
 // the gating behaviour without touching filesystem permissions.
 func (r *Repo) SetReadOnly(v bool) { r.readOnly.Store(v) }
 
-// ProbeWrite verifies the database file accepts writes without polluting
-// any user-visible table. The probe acquires a dedicated connection,
-// issues BEGIN IMMEDIATE (which requires the write lock — SQLite returns
-// SQLITE_READONLY here when the file is on a read-only mount or chmoded
-// 0444), then rolls back. DegradationDetector translates a non-nil error
-// into StorageStateChanged{read-only}.
+// ProbeWrite reports whether the storage still accepts writes, without
+// polluting any user-visible table: a dedicated connection issues
+// BEGIN IMMEDIATE, which acquires the write lock, then rolls back.
+// DegradationDetector translates a non-nil error into
+// StorageStateChanged{read-only}.
+//
+// Note what BEGIN IMMEDIATE does and does not prove. It acquires the write
+// lock, so failures at connection and lock level surface here. It dirties no
+// page, so conditions that only appear when a page is written — a read-only
+// database above all — do not. Which of SQLITE_FULL and the write-time
+// SQLITE_IOERR variants reach this probe has not been established; do not
+// assume from this code that they do.
 //
 // The probe deliberately bypasses the soft read-only flag so the detector
 // can re-arm rw mode once the underlying issue is resolved.
@@ -149,13 +207,47 @@ func (r *Repo) SetReadOnly(v bool) { r.readOnly.Store(v) }
 // A dedicated *sql.Conn is used because BEGIN/ROLLBACK on a pooled
 // connection would leak transaction state to whichever goroutine the
 // pool hands the connection to next.
+//
+// Contention is reported as success. SQLITE_BUSY means another connection
+// currently holds the write lock, which is positive evidence that the storage
+// accepts writes — the opposite of what the detector is looking for. Treating
+// it as failure put the whole repo into soft read-only mode whenever a probe
+// happened to land inside a write burst: every subsequent write returned
+// ErrReadOnly and the status bar blamed the filesystem, until the next probe
+// 30s later found the database idle. That is how a healthy machine ended up
+// reporting "read-only mode" mid-backfill.
+//
+// What this probe therefore does NOT detect, so nobody mistakes it for a
+// general write-health check:
+//   - a lock held indefinitely (a wedged transaction, an app-level deadlock).
+//     Contention is indistinguishable from a stuck writer from here, and in
+//     that state ordinary writes fail with BUSY of their own after the
+//     busy_timeout while the detector keeps reporting healthy storage.
+//
+// What the contention tolerance does not cost: any other failure code that
+// does reach the probe is still reported, because none of them mask to BUSY or
+// LOCKED (TestIsContention_ClassifiesResultCodes). Tolerating contention
+// narrows nothing that was previously detected.
+//   - a read-only database file. BEGIN IMMEDIATE takes the write lock but
+//     dirties no page, so SQLite has no reason to raise SQLITE_READONLY. This
+//     predates the contention handling and is pinned as a known gap by
+//     TestProbeWrite_KnownGap_ReadOnlyDatabaseUndetected.
 func (r *Repo) ProbeWrite(ctx context.Context) error {
 	conn, err := r.db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("probe conn: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
+	// No per-connection PRAGMA busy_timeout here, tempting as a shorter probe
+	// timeout is: Close returns the connection to the pool, and busy_timeout
+	// is connection-scoped, so the next ordinary writer to be handed this
+	// connection would inherit the probe's shorter patience. Waiting out the
+	// busy_timeout from the DSN costs nothing that matters — the only thing
+	// delayed is a background goroutine whose sole job is to probe again later.
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		if isContention(err) {
+			return nil
+		}
 		return fmt.Errorf("probe begin immediate: %w", err)
 	}
 	if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
