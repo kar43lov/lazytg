@@ -29,7 +29,7 @@ Think `lazygit` ergonomics, but for Telegram conversations: keyboard-driven, sin
 ## Features
 
 - 🔍 **Instant local FTS5 search** with trigram tokenizer — works offline, no `messages.search` round-trip.
-- ⚡ **p95 ≈ 47 ms** on a 100k-message synthetic corpus (SLA gate < 100 ms in CI).
+- ⚡ **p95 ≈ 47 ms** on a 100k-message synthetic corpus, measured on an M4 (`make bench` gates at the 100 ms product SLA; the CI gate is looser because a shared runner is ~2.4× slower — see [docs/PERFORMANCE.md](docs/PERFORMANCE.md)).
 - 🔐 **Local-first** — sessions in the OS keyring (or `age`-encrypted file fallback), permissions audit refuses `0644` secrets.
 - 🛡️ **Built-in ban-risk floor** — 10 msg/sec send rate-limit guard covers both text and media; not user-tunable upward.
 - ⌨️ **Emacs/readline keymap by default**, fully overridable through `keymap.toml` (vim-style modal bindings deferred to v0.2).

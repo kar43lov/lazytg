@@ -12,7 +12,7 @@
 |---------------------------------|-----------------------|------------------------------------------------|-----------|
 | Memory idle (logged-in, no traffic) | < 50 MiB HeapAlloc | `TestMemoryBudget_Idle` (`test/perf/`)        | ~25×      |
 | Memory active (load + search)   | < 150 MiB HeapAlloc   | `TestMemoryBudget_Active` (`test/perf/`)       | ~65×      |
-| Search p95 (100k сообщений)     | < 100 ms              | `BenchmarkSearch100k` (`internal/core/search/`) | ~2×       |
+| Search p95 (100k сообщений)     | < 100 ms (CI: 250 ms) | `BenchmarkSearch100k` (`internal/core/search/`) | ~2×       |
 | Live-update p95 (bus → drain)   | < 500 ms              | `TestLiveUpdateLatencySLA` (`test/perf/`)      | ~100×     |
 | Goroutine leaks после shutdown  | 0                     | `TestApp_NoGoroutineLeaks` (`test/perf/`)      | strict    |
 
@@ -72,7 +72,7 @@
 
 ### Как измеряется
 
-`internal/core/search/bench_test.go::BenchmarkSearch100k` сидит 100k синтетических сообщений (20 чатов × 5000) + детерминированный PCG seed → warmup → 100 search-итераций по 4 query-вариантам (`привет`, `hello world`, `тест`, `abc def`). Падает с `b.Fatalf` если `latencies[len*95/100]` > 100 ms.
+`internal/core/search/bench_test.go::BenchmarkSearch100k` сидит 100k синтетических сообщений (20 чатов × 5000) + детерминированный PCG seed → warmup → 100 search-итераций по 4 query-вариантам (`привет`, `hello world`, `тест`, `abc def`). Падает с `b.Fatalf` если `latencies[len*95/100]` превышает бюджет.
 
 ```sh
 make bench
@@ -80,16 +80,26 @@ make bench
 go test -bench=BenchmarkSearch100k -benchtime=1x ./internal/core/search/
 ```
 
-### Текущие замеры (M4)
+### Два порога: продуктовый и CI
 
-| Метрика | Значение |
-|---------|----------|
-| p50     | ~38 ms   |
-| p95     | ~47 ms   |
-| p99     | ~45 ms   |
-| budget  | 100 ms   |
+🔴 **100 ms — обещание про референсное железо, а не про CI-раннер.** По умолчанию бенч гейтит на 100 ms, так что локальный `make bench` проверяет ровно продуктовый SLA. CI выставляет `LAZYTG_BENCH_P95_MS=250` (шаг `Search SLA gate` в `ci.yml`), потому что общий ubuntu-раннер выдаёт **p95 ≈ 111-115 ms при p50 ≈ 97 ms** на том же коде, который на M4 даёт 47 ms — то есть измеряет он скорость арендованной машины, а не качество запроса.
 
-Запас ~2×. Регрессии (например, добавление JOIN'а без индекса) ловятся в CI до merge.
+Что это значит на практике:
+
+- **CI ловит регрессию в разы, а не в проценты.** Если поиск замедлится вдвое — упадёт. Если на 20% — не заметит. Так честнее, чем гейт, который краснеет через прогон и которому перестают верить.
+- **Продуктовый SLA проверяется на референсном железе** — `make bench` без env перед тегированием релиза (шаг в `docs/RELEASE_PROCESS.md` → Pre-flight).
+- Некорректное значение env (`LAZYTG_BENCH_P95_MS=abc`, `0`, отрицательное) валит бенч сразу, а не откатывается на дефолт: опечатка в workflow не должна тихо снимать гейт, оставляя зелёный лог.
+
+### Текущие замеры
+
+| Метрика | M4 (референс) | ubuntu-latest (CI) |
+|---------|---------------|--------------------|
+| p50     | ~38 ms        | ~97 ms             |
+| p95     | ~47 ms        | ~111-115 ms        |
+| p99     | ~45 ms        | ~113-124 ms        |
+| budget  | 100 ms        | 250 ms             |
+
+Запас на референсе ~2×, в CI ~2.2×.
 
 ### DB size guidance
 
