@@ -258,15 +258,43 @@ func TestAgeFileStore_EmptyPassphraseFails(t *testing.T) {
 	}
 }
 
+// TestNewSecretStore_KeyringPath covers the desktop path: with a usable
+// keyring, the store needs no prompter, secrets land in the age file, and the
+// keyring holds only the passphrase.
+//
+// It asserts behaviour rather than the concrete type on purpose. The store used
+// to *be* the keyring, which is exactly the arrangement that could not hold a
+// session blob (see NewSecretStore); pinning the type would re-encode that
+// mistake as a requirement.
 func TestNewSecretStore_KeyringPath(t *testing.T) {
 	keyring.MockInit()
 
-	store, err := NewSecretStore(t.TempDir(), nil)
+	dir := t.TempDir()
+	store, err := NewSecretStore(dir, nil)
 	if err != nil {
 		t.Fatalf("NewSecretStore: %v", err)
 	}
-	if _, ok := store.(*KeyringStore); !ok {
-		t.Fatalf("want *KeyringStore, got %T", store)
+
+	if err := store.Set("session:+7000", "blob"); err != nil {
+		t.Fatalf("Set without a prompter: %v", err)
+	}
+	got, err := store.Get("session:+7000")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got != "blob" {
+		t.Errorf("Get = %q, want %q", got, "blob")
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, secretsFileName)); err != nil {
+		t.Errorf("secrets file not written: %v", err)
+	}
+	pw, err := (&KeyringStore{Service: keyringService}).Get(keyringPassphraseKey)
+	if err != nil {
+		t.Fatalf("passphrase not stored in the keyring: %v", err)
+	}
+	if pw == "" {
+		t.Error("keyring holds an empty passphrase")
 	}
 }
 

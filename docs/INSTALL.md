@@ -226,12 +226,18 @@ lazytg login --account +71234567890
 # → If 2FA is enabled, lazytg asks for the cloud password (no echo).
 ```
 
-The session is stored in your OS keyring (Keychain on macOS, Secret Service
-on Linux, Credential Manager on Windows). On a headless box without D-Bus,
-lazytg falls back to an `age`-encrypted file gated by a master passphrase
-you supply at startup — there is no third option, so make sure either
-gnome-keyring/KWallet is running, or you are happy typing a passphrase
+The session is stored in `<config>/secrets.age`, encrypted with `age`. The
+passphrase that opens it is generated once and kept in your OS keyring
+(Keychain on macOS, Secret Service on Linux, Credential Manager on Windows),
+so a desktop install never prompts. On a headless box without D-Bus you supply
+that passphrase at startup instead — there is no third option, so make sure
+either gnome-keyring/KWallet is running, or you are happy typing a passphrase
 on every interactive command.
+
+The session blob does not go in the keyring itself. A gotd session is roughly
+4.2 KB — auth key plus the full datacenter configuration — and the macOS
+keyring backend refuses any secret past 4096 bytes, which made sessions
+impossible to persist there at all.
 
 Confirm the session is stored:
 

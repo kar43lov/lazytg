@@ -170,6 +170,47 @@ copy the file out of band, not to relax the audit.
 
 ---
 
+### "the passphrase does not open this file" at startup
+
+**Symptom.** Every command that touches secrets fails with
+`age file store: decrypt "…/secrets.age": … — the passphrase does not
+open this file`.
+
+**Diagnosis.** Sessions live in `secrets.age`, encrypted with a random
+passphrase that lazytg generated once and keeps in the OS keyring under
+`age-passphrase` (service `lazytg`). The file and the keyring entry have
+drifted apart: the entry was deleted from Keychain Access / `secret-tool`,
+overwritten by another tool, or the file was copied in from a machine with
+a different passphrase.
+
+lazytg deliberately does **not** re-encrypt the file under the passphrase
+it currently has — that would silently destroy the only copy of your
+sessions. Nothing is lost while you investigate.
+
+**Fix.**
+
+1. If the entry was moved rather than lost, restore it and retry:
+
+   ```sh
+   security find-generic-password -s lazytg -a age-passphrase -w   # macOS
+   secret-tool lookup service lazytg username age-passphrase       # Linux
+   ```
+
+   Restoring the original passphrase makes the file readable again.
+2. If the passphrase is genuinely gone, the sessions are unrecoverable —
+   scrypt has no backdoor. Delete the file and log in again; the local
+   message index in `lazytg.db` is untouched:
+
+   ```sh
+   rm ~/.config/lazytg/secrets.age        # macOS: ~/Library/Application Support/lazytg/
+   lazytg login --account +79991112233
+   ```
+
+   Telegram will still list the old device under Settings → Devices. Revoke
+   it there: lazytg cannot, having lost the session it would need to do so.
+
+---
+
 ### "DB locked" error from `lazytg reindex` or the TUI
 
 **Symptom.** A subcommand fails with `database is locked`.

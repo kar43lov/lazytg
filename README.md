@@ -30,7 +30,7 @@ Think `lazygit` ergonomics, but for Telegram conversations: keyboard-driven, sin
 
 - 🔍 **Instant local FTS5 search** with trigram tokenizer — works offline, no `messages.search` round-trip.
 - ⚡ **p95 ≈ 47 ms** on a 100k-message synthetic corpus, measured on an M4 (`make bench` gates at the 100 ms product SLA; the CI gate is looser because a shared runner is ~2.4× slower — see [docs/PERFORMANCE.md](docs/PERFORMANCE.md)).
-- 🔐 **Local-first** — sessions in the OS keyring (or `age`-encrypted file fallback), permissions audit refuses `0644` secrets.
+- 🔐 **Local-first** — sessions in an `age`-encrypted file whose passphrase lives in the OS keyring, permissions audit refuses `0644` secrets.
 - 🛡️ **Built-in ban-risk floor** — 10 msg/sec send rate-limit guard covers both text and media; not user-tunable upward.
 - ⌨️ **Emacs/readline keymap by default**, fully overridable through `keymap.toml` (vim-style modal bindings deferred to v0.2).
 - 📥📤 **First-class file transfer** — `Ctrl+D` downloads the focused media, `Ctrl+U` attaches a file with progress in the status bar.
@@ -45,7 +45,7 @@ Think `lazygit` ergonomics, but for Telegram conversations: keyboard-driven, sin
 
 Current capabilities:
 
-- `lazytg login` — phone + code + 2FA authentication via [gotd/td](https://github.com/gotd/td); session is persisted to OS keyring (with `age`-encrypted file fallback for headless boxes).
+- `lazytg login` — phone + code + 2FA authentication via [gotd/td](https://github.com/gotd/td); the session is persisted to an `age`-encrypted file, unlocked by a passphrase kept in the OS keyring (or typed at startup on headless boxes).
 - `lazytg accounts` — list authenticated accounts (read-only, no Telegram round-trip).
 - `lazytg logout --account <phone>` — drop a stored session.
 - `lazytg version` — print version, commit, build date.
@@ -105,7 +105,7 @@ Anything not on this list is out of scope until it lands here — see the non-go
 ## Requirements
 
 - Go ≥ 1.25 to build (`go.mod` toolchain pin).
-- On Linux: a running D-Bus session with a Secret Service provider (gnome-keyring, KWallet, etc.) for keyring storage. Headless boxes fall back to an `age`-encrypted file gated by a master passphrase.
+- On Linux: a running D-Bus session with a Secret Service provider (gnome-keyring, KWallet, etc.) so the keyring can hold the passphrase for you. Headless boxes prompt for it at startup instead.
 - SQLite ≥ 3.34 is bundled by `modernc.org/sqlite` — no system SQLite required.
 - Telegram API credentials — already embedded in release binaries. Builds from source need your own in `LAZYTG_API_ID` / `LAZYTG_API_HASH` (see <https://my.telegram.org/apps>); the repository carries no key, because an `api_id` published in source is blocked by Telegram permanently.
 
@@ -152,7 +152,9 @@ A `sqlcipher` build tag is reserved for the CGo-backed encrypted driver and is *
 
 ## Authentication & sessions
 
-The session is stored in your OS keyring (Keychain on macOS, Secret Service on Linux, Credential Manager on Windows). On a headless server without D-Bus, lazytg falls back to a file encrypted with [age](https://age-encryption.org/), gated by a master passphrase you provide at startup.
+The session is stored in `<config>/secrets.age`, encrypted with [age](https://age-encryption.org/). The passphrase that opens it is generated once and kept in your OS keyring (Keychain on macOS, Secret Service on Linux, Credential Manager on Windows), so you are never prompted on a desktop. On a headless server without D-Bus, lazytg asks for the passphrase at startup instead.
+
+The session blob itself does not go in the keyring: a gotd session is ~4.2 KB and the macOS keyring backend refuses anything past 4096 bytes, which used to make sessions impossible to keep on macOS at all.
 
 ```sh
 lazytg accounts                          # → +71234567890   (active)

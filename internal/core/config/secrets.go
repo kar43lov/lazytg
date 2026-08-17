@@ -2,6 +2,8 @@ package config
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,12 +22,18 @@ import (
 const keyringService = "lazytg"
 
 // secretsFileName is the filename of the age-encrypted JSON store written to
-// ConfigDir() when the OS keyring is unavailable (typical on headless Linux).
+// ConfigDir(). Every secret lives here; the keyring holds only the passphrase
+// that decrypts it (see NewSecretStore for why sessions cannot go in the
+// keyring directly).
 const secretsFileName = "secrets.age"
 
 // fileMode is the permission applied to the age-encrypted secrets file. We
 // fail-fast if the file on disk has any other permission bits set.
 const fileMode os.FileMode = 0o600
+
+// lockSuffix names the sidecar lock file guarding read-modify-write cycles on
+// the secrets file across processes. It holds no data.
+const lockSuffix = ".lock"
 
 // ErrSecretNotFound is returned by every SecretStore when the requested key is
 // missing. Callers should compare with errors.Is, not direct equality, so the
@@ -46,21 +54,77 @@ type SecretStore interface {
 // value in tests.
 type PassphrasePrompter func() (string, error)
 
-// NewSecretStore tries the OS keyring first and falls back to an
-// age-encrypted file when the keyring is unsupported (no D-Bus, etc.).
+// keyringPassphraseKey is the keyring entry holding the age passphrase. It is
+// deliberately the only thing lazytg keeps in the OS credential store.
+const keyringPassphraseKey = "age-passphrase"
+
+// passphraseBytes is the entropy of a generated age passphrase. 32 random
+// bytes is well beyond what scrypt needs and still tiny in the keyring.
+const passphraseBytes = 32
+
+// NewSecretStore returns the secret store: secrets live in an age-encrypted
+// file, and the OS keyring holds only the passphrase that opens it.
 //
-// The probe call uses Set/Delete with a synthetic key because go-keyring's
-// Get returns ErrNotFound for both "missing entry" and "no backend at all"
-// on some platforms; the only reliable probe is a write.
+// Sessions cannot live in the keyring directly. A gotd session blob is ~4.2 KB
+// (auth key plus the full DC configuration), and go-keyring on macOS builds a
+// `security -i` command line, refusing anything past 4096 bytes with
+// ErrSetDataTooBig. The failure was not graceful: gotd calls StoreSession from
+// its connection setup, so a rejected write tore the connection down and the
+// in-flight auth-status RPC failed with "engine forcibly closed" — while
+// `lazytg login` still printed success, because gotd's Run returned nil. The
+// result was an app that could never keep a session on macOS at all. See
+// TestKeyringStore_RejectsSessionSizedValue, which pins the limit.
+//
+// The passphrase is generated once and kept in the keyring, so a desktop user
+// is never prompted. Without a keyring (headless Linux, CI, Docker) the caller's
+// prompter supplies it, which is the pre-existing behaviour.
+//
+// The keyring probe uses Set/Delete with a synthetic key because go-keyring's
+// Get returns ErrNotFound for both "missing entry" and "no backend at all" on
+// some platforms; the only reliable probe is a write.
 func NewSecretStore(configDir string, prompter PassphrasePrompter) (SecretStore, error) {
+	path := filepath.Join(configDir, secretsFileName)
 	ks := &KeyringStore{Service: keyringService}
 	if ks.available() {
-		return ks, nil
+		return NewAgeFileStore(path, KeyringPassphrase(ks))
 	}
 	if prompter == nil {
 		return nil, errors.New("keyring unavailable and no passphrase prompter provided")
 	}
-	return NewAgeFileStore(filepath.Join(configDir, secretsFileName), prompter)
+	return NewAgeFileStore(path, prompter)
+}
+
+// KeyringPassphrase returns a PassphrasePrompter that reads the age passphrase
+// from the keyring, generating and storing one on first use.
+//
+// A read failure other than "not found" is reported rather than papered over
+// with a fresh passphrase: generating a new one would leave the existing
+// secrets file undecryptable, turning a transient keyring hiccup into a
+// silent logout.
+func KeyringPassphrase(ks *KeyringStore) PassphrasePrompter {
+	return func() (string, error) {
+		pw, err := ks.Get(keyringPassphraseKey)
+		switch {
+		case err == nil && pw != "":
+			return pw, nil
+		case err == nil:
+			// An empty entry is corrupt rather than absent; replacing it is the
+			// only way forward, and it cannot cost anything a valid passphrase
+			// would have opened.
+		case !errors.Is(err, ErrSecretNotFound):
+			return "", fmt.Errorf("keyring: read age passphrase: %w", err)
+		}
+
+		buf := make([]byte, passphraseBytes)
+		if _, err := rand.Read(buf); err != nil {
+			return "", fmt.Errorf("generate age passphrase: %w", err)
+		}
+		pw = base64.RawStdEncoding.EncodeToString(buf)
+		if err := ks.Set(keyringPassphraseKey, pw); err != nil {
+			return "", fmt.Errorf("keyring: store age passphrase: %w", err)
+		}
+		return pw, nil
+	}
 }
 
 // KeyringStore is a SecretStore backed by github.com/zalando/go-keyring (which
@@ -115,12 +179,13 @@ func (k *KeyringStore) Delete(key string) error {
 	return nil
 }
 
-// AgeFileStore persists secrets as an age-encrypted JSON map on disk. Used as
-// fallback when no OS keyring is available (headless Linux, CI, Docker).
+// AgeFileStore persists secrets as an age-encrypted JSON map on disk. This is
+// where every secret lives, including Telegram session blobs, which are too
+// large for the OS keyring (see NewSecretStore).
 //
-// The passphrase is obtained once via the prompter and cached for the
-// lifetime of the process. We do not persist it; if the process exits, the
-// next run will prompt again.
+// The passphrase is obtained once via the prompter and cached for the lifetime
+// of the process. It is not written to disk: on a desktop the prompter reads it
+// from the keyring, and without a keyring the next run asks the user again.
 type AgeFileStore struct {
 	path     string
 	prompter PassphrasePrompter
@@ -129,6 +194,12 @@ type AgeFileStore struct {
 	passphrase string
 	cache      map[string]string
 	loaded     bool
+
+	// lastRaw is the ciphertext this store last read or wrote. It lets refresh
+	// skip a decrypt when no other process has touched the file — scrypt costs
+	// ~390ms, and paying it twice per write would be the price of a lock that
+	// almost never has contention. nil means "the file was absent".
+	lastRaw []byte
 }
 
 // NewAgeFileStore returns an AgeFileStore backed by path. The file is created
@@ -181,13 +252,41 @@ func (a *AgeFileStore) Get(key string) (string, error) {
 // in-memory and on-disk views diverged. A subsequent Get in the same process
 // must not see a value that survives a process restart only by luck.
 func (a *AgeFileStore) Set(key, value string) error {
+	return a.mutate(func(next map[string]string) bool {
+		next[key] = value
+		return true
+	})
+}
+
+// mutate performs one read-modify-write cycle under both the process mutex and
+// a cross-process file lock, re-reading the file inside the lock. apply reports
+// whether anything changed; false skips the write entirely.
+//
+// The whole file is one ciphertext, so a write rewrites every key — which makes
+// a stale in-memory snapshot destructive rather than merely outdated. Two
+// processes sharing the store (the TUI plus a `lazytg login --account other` in
+// another terminal, which is a documented flow) would otherwise silently drop
+// each other's sessions: whoever wrote last would persist the map as it looked
+// when *it* started. Verified before this locking existed —
+// TestAgeFileStore_ConcurrentProcessesKeepBothKeys is that regression.
+func (a *AgeFileStore) mutate(apply func(next map[string]string) bool) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if err := a.ensureLoaded(); err != nil {
+
+	unlock, err := lockFile(a.path + lockSuffix)
+	if err != nil {
+		return fmt.Errorf("age file store: %w", err)
+	}
+	defer unlock()
+
+	if err := a.refresh(); err != nil {
 		return err
 	}
+
 	next := cloneCache(a.cache)
-	next[key] = value
+	if !apply(next) {
+		return nil
+	}
 	if err := a.persistMap(next); err != nil {
 		return err
 	}
@@ -199,21 +298,13 @@ func (a *AgeFileStore) Set(key, value string) error {
 // logout flows are idempotent. As with Set, the on-disk write happens before
 // the cache is updated, so a persist failure leaves the previous state intact.
 func (a *AgeFileStore) Delete(key string) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if err := a.ensureLoaded(); err != nil {
-		return err
-	}
-	if _, ok := a.cache[key]; !ok {
-		return nil
-	}
-	next := cloneCache(a.cache)
-	delete(next, key)
-	if err := a.persistMap(next); err != nil {
-		return err
-	}
-	a.cache = next
-	return nil
+	return a.mutate(func(next map[string]string) bool {
+		if _, ok := next[key]; !ok {
+			return false
+		}
+		delete(next, key)
+		return true
+	})
 }
 
 // cloneCache returns a shallow copy of the secrets map. Returned map is
@@ -224,6 +315,28 @@ func cloneCache(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// refresh brings the cache in line with the file, decrypting only when the
+// ciphertext on disk differs from what this store last read or wrote.
+//
+// Callers hold both the process mutex and the file lock. Comparing raw bytes
+// rather than mtime keeps this correct for two writes inside one filesystem
+// timestamp tick, and reading a few kilobytes is far cheaper than the scrypt
+// derivation it avoids.
+func (a *AgeFileStore) refresh() error {
+	if !a.loaded {
+		return a.ensureLoaded()
+	}
+	raw, err := os.ReadFile(a.path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("age file store: read %q: %w", a.path, err)
+	}
+	if bytes.Equal(raw, a.lastRaw) {
+		return nil
+	}
+	a.loaded = false
+	return a.ensureLoaded()
 }
 
 // ensureLoaded prompts for the passphrase (once) and decrypts the file. If
@@ -260,6 +373,7 @@ func (a *AgeFileStore) ensureLoaded() error {
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		a.cache = make(map[string]string)
+		a.lastRaw = nil
 		a.loaded = true
 		ok = true
 		return nil
@@ -272,7 +386,14 @@ func (a *AgeFileStore) ensureLoaded() error {
 	}
 	r, err := age.Decrypt(bytes.NewReader(raw), id)
 	if err != nil {
-		return fmt.Errorf("age file store: decrypt: %w", err)
+		// age's own message here is "no identity matched any of the recipients",
+		// which tells a user nothing about what to do. The realistic cause is a
+		// keyring entry that was cleared or replaced, and the realistic remedy
+		// is to drop the file and log in again — say both, and name neither the
+		// passphrase nor any stored value.
+		return fmt.Errorf("age file store: decrypt %q: %w — the passphrase does not open this file; "+
+			"if the %q entry in the OS keyring was cleared or replaced, the stored sessions cannot be "+
+			"recovered: delete the file and log in again", a.path, err, keyringPassphraseKey)
 	}
 	plain, err := io.ReadAll(r)
 	if err != nil {
@@ -284,6 +405,7 @@ func (a *AgeFileStore) ensureLoaded() error {
 			return fmt.Errorf("age file store: unmarshal: %w", err)
 		}
 	}
+	a.lastRaw = raw
 	a.loaded = true
 	ok = true
 	return nil
@@ -316,6 +438,9 @@ func (a *AgeFileStore) persistMap(snapshot map[string]string) error {
 	if err := writeFileAtomic(a.path, buf.Bytes(), fileMode); err != nil {
 		return fmt.Errorf("age file store: write %q: %w", a.path, err)
 	}
+	// Remember what we wrote so the next refresh recognises the file as ours
+	// and skips a redundant decrypt.
+	a.lastRaw = buf.Bytes()
 	return nil
 }
 
