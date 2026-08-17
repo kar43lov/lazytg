@@ -16,10 +16,13 @@ build:
 test:
 	go test -race ./...
 
-# bench runs the search SLA gate. The bench fails the build if p95 > 100 ms
-# on the 100k-message synthetic corpus. -benchtime=1x produces the single
-# 100-sample window the bench's assertions expect; -run=^$ skips the test
-# functions so we measure only BenchmarkSearch100k. CI mirrors this target.
+# bench runs the search SLA gate. It fails the build if p95 > 100 ms on the
+# 100k-message synthetic corpus — the product SLA, which this target checks
+# on your own machine. CI runs the same target with LAZYTG_BENCH_P95_MS=250
+# because a shared runner measures ~115 ms for code that does 47 ms here;
+# see docs/PERFORMANCE.md. -benchtime=1x produces the single 100-sample
+# window the bench's assertions expect; -run=^$ skips the test functions so
+# we measure only BenchmarkSearch100k.
 bench:
 	go test -bench=BenchmarkSearch100k -benchtime=1x -run=^$$ ./internal/core/search/
 

@@ -67,6 +67,40 @@ func (s *inMemoryStore) SaveMessage(_ context.Context, m domain.Message) error {
 	return nil
 }
 
+// savedCount reports how many events the consumer has persisted so far.
+func (s *inMemoryStore) savedCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.saved)
+}
+
+// waitForSaved blocks until the store holds at least want events and returns
+// the count, or fails the test when budget expires.
+//
+// A shortfall here means events were dropped rather than delayed, so the
+// message says so: Publish is non-blocking and the bus discards for a
+// subscriber whose 64-slot buffer is full (see internal/core/events). Once an
+// event is dropped it is gone — no larger deadline recovers it, and a test
+// that merely waits longer turns a lost-event bug into a slow failure.
+func waitForSaved(t *testing.T, store *inMemoryStore, want int, budget time.Duration) int {
+	t.Helper()
+	if want <= 0 {
+		return store.savedCount()
+	}
+	deadline := time.Now().Add(budget)
+	for {
+		got := store.savedCount()
+		if got >= want {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("consumer persisted %d of %d events within %s — the bus drops events for a subscriber whose buffer is full, so the shortfall is lost, not late",
+				got, want, budget)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // p95Latency returns the 95th-percentile of d. The slice is sorted in
 // place; callers should pass a copy if they need the original order.
 func p95Latency(d []time.Duration) time.Duration {
@@ -95,10 +129,31 @@ func TestLiveUpdateLatencySLA(t *testing.T) {
 		eventCount = 1000
 		// drip-feed batch size: bus.Subscribe uses a 64-slot buffer so
 		// emitting 1000 events back-to-back from a single goroutine
-		// would silently drop most of them. We feed in chunks of 32
-		// and yield to the consumer between chunks.
-		batchSize     = 32
-		p95Budget     = 500 * time.Millisecond
+		// would silently drop most of them. We feed in chunks of 32.
+		batchSize = 32
+		// maxInFlight bounds published-but-not-yet-persisted events, which
+		// keeps the bus buffer below its 64-slot capacity by construction.
+		//
+		// This used to be a fixed `time.Sleep(time.Millisecond)` between
+		// chunks, on the assumption that a millisecond is always enough for
+		// the consumer to drain. On a loaded CI runner under -race it is
+		// not: the consumer goroutine can miss two chunks in a row, the
+		// buffer fills, and Publish — which is non-blocking by design —
+		// discards the overflow. The test then waited out its full drain
+		// deadline for events that no longer existed (observed as
+		// "persisted 981 of 1000"), which looks like a latency regression
+		// and is not one.
+		//
+		// A bound of 32 still leaves a real queue for the latency
+		// percentile to measure; it only stops the producer from running
+		// off the end of the buffer.
+		maxInFlight = 32
+		p95Budget   = 500 * time.Millisecond
+		// feedDeadline covers the whole drip-feed, drainDeadline the tail
+		// after the last chunk. Both are generous on purpose: the failure
+		// they exist to catch is a stalled or dropping pipeline, not a slow
+		// runner.
+		feedDeadline  = 60 * time.Second
 		drainDeadline = 10 * time.Second
 	)
 
@@ -111,11 +166,12 @@ func TestLiveUpdateLatencySLA(t *testing.T) {
 	defer cancel()
 	done := live.Start(ctx)
 
-	// Drip-feed eventCount events through the bus. Each chunk is followed
-	// by a yield so the bus's per-subscriber buffer (64 slots) drains
-	// before the next batch lands. Without the yield, the bus drops the
-	// overflow and the SLA assertion below would falsely look "fast"
-	// because we counted events that never reached storage.
+	// Drip-feed eventCount events through the bus. Each chunk waits for the
+	// consumer to come within maxInFlight of the producer, so the
+	// per-subscriber buffer cannot overflow. Without that backpressure the
+	// bus drops the overflow and the assertions below either fail on a
+	// count that can never be reached or, worse, report a flattering p95
+	// computed only over the events that survived.
 	for i := 0; i < eventCount; i += batchSize {
 		end := i + batchSize
 		if end > eventCount {
@@ -135,24 +191,12 @@ func TestLiveUpdateLatencySLA(t *testing.T) {
 				Date:      time.Unix(1700000000+int64(j), 0).UTC(),
 			})
 		}
-		// Yield to the consumer so the buffer drains before the next chunk.
-		time.Sleep(time.Millisecond)
+		// Let the consumer catch up to within maxInFlight before publishing
+		// the next chunk.
+		waitForSaved(t, store, end-maxInFlight, feedDeadline)
 	}
 
-	deadline := time.Now().Add(drainDeadline)
-	for {
-		store.mu.Lock()
-		got := len(store.saved)
-		store.mu.Unlock()
-		if got >= eventCount {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("LiveService did not persist %d events within %s (got %d)",
-				eventCount, drainDeadline, got)
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
+	waitForSaved(t, store, eventCount, drainDeadline)
 
 	cancel()
 	select {
