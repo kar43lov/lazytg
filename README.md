@@ -41,7 +41,7 @@ Think `lazygit` ergonomics, but for Telegram conversations: keyboard-driven, sin
 
 ## Status
 
-**Alpha — release-candidate.** All four stages of the [v0.1.0 roadmap](docs/plans/lazytg-v0.1.0.md) have shipped (foundation, TUI, search/files/security, release pipeline). The MTProto session attach in `runTUI` is still on the Stage 2 follow-up list — without it the TUI runs on the local SQLite cache only (see CHANGELOG `Known gaps`).
+**Alpha — release-candidate.** All four stages of the [v0.1.0 roadmap](docs/plans/lazytg-v0.1.0.md) have shipped (foundation, TUI, search/files/security, release pipeline). `runTUI` now opens the MTProto session before building the UI and syncs the dialog list, so the TUI reads live Telegram data; every failure path (no session, no network, revoked authorisation, connect timeout) degrades to the cached-only view rather than refusing to start. Not yet exercised against a live account by a maintainer — see `docs/MANUAL_SMOKE.md` and CHANGELOG `Known gaps` for what remains.
 
 Current capabilities:
 
@@ -52,6 +52,7 @@ Current capabilities:
 - `lazytg debug-bundle` — produces a redacted tar.gz with version, config, log tail, db stats, goroutine dump (`docs/SECURITY.md` + `bundle_grep_test.go`).
 - `lazytg reindex --all|--chat <id>` — runs the FTS5 backfill for a chat or every chat with progress on stderr.
 - 2-pane Bubble Tea TUI: chats + thread, focus cycling, optimistic send, $EDITOR delegation, live updates, reconnect orchestration.
+- Dialog sync on start (`messages.getDialogs`, paced and capped at 5 pages / 500 chats by design) plus history backfill when a chat is opened.
 - Local search (FTS5 trigram) with operators `from:@user`, `in:#chat`, `before:`/`after:`, `has:file`, `"phrase"`, `-exclusion` (`docs/SEARCH.md`).
 - Search overlay (`/`), command palette (Ctrl+Space), file download (Ctrl+D), file upload (Ctrl+U).
 - DB-size monitor + permissions audit + 10 msg/s send rate-limit guard (covers both text and media sends).
@@ -73,6 +74,33 @@ Current capabilities:
 | Ctrl+C / Ctrl+Q | quit                                  |
 
 See [docs/SEARCH.md](docs/SEARCH.md) for the search query syntax and [docs/FILES.md](docs/FILES.md) for the download/upload pipeline.
+
+## Roadmap
+
+Anything not on this list is out of scope until it lands here — see the non-goals table in [CLAUDE.md](CLAUDE.md) for the things that are permanently out.
+
+**v0.2** (4–6 weeks after v0.1.0)
+
+- Full vim-mode (normal/insert/visual + basic motions) — shipped whole rather than half, so there is no "why doesn't X work" surface.
+- Command palette L2: global commands behind a `>` prefix.
+- `expvar` metrics + trace mode + `lazytg debug stats`.
+- `$EDITOR` sandbox env-filter (only `PATH`/`HOME`/`TERM`/`LANG`/`EDITOR` pass through).
+- Multi-account UI switcher (the `--account` flag already covers the mechanics).
+- Windows builds (a separate pile of TUI pain).
+- macOS notarization (needs a $99/yr Apple ID).
+- GoReleaser `brews:` → `homebrew_casks:` migration (deprecated in `goreleaser check` output; not a v0.1.0 blocker).
+
+**v0.3+**
+
+- Inline media preview (Kitty/iTerm/sixel via `BourgeoisBear/rasterm`).
+- tgql — query DSL with saved searches (smart folders).
+- Forwarding, edit history, reactions.
+
+**v0.5+** (only if a community shows up)
+
+- Starlark hooks (`google/starlark-go`, pure Go).
+- AI layer (Claude API + local Ollama, prompt caching over long history).
+- CLI pipe mode — single process, explicitly not a daemon.
 
 ## Requirements
 

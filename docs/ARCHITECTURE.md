@@ -42,14 +42,14 @@ All packages below ship in the v0.1 branch (Stages 1–3 complete). Stage labels
 
 | Package                          | Stage | Responsibility                                                                                                                       | May import                              | MUST NOT import                          |
 |----------------------------------|-------|--------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------|------------------------------------------|
-| `cmd/lazytg`                     | 1–3   | Cobra entry point: `tui` (default), `login`, `logout`, `accounts`, `version`, `debug-bundle`, `reindex`.                            | everything                              | —                                        |
+| `cmd/lazytg`                     | 1–3   | Cobra entry point: `tui` (default), `login`, `logout`, `accounts`, `version`, `debug-bundle`, `reindex`. `attach.go` opens the MTProto session **before** the UI is built and starts the dialog sync; every failure path degrades to the cached-only view. | everything                              | —                                        |
 | `internal/app`                   | 2     | Manual DI wiring: `Build` for non-MTProto services, `AttachClient` for gotd-aware ones, `RunBackground` for long-lived goroutines, `CheckPermissions` re-export for CLI subcommands. | `internal/{tg,core,storage,ui}` | —                                        |
-| `internal/tg`                    | 1–3   | MTProto-speaking layer: `client`, `auth`, `session`, `send`, `history`, `updates`, `polling`, `floodwait`, `files` (Downloader/Uploader/FilesAdapter/MediaFromMessage). | `internal/core`, `gotd/td`              | `internal/ui`                            |
+| `internal/tg`                    | 1–3   | MTProto-speaking layer: `client`, `auth`, `session`, `send`, `history`, `dialogs` (`messages.getDialogs` + peer decoding + paging cursor), `updates`, `polling`, `floodwait`, `files` (Downloader/Uploader/FilesAdapter/MediaFromMessage). | `internal/core`, `gotd/td`              | `internal/ui`                            |
 | `internal/core/events`           | 1     | Typed in-process event bus (publish/subscribe with fan-out under mutex, drop-on-overflow).                                          | stdlib only                             | —                                        |
 | `internal/core/domain`           | 1     | Plain Go types: `Account`, `Chat`, `Message`, `MediaInfo`.                                                                          | stdlib only                             | —                                        |
 | `internal/core/config`           | 1     | XDG path resolution, secret store abstraction (`KeyringStore`, `AgeFileStore`).                                                     | stdlib, `zalando/go-keyring`, `filippo.io/age` | —                                  |
 | `internal/core/obs`              | 1–3   | `slog` factory + redacting handler + lumberjack rotation; debug-bundle producer (`Bundle.Create`); DB-size monitor.                 | stdlib, `lumberjack`                    | —                                        |
-| `internal/core/sync`             | 2     | Send / history backfill / live drain / reconnect / degradation detector / token-bucket rate limiter.                                | `internal/{core/events,core/domain,storage}` | `gotd/td`, `charmbracelet/bubbletea` |
+| `internal/core/sync`             | 2     | Send / history backfill / live drain / reconnect / degradation detector / token-bucket rate limiter / dialog-list sync (paged, paced, capped at 5 pages by design — see below). | `internal/{core/events,core/domain,storage}` | `gotd/td`, `charmbracelet/bubbletea` |
 | `internal/core/search`           | 3     | FTS5 indexer (`Indexer.Backfill`), reindex service (`RunAll`/`Run`), lazy trigger, query parser + builder, search service.          | `internal/{core/events,core/domain,storage}` | `gotd/td`, `charmbracelet/bubbletea` |
 | `internal/core/files`            | 3     | Download / upload orchestration: `FileStore`, `DedupCache`, `DownloadService`, `UploadService`, throttled progress emitters.        | `internal/{core/events,core/domain}`    | `gotd/td`, `charmbracelet/bubbletea`     |
 | `internal/core/security`         | 3     | Permissions audit (`CheckAtStartup` / `EnforceFatal`), `SendGuard` (TokenBucket wrapper at 10 msg/s).                              | `internal/core/sync`                    | `gotd/td`, `charmbracelet/bubbletea`     |
@@ -102,6 +102,14 @@ These choices come out of the v0.1.0 brainstorm + dialectic; the trade-offs are 
 
 - gotd's `updates.Manager` with a `StateStorage` implementation backed by SQLite (≈50 lines).
 - A `--polling` flag is reserved on the CLI as a future fallback if the updates manager produces gap problems in the field; in v0.1 it is a no-op (see CHANGELOG `Known gaps`).
+
+## Dialog sync (chat list)
+
+- `internal/tg/dialogs.go` issues `messages.getDialogs` and decodes all four peer shapes (user, basic group, supergroup, channel), storing `access_hash` per peer so later calls can address them.
+- Paging is positional (`offset_date` / `offset_id` / `offset_peer`), and the cursor is taken from **one** dialog — the last successfully resolved one. Mixing fields from different dialogs, or letting a zero date through, sends Telegram an `offset_date` of `-62135596800` and restarts the walk from the beginning.
+- The walk stops when a page returns a cursor identical to the one that produced it, so a server that stops advancing cannot loop forever.
+- `internal/core/sync/dialogs.go` writes peers before chats (a chat row references its peer), and treats a single chat's write failure as skippable rather than fatal.
+- **Capped at 5 pages of 100 dialogs with a delay between pages, by design.** The cap and the pacing are ban-risk controls, not an unfinished loop — a client that pulls thousands of dialogs as fast as the API allows is exactly the behavioural signature that gets unofficial clients flagged. Raising it is a policy decision, not a bug fix.
 
 ## Security (see [SECURITY.md](SECURITY.md))
 
