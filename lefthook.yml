@@ -1,0 +1,64 @@
+pre-commit:
+  parallel: true
+  commands:
+    gofmt:
+      glob: "*.go"
+      run: gofmt -l -w {staged_files}
+      stage_fixed: true
+    govet:
+      glob: "*.go"
+      run: go vet ./...
+    gotest:
+      glob: "*.go"
+      run: go test -short ./...
+    secretscan:
+      # Telegram api_hash must never reach a commit: a published api_id is
+      # blocked permanently, and release binaries carry the credential
+      # injected from CI secrets, so one leak breaks login for every user.
+      # Runs on every commit regardless of file type — a leak in a YAML or
+      # Markdown file is just as fatal as one in Go.
+      run: ./scripts/secret-scan.sh --staged
+
+commit-msg:
+  commands:
+    commitlint:
+      # Conventional Commits enforcement.
+      # Prefer commitlint via npx (richer rule set, see .commitlintrc.yml).
+      # Fall back to a bash regex if Node/npx is unavailable so the hook
+      # still gates on the type prefix and subject length.
+      run: |
+        msg_file="{1}"
+        first_line="$(head -n 1 "$msg_file")"
+        # Skip merge/revert/fixup commits — git generates these automatically.
+        case "$first_line" in
+          "Merge "*|"Revert "*|"fixup! "*|"squash! "*) exit 0 ;;
+        esac
+        # Resolve commitlint binary directly — prefer repo-local install, then
+        # global PATH. We deliberately avoid `npx --no-install --package=...`
+        # as a probe: when @commitlint/cli isn't already on disk, npx still
+        # consults the npm registry and only fails after a slow ENOTFOUND on
+        # offline machines. A direct binary check is fast and offline-safe.
+        commitlint_bin=""
+        if [ -x ./node_modules/.bin/commitlint ]; then
+          commitlint_bin="./node_modules/.bin/commitlint"
+        elif command -v commitlint >/dev/null 2>&1; then
+          commitlint_bin="commitlint"
+        fi
+        # `--print-config` exercises the full extends chain (incl.
+        # @commitlint/config-conventional from .commitlintrc.yml). A bare
+        # `--version` would pass even when the config package is missing,
+        # which would then hard-fail the real lint instead of falling back.
+        if [ -n "$commitlint_bin" ] && "$commitlint_bin" --print-config >/dev/null 2>&1; then
+          exec "$commitlint_bin" --edit "$msg_file"
+        fi
+        # Bash fallback: type(scope)!: subject — types match .commitlintrc.yml
+        if ! printf '%s' "$first_line" | grep -Eq '^(feat|fix|perf|security|docs|refactor|test|chore|build|ci)(\([a-z0-9._-]+\))?!?: .{1,100}$'; then
+          echo "lefthook: commit subject does not match Conventional Commits." >&2
+          echo "  expected: <type>(<scope>)?!?: <subject>" >&2
+          echo "  types:    feat|fix|perf|security|docs|refactor|test|chore|build|ci" >&2
+          echo "  got:      $first_line" >&2
+          exit 1
+        fi
+      skip:
+        - merge
+        - rebase

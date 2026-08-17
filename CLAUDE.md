@@ -22,11 +22,11 @@
 
 | Компонент | Выбор | Альтернативы (отброшены) | Обоснование |
 |-----------|-------|---------------------------|-------------|
-| Язык | Go 1.22+ | Python+Textual, Rust+ratatui | Идеологически близко lazygit, single binary cross-build без CGo |
+| Язык | Go 1.25+ (pinned в go.mod) | Python+Textual, Rust+ratatui | Идеологически близко lazygit, single binary cross-build без CGo |
 | MTProto | `gotd/td` | TDLib через CGo, Bot API | Pure-Go, активный (релизы 2026), iyear/tdl на нём в production. CGo не решает ban-risk |
 | TUI | `bubbletea` v2 + `lipgloss` + `bubbles` | gocui, tview, urwid | 10k+ apps, GitLab мигрирует с tview→bubbletea, Elm-архитектура |
 | SQLite | `modernc.org/sqlite` | `mattn/go-sqlite3` (CGo) | Pure-Go, FTS5+trigram support, ~75% производительности CGo |
-| Шифрование БД | opt-in через build tag `sqlcipher` | По умолчанию | Heavy users — `-tags sqlcipher` для CGo SQLCipher+ICU |
+| Шифрование БД | build tag `sqlcipher` зарезервирован, но **не подключён** (отложен past v0.1) | По умолчанию | До реализации CGo-драйвера сборка `-tags sqlcipher` намеренно ломается на этапе компиляции (`internal/storage/sqlite/driver_sqlcipher.go`), чтобы не выпустить unencrypted binary под видом encrypted. БД unencrypted независимо от tag |
 | Secrets | `zalando/go-keyring` | `99designs/keyring` | Активнее, проще API. Fallback — `filippo.io/age` |
 | CLI | `spf13/cobra` | urfave/cli | Стандарт |
 | Release | `goreleaser` + `cosign` keyless OIDC | Manual | Без приватных ключей, GitHub Actions native |
@@ -35,34 +35,38 @@
 
 ## Архитектура (3 слоя, изолированные через depguard)
 
+Все слои реализованы (Stages 1-3 функционал + Stage 4 release infra). Для исторической версии с per-stage метками — `git log` на CLAUDE.md до коммита по итогам Stage 4 review.
+
 ```
-cmd/lazytg/                  ← cobra entry point
-└── cmd/{root,login,logout,accounts,version,debug-bundle}.go
+cmd/lazytg/                                                      cobra entry point
+└── cmd/{root,root_cmd,login,logout,accounts,version,debug,
+       logger,runtime,reindex,tui,attach}.go                      attach.go = MTProto wire-up
 
 internal/
-├── tg/                      ← MTProto (gotd обёртка). Знает MTProto.
-│   └── {client,auth,session,send,history,updates,files,floodwait}.go
-├── core/                    ← Domain + storage + sync. БЕЗ gotd, БЕЗ bubbletea.
-│   ├── events/bus.go
-│   ├── domain/types.go
-│   ├── config/{config,secrets,paths}.go
-│   ├── obs/{logger,redact,bundle}.go
-│   ├── sync/{history,live,send,ratelimit,reconnect}.go
-│   ├── search/{index,parser,query,reindex}.go
-│   ├── files/{download,upload,store}.go
-│   └── security/{permissions,ratelimit}.go
-├── storage/sqlite/          ← Реализация Repo (build tags pure|sqlcipher)
-│   ├── repo.go, migrations.go
-│   └── migrations/0001_init.sql, 0002_fts.sql
-├── ui/                      ← Bubble Tea. БЕЗ gotd.
-│   ├── app/{model,update,view,keys}.go
-│   ├── panes/{chats,thread,search}/...
-│   ├── input/{model,emacs,editor}.go
-│   ├── palette/{model,registry,frecency}.go
-│   ├── statusbar/{model,view}.go
-│   ├── overlay/help.go
-│   └── keymap/{loader,defaults}.go
-└── app/wire.go              ← DI без фреймворка
+├── tg/                                                              MTProto (gotd обёртка)
+│   └── {client,auth,session,send,history,updates,files,
+        floodwait,polling,dialogs}.go                              dialogs.go = messages.getDialogs
+├── core/                                                            Domain + storage + sync. БЕЗ gotd/bubbletea.
+│   ├── events/{events,bus}.go
+│   ├── domain/types.go                                          Account/Chat/Message/ChatType/MediaInfo
+│   ├── config/{paths,secrets}.go
+│   ├── obs/{redact,logger,fanout,bundle,dbsize}.go
+│   ├── sync/{history,live,send,ratelimit,reconnect,
+        backfill,degradation,dialogs}.go                          dialogs.go = наполняет список чатов
+│   ├── search/{index,parser,query,query_builder,reindex,
+        service,lazy}.go
+│   ├── files/{download,upload,store,dedup,progress,
+        upload_progress,discard}.go
+│   └── security/{permissions,send_ratelimit}.go
+├── storage/sqlite/                                              pure-Go modernc; sqlcipher tag намеренно
+│   ├── repo.go, migrations.go, driver_modernc.go,                  не компилируется (см. driver_sqlcipher.go)
+│   │   driver_sqlcipher.go, files.go, frecency.go,
+│   │   outgoing.go, peers.go, state_repo.go
+│   └── migrations/0001_init.sql … 0008_messages_media.sql
+├── ui/                                                          Bubble Tea v2 panes/overlays/keymap
+│   ├── app/, input/, keymap/, overlay/, palette/, statusbar/
+│   └── panes/{chats,thread,search,attach}/
+└── app/                                                         DI: wire.go (App.Build + AttachClient)
 ```
 
 **Depguard rules (CI gate):**
@@ -101,13 +105,14 @@ internal/
 ## Live-updates
 
 - **gotd `updates.Manager`** через `StateStorage` поверх SQLite (5 методов, ~50 строк)
-- **Fallback на polling 3s** через флаг `--polling` если updates.Manager создаст gap-проблемы
+- **Fallback на polling 3s** через флаг `--polling` (флаг зарезервирован, no-op в v0.1 — wire-up в `runTUI` рядом с `AttachClient`, см. CHANGELOG `Known gaps`)
 - **SLA:** latency MTProto-update → UI render <500ms p95 (benchmark в этапе 2)
 
 ---
 
 ## Безопасность
 
+- **API credentials — 3 слоя** (`internal/tg.ResolveCredentials`): флаги `--api-id`/`--api-hash` → env `LAZYTG_API_ID`/`LAZYTG_API_HASH` → вшитое при релизе через `-ldflags` из repo secrets `LAZYTG_RELEASE_API_*`. Половинчатый слой = ошибка, не проваливание в следующий. Релизные бинарники работают из коробки; сборка из исходников требует своих кредов. 🔴 **Кредов в репе нет и быть не может** — опубликованный в исходниках `api_id` Telegram блокирует навсегда (`API_ID_PUBLISHED_FLOOD`), а ключ у всех пользователей релиза общий. Гейты: `scripts/secret-scan.sh` в lefthook pre-commit + CI job `secret-scan` (любая 32-hex строка вне documented placeholder). `lazytg version` печатает источник, не значения
 - **Session storage:** `zalando/go-keyring` (Keychain/Secret Service/wincred). Fallback — `filippo.io/age`-encrypted file с master-passphrase из stdin
 - **Permissions check** при старте: session/config файлы `0600`, директории `0700` → fail-fast
 - **Rate-limit guard на send:** max 10 msg/sec — снижает поведенческий ban-trigger
@@ -119,9 +124,9 @@ internal/
 ## Релиз-pipeline
 
 - **Cross-build:** linux+darwin × amd64+arm64. Windows amd64 → v0.2 (отдельная боль с TUI).
-- **Pure-Go default,** opt-in `-tags sqlcipher` для serious users.
+- **Pure-Go только.** `-tags sqlcipher` зарезервирован, отложен past v0.1 — сборка под этим тегом намеренно ломается на этапе компиляции (см. `internal/storage/sqlite/driver_sqlcipher.go`). Реальный CGo-драйвер — в следующем релизе.
 - **Cosign keyless** через GitHub OIDC (sigstore bundle в release). macOS notarization → v0.2 ($99/год Apple ID).
-- **Distribution:** Homebrew tap (`pgmac/homebrew-lazytg`), `.deb` + `.rpm` через nfpm.
+- **Distribution:** Homebrew tap (`kar43lov/homebrew-lazytg`), `.deb` + `.rpm` через nfpm.
 - **Pre-release pipeline:** `v0.1.0-alpha.N` → `beta.N` → `rc.N` → `v0.1.0`. Brew/scoop НЕ обновляются для alpha/beta.
 - **Changelog:** `git-cliff` + commitlint, conventional commits enforced.
 
@@ -132,24 +137,24 @@ internal/
 | Артефакт | Путь | Описание |
 |----------|------|----------|
 | Полный план продукта | [`docs/plans/lazytg-v0.1.0.md`](docs/plans/lazytg-v0.1.0.md) | 4 этапа × 10 недель × 180 часов. Прошёл deep brainstorm + dialectic + Plan-Reviewer APPROVED |
-| Ralphex-план этапа 1 | [`docs/plans/20260502-lazytg-stage1-foundation.md`](docs/plans/20260502-lazytg-stage1-foundation.md) | Foundation: bootstrap + архитектура + storage + auth + CLI + logging + CI + docs. ~30-40 часов |
+| Stage 1 план (выполнен) | [`docs/plans/completed/20260502-lazytg-stage1-foundation.md`](docs/plans/completed/20260502-lazytg-stage1-foundation.md) | Foundation: bootstrap + архитектура + storage + auth + CLI + logging + CI + docs |
+| Stage 2 план (выполнен) | [`docs/plans/completed/20260502-lazytg-stage2-tui.md`](docs/plans/completed/20260502-lazytg-stage2-tui.md) | TUI 2-pane + send/reply + live-updates + $EDITOR + reconnect |
+| Stage 3 план (выполнен) | [`docs/plans/completed/20260503-lazytg-stage3-search-files.md`](docs/plans/completed/20260503-lazytg-stage3-search-files.md) | FTS5 search + files + debug-bundle + security minimal |
+| Stage 4 план (выполнен) | [`docs/plans/completed/20260503-lazytg-stage4-release.md`](docs/plans/completed/20260503-lazytg-stage4-release.md) | GoReleaser + cosign + brew + .deb/.rpm + commitlint + memory budgets + user docs |
 
-**Запуск этапа 1 через ralphex:**
-```sh
-ralphex docs/plans/20260502-lazytg-stage1-foundation.md
-```
+**Текущее состояние (17.08.2026):** MTProto подключён к TUI (`cmd/lazytg/cmd/attach.go`) и список чатов загружается (`internal/tg/dialogs.go` + `internal/core/sync/dialogs.go`). До этого TUI рисовал только пустой локальный кеш: `SaveChat` вызывался исключительно из тестов, загрузки диалогов в коде не было вовсе. Read + send работают в теории — **на живом аккаунте не проверялось**, только unit-тесты и офлайн-запуск.
 
-**Альтернативно — через `/planning:exec`** (worktree isolation + codex review).
+Остаётся до v0.1.0: ручной smoke на тестовом аккаунте, `--polling` wire-up, реальный reconnect (`reconnectAdapter.Connect` — заглушка), `updates.Manager` для gap recovery. См. `CHANGELOG.md` → Known gaps.
 
 ---
 
 ## Roadmap
 
-### v0.1.0 (8-10 недель, текущая цель)
-- **Этап 1 (нед 1-2):** Foundation — bootstrap, depguard, storage+FTS5 spike, auth, CLI, logging, CI, docs
-- **Этап 2 (нед 3-5):** TUI 2-pane + чтение + send/reply + live-updates + $EDITOR + reconnect
-- **Этап 3 (нед 6-8):** FTS5 + парсер + search UI + палитра L1 + files + debug-bundle + security minimal
-- **Этап 4 (нед 9-10):** GoReleaser production + cosign + brew tap + .deb/.rpm + beta period + release
+### v0.1.0 (выполнен — все 4 этапа shipped)
+- **Этап 1:** ✅ Foundation — bootstrap, depguard, storage+FTS5 spike, auth, CLI, logging, CI, docs
+- **Этап 2:** ✅ TUI 2-pane + чтение + send/reply + live-updates + $EDITOR + reconnect
+- **Этап 3:** ✅ FTS5 + парсер + search UI + палитра L1 + files + debug-bundle + security minimal
+- **Этап 4:** ✅ GoReleaser + cosign + brew tap + .deb/.rpm + commitlint + git-cliff + memory budgets + user docs + beta runbook
 
 ### v0.2 (4-6 недель после v0.1.0)
 - Vim-mode полный (normal/insert/visual + базовые motions)
@@ -158,6 +163,7 @@ ralphex docs/plans/20260502-lazytg-stage1-foundation.md
 - $EDITOR sandbox env-filter
 - Multi-account UI switcher
 - Windows билды
+- Goreleaser `brews:` → `homebrew_casks:` миграция (deprecated в выводе `goreleaser check`, не блокер v0.1.0)
 
 ### v0.3+
 - Inline media preview (Kitty/iTerm/sixel через `BourgeoisBear/rasterm`)
@@ -190,16 +196,33 @@ ralphex docs/plans/20260502-lazytg-stage1-foundation.md
 
 ---
 
+## Команды разработки
+
+| Команда | Что делает |
+|---------|-----------|
+| `make build` | Сборка `bin/lazytg` (pure-Go) |
+| `make test` | `go test -race ./...` |
+| `make lint` | `golangci-lint run` (включает depguard rules) |
+| `make tidy` | `go mod tidy` |
+| `make clean` | Очистка `bin/`, `dist/`, coverage |
+| `goreleaser release --snapshot --clean --skip=publish,sign` | Локальный прогон release pipeline |
+| `lefthook install` | Регистрация pre-commit-хуков (gofmt, go vet, go test -short) + commit-msg (commitlint via npx с bash-fallback) |
+| `git-cliff --tag <ver> --unreleased --prepend CHANGELOG.md` | Регенерация секции Unreleased перед тегированием (см. [`docs/RELEASE_PROCESS.md`](docs/RELEASE_PROCESS.md)) |
+
+`commitlint` подключён через `lefthook` commit-msg hook (`.commitlintrc.yml` + bash-fallback) и через `amannn/action-semantic-pull-request@v5` в CI (`ci.yml` job `pr-title`). `git-cliff` подключён через `cliff.toml` для регенерации CHANGELOG перед тегом.
+
+---
+
 ## Гайдлайны для Claude Code при работе с проектом
 
 1. **Стек зафиксирован.** Не предлагать миграцию на TDLib, Bubble Tea v1, gocui, tview, mattn/go-sqlite3.
 2. **Архитектурные слои.** Любой код в `internal/core/` НЕ должен импортировать gotd или bubbletea (depguard защитит, но проверять при ревью).
-3. **Tests-first для core.** Каждая задача в плане = тесты (unit/integration/e2e). Coverage gate: `core` ≥80% к v0.1.0.
-4. **Conventional commits.** `feat:`, `fix:`, `perf:`, `security:`, `breaking:`. Проверяется через commitlint в pre-commit.
+3. **Tests-first для core.** Каждая задача в плане = тесты (unit/integration/e2e). Целевой coverage: `core` ≥80% (текущее ~81%), `ui` ≥60% (текущее ~79%) — codecov tracks, без hard CI gate.
+4. **Conventional commits.** Allowed types (см. `.commitlintrc.yml` type-enum): `feat`, `fix`, `perf`, `security`, `docs`, `refactor`, `test`, `chore`, `build`, `ci`. Breaking changes — через `!`-суффикс (`feat!:`, `fix(scope)!:`), не через тип `breaking`. Enforced через lefthook commit-msg hook (commitlint с bash-fallback) + CI pr-title job (`amannn/action-semantic-pull-request`).
 5. **Никаких самостоятельных коммитов.** Коммиты только по явному запросу пользователя.
 6. **YAGNI.** Если идея не в roadmap — не реализуем. Plugin API, multi-account UI, voice — отложены явно.
-7. **Ban-risk first.** При любых изменениях auth/send/updates задумываться о поведенческом следе. Rate-limit guard не отключаем.
-8. **Pure-Go default.** Любой PR с CGo-зависимостью требует обоснования и build tag (как `sqlcipher`).
+7. **Ban-risk first.** При любых изменениях auth/send/updates задумываться о поведенческом следе. Rate-limit guard будет добавлен вместе с send-path (Stage 2) и не отключается.
+8. **Pure-Go default.** Любой PR с CGo-зависимостью требует обоснования и build tag. Для `sqlcipher` build tag запас сделан (отложен past v0.1, файл `driver_sqlcipher.go` намеренно не компилируется).
 9. **Документация обновляется вместе с кодом.** PR без обновлённого CHANGELOG.md / docs/ — не мерджим.
 10. **Платформа разработки macOS (zsh, brew).** Не предлагать Windows-специфичные решения (PowerShell, .bat).
 

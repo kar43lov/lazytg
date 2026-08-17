@@ -1,0 +1,56 @@
+name: Feature request
+description: Propose a new feature or enhancement for lazytg
+title: "feat: <short description>"
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check [`docs/plans/lazytg-v0.1.0.md`](https://github.com/kar43lov/lazytg/blob/main/docs/plans/lazytg-v0.1.0.md),
+        the **v0.2 / v0.3+ roadmap** and **non-goals** sections of
+        [`CLAUDE.md`](https://github.com/kar43lov/lazytg/blob/main/CLAUDE.md)
+        before opening a feature request. Many ideas (vim-mode polish, command-palette L2,
+        inline media, Starlark hooks, AI layer) are already on a later roadmap; many others
+        (3-pane layout, Ctrl-P bind, `$EDITOR` as default input, voice/video, plugin API in v0.1,
+        web UI) are explicitly rejected.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow are you trying to do, and what is in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How do you think lazytg should solve this? Sketches, key bindings, mock outputs welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you ruled out, and why.
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Roadmap stage you think this fits
+      options:
+        - v0.1.0 (current)
+        - v0.2 (post-MVP)
+        - v0.3+
+        - Not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have read the v0.1.0 roadmap and the explicit non-goals in CLAUDE.md
+          required: true
+        - label: I checked the v0.2 / v0.3+ roadmap sections in CLAUDE.md and this is not already planned for a later release
+          required: true
+        - label: I have searched existing issues and discussions for duplicates
+          required: true

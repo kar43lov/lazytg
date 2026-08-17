@@ -1,0 +1,142 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Manual trigger fallback. Tags pushed by GITHUB_TOKEN (e.g. from
+  # prerelease.yml) do NOT fire `on: push: tags` — GitHub blocks recursive
+  # workflow dispatch. The maintainer can then run this workflow with the
+  # tag ref via `gh workflow run release.yml --ref <tag>`. `github.ref_name`
+  # resolves to the tag in both cases, so no explicit `ref` input is needed.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+# Serialize releases to avoid two simultaneous tag-publishes racing on the
+# Homebrew tap (Formula/lazytg.rb) and on Rekor signature registration.
+# cancel-in-progress: false — never abort a release mid-publish, queue instead.
+# `github.ref_name` strips the `refs/tags/` prefix that `on: push: tags` uses,
+# so push and workflow_dispatch on the same tag share the same group.
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  goreleaser:
+    name: GoReleaser
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Guard HOMEBREW_TAP_GITHUB_TOKEN for stable tags
+        # Stable tags (no -alpha/beta/rc suffix) push to kar43lov/homebrew-lazytg.
+        # An empty PAT means goreleaser publishes archives but fails on brew
+        # upload — a half-shipped release with red CI. Fail-fast here with a
+        # clear remediation pointer so the maintainer can configure the secret
+        # before the artefacts ship. Prereleases short-circuit via skip_upload.
+        env:
+          REF: ${{ github.ref_name }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # github.ref_name already strips the refs/tags/ prefix for both
+          # `on: push: tags` and `workflow_dispatch --ref <tag>`.
+          TAG="$REF"
+          if [[ "$TAG" =~ -(alpha|beta|rc)\. ]]; then
+            echo "Prerelease tag $TAG — brew upload skipped, token check waived."
+            exit 0
+          fi
+          if [[ -z "$HOMEBREW_TAP_GITHUB_TOKEN" ]]; then
+            echo "::error title=HOMEBREW_TAP_GITHUB_TOKEN missing::Stable tag $TAG requires a PAT with contents:write on kar43lov/homebrew-lazytg. Configure the secret and re-run via 'gh workflow run release.yml --ref $TAG'. See docs/RELEASE_PROCESS.md."
+            exit 1
+          fi
+          echo "Stable tag $TAG — HOMEBREW_TAP_GITHUB_TOKEN present."
+
+      - name: Guard Telegram API credentials
+        # An unset secret expands to an empty string, which is a *valid*
+        # -ldflags value: goreleaser succeeds, the release publishes, and every
+        # binary reports `api: none` — users hit "no credentials available" on
+        # first login while CI stayed green throughout. Nothing else in the
+        # pipeline notices, so the check has to be explicit.
+        #
+        # Stable tags fail; prereleases warn, since an alpha built for a
+        # maintainer who exports their own credentials is still useful.
+        env:
+          REF: ${{ github.ref_name }}
+          LAZYTG_RELEASE_API_ID: ${{ secrets.LAZYTG_RELEASE_API_ID }}
+          LAZYTG_RELEASE_API_HASH: ${{ secrets.LAZYTG_RELEASE_API_HASH }}
+        run: |
+          set -euo pipefail
+          TAG="$REF"
+          MISSING=""
+          # Written as a plain `if` rather than `[[ … ]] && VAR=…`: the latter
+          # evaluates to false when the secret IS present, and whether `set -e`
+          # then aborts depends on a subtlety of how bash treats && lists.
+          if [[ -z "$LAZYTG_RELEASE_API_ID" ]]; then
+            MISSING="LAZYTG_RELEASE_API_ID"
+          fi
+          if [[ -z "$LAZYTG_RELEASE_API_HASH" ]]; then
+            MISSING="${MISSING:+$MISSING and }LAZYTG_RELEASE_API_HASH"
+          fi
+          if [[ -z "$MISSING" ]]; then
+            echo "Telegram API credentials present — binaries will report 'api: embedded'."
+            exit 0
+          fi
+          # Exactly one secret set is worse than neither, and fails on every
+          # tag type. Neither set degrades cleanly to "ask the user for env
+          # vars"; a half-set pair builds a binary whose embedded layer is
+          # malformed, so ResolveCredentials reports "build-time credentials
+          # are malformed (report this)" — an alarming error about a defect
+          # the user cannot fix.
+          if [[ "$MISSING" != *" and "* ]]; then
+            echo "::error title=$MISSING missing::Only one of the two release secrets is set. That ships a binary that reports 'misconfigured: build-time credentials are malformed' on startup. Set both, or neither."
+            exit 1
+          fi
+          if [[ "$TAG" =~ -(alpha|beta|rc)\. ]]; then
+            echo "::warning title=release credentials unset::Prerelease $TAG will ship binaries without embedded credentials (api: none). Users must export LAZYTG_API_ID/LAZYTG_API_HASH themselves."
+            exit 0
+          fi
+          echo "::error title=release credentials unset::Stable tag $TAG would ship binaries that cannot log in out of the box (api: none). Configure both secrets and re-run via 'gh workflow run release.yml --ref $TAG'. See docs/RELEASE_PROCESS.md."
+          exit 1
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # HOMEBREW_TAP_GITHUB_TOKEN may be unset on first release; goreleaser only
+          # evaluates brews[].repository.token at upload time. For prerelease tags
+          # `skip_upload: true` short-circuits the upload entirely, so an empty value
+          # is acceptable. For stable tags this MUST be a PAT with contents:write
+          # on kar43lov/homebrew-lazytg (see docs/CONTRIBUTING.md → Release pipeline).
+          # Prerelease detection (alpha/beta/rc tag suffix) is handled inside
+          # .goreleaser.yaml via `release.prerelease: auto` and
+          # `brews[].skip_upload: '{{ if .Prerelease }}true{{ end }}'`.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          # Baked into the shipped binaries via -ldflags so users can log in
+          # without registering their own application. Absent secrets yield
+          # empty strings, which produces a working binary that asks the user
+          # for LAZYTG_API_ID/LAZYTG_API_HASH instead — degraded, not broken.
+          # Never echo these: the redaction handler covers lazytg's own logs,
+          # not workflow output.
+          LAZYTG_RELEASE_API_ID: ${{ secrets.LAZYTG_RELEASE_API_ID }}
+          LAZYTG_RELEASE_API_HASH: ${{ secrets.LAZYTG_RELEASE_API_HASH }}

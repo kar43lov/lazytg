@@ -1,0 +1,329 @@
+package config
+
+import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/zalando/go-keyring"
+)
+
+func TestKeyringStore_RoundTrip(t *testing.T) {
+	keyring.MockInit()
+
+	store := &KeyringStore{Service: "lazytg-test"}
+
+	if _, err := store.Get("missing"); !errors.Is(err, ErrSecretNotFound) {
+		t.Fatalf("Get on missing key: want ErrSecretNotFound, got %v", err)
+	}
+	if err := store.Set("session:+7000", "blob"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	got, err := store.Get("session:+7000")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got != "blob" {
+		t.Fatalf("Get: want %q, got %q", "blob", got)
+	}
+	if err := store.Delete("session:+7000"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := store.Get("session:+7000"); !errors.Is(err, ErrSecretNotFound) {
+		t.Fatalf("Get after Delete: want ErrSecretNotFound, got %v", err)
+	}
+	// Idempotent delete.
+	if err := store.Delete("session:+7000"); err != nil {
+		t.Fatalf("Delete idempotency: %v", err)
+	}
+}
+
+func TestAgeFileStore_RoundTripAndPersistence(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, secretsFileName)
+
+	prompter := func() (string, error) { return "correct-horse-battery-staple", nil }
+
+	store, err := NewAgeFileStore(path, prompter)
+	if err != nil {
+		t.Fatalf("NewAgeFileStore: %v", err)
+	}
+
+	if _, err := store.Get("session:+7000"); !errors.Is(err, ErrSecretNotFound) {
+		t.Fatalf("Get missing: want ErrSecretNotFound, got %v", err)
+	}
+	if err := store.Set("session:+7000", "secret"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat after Set: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode != fileMode {
+		t.Fatalf("file perm: want %#o, got %#o", fileMode, mode)
+	}
+
+	// Re-open from disk with the same passphrase to prove persistence.
+	store2, err := NewAgeFileStore(path, prompter)
+	if err != nil {
+		t.Fatalf("NewAgeFileStore reopen: %v", err)
+	}
+	got, err := store2.Get("session:+7000")
+	if err != nil {
+		t.Fatalf("Get after reopen: %v", err)
+	}
+	if got != "secret" {
+		t.Fatalf("Get after reopen: want %q, got %q", "secret", got)
+	}
+
+	if err := store2.Delete("session:+7000"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := store2.Get("session:+7000"); !errors.Is(err, ErrSecretNotFound) {
+		t.Fatalf("Get after Delete: want ErrSecretNotFound, got %v", err)
+	}
+}
+
+func TestAgeFileStore_WrongPassphraseFails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, secretsFileName)
+
+	good, err := NewAgeFileStore(path, func() (string, error) { return "good-passphrase", nil })
+	if err != nil {
+		t.Fatalf("NewAgeFileStore: %v", err)
+	}
+	if err := good.Set("k", "v"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	bad, err := NewAgeFileStore(path, func() (string, error) { return "bad-passphrase", nil })
+	if err != nil {
+		t.Fatalf("NewAgeFileStore (bad): %v", err)
+	}
+	_, err = bad.Get("k")
+	if err == nil || !strings.Contains(err.Error(), "decrypt") {
+		t.Fatalf("Get with wrong passphrase: want decrypt error, got %v", err)
+	}
+}
+
+func TestAgeFileStore_WrongPassphraseAllowsRetry(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, secretsFileName)
+
+	// Seed an encrypted file with the correct passphrase.
+	good, err := NewAgeFileStore(path, func() (string, error) { return "good-passphrase", nil })
+	if err != nil {
+		t.Fatalf("NewAgeFileStore: %v", err)
+	}
+	if err := good.Set("k", "v"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	// Prompter returns the bad passphrase first, then the good one. After the
+	// first decrypt fails we expect the store to clear its cached passphrase
+	// and re-invoke the prompter on the next call.
+	calls := 0
+	flaky := func() (string, error) {
+		calls++
+		if calls == 1 {
+			return "bad-passphrase", nil
+		}
+		return "good-passphrase", nil
+	}
+	store, err := NewAgeFileStore(path, flaky)
+	if err != nil {
+		t.Fatalf("NewAgeFileStore: %v", err)
+	}
+
+	if _, err := store.Get("k"); err == nil {
+		t.Fatal("first Get with bad passphrase should fail")
+	}
+	if calls != 1 {
+		t.Fatalf("after first failure, prompter was called %d times, want 1", calls)
+	}
+
+	got, err := store.Get("k")
+	if err != nil {
+		t.Fatalf("retry Get: %v", err)
+	}
+	if got != "v" {
+		t.Fatalf("retry Get: want %q, got %q", "v", got)
+	}
+	if calls != 2 {
+		t.Fatalf("retry should re-prompt, calls=%d want 2", calls)
+	}
+}
+
+// TestAgeFileStore_PersistFailureLeavesCacheIntact regresses a correctness
+// bug where Set/Delete mutated a.cache before calling persist, so a failed
+// disk write left the in-memory view diverged from the on-disk file. We
+// simulate the failure by stripping write permission from the parent
+// directory so writeFileAtomic's CreateTemp fails.
+func TestAgeFileStore_PersistFailureLeavesCacheIntact(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod-based perms test does not apply on Windows")
+	}
+	// Skip when running as root: chmod 0500 on a dir we own does not actually
+	// stop a root-uid process from writing into it (e.g. inside Docker).
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: chmod-based perms test would not actually deny writes")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, secretsFileName)
+	prompter := func() (string, error) { return "correct-horse-battery-staple", nil }
+
+	store, err := NewAgeFileStore(path, prompter)
+	if err != nil {
+		t.Fatalf("NewAgeFileStore: %v", err)
+	}
+	if err := store.Set("k", "original"); err != nil {
+		t.Fatalf("seed Set: %v", err)
+	}
+
+	// Strip write+execute on the parent dir so CreateTemp inside
+	// writeFileAtomic fails. Restore at the end of the test so t.TempDir
+	// cleanup can proceed.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod 0500: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if err := store.Set("k", "shouldNotPersist"); err == nil {
+		t.Fatal("Set should fail when parent dir is read-only")
+	}
+	got, err := store.Get("k")
+	if err != nil {
+		t.Fatalf("Get after failed Set: %v", err)
+	}
+	if got != "original" {
+		t.Fatalf("cache leaked failed write: got %q, want %q", got, "original")
+	}
+
+	// Same check for Delete: a failed persist must keep the entry in cache.
+	if err := store.Delete("k"); err == nil {
+		t.Fatal("Delete should fail when parent dir is read-only")
+	}
+	got, err = store.Get("k")
+	if err != nil {
+		t.Fatalf("Get after failed Delete: %v", err)
+	}
+	if got != "original" {
+		t.Fatalf("cache leaked failed delete: got %q, want %q", got, "original")
+	}
+}
+
+func TestAgeFileStore_RejectsLoosePermissions(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, secretsFileName)
+
+	if err := os.WriteFile(path, []byte("dummy"), 0o644); err != nil {
+		t.Fatalf("write loose file: %v", err)
+	}
+	_, err := NewAgeFileStore(path, func() (string, error) { return "x", nil })
+	if err == nil || !strings.Contains(err.Error(), "insecure permissions") {
+		t.Fatalf("expected insecure-permissions error, got %v", err)
+	}
+}
+
+func TestAgeFileStore_RejectsNilPrompter(t *testing.T) {
+	t.Parallel()
+	_, err := NewAgeFileStore(filepath.Join(t.TempDir(), "x.age"), nil)
+	if err == nil {
+		t.Fatalf("expected error on nil prompter")
+	}
+}
+
+func TestAgeFileStore_EmptyPassphraseFails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, secretsFileName)
+
+	store, err := NewAgeFileStore(path, func() (string, error) { return "", nil })
+	if err != nil {
+		t.Fatalf("NewAgeFileStore: %v", err)
+	}
+	if err := store.Set("k", "v"); err == nil {
+		t.Fatalf("expected error on empty passphrase")
+	}
+}
+
+func TestNewSecretStore_KeyringPath(t *testing.T) {
+	keyring.MockInit()
+
+	store, err := NewSecretStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("NewSecretStore: %v", err)
+	}
+	if _, ok := store.(*KeyringStore); !ok {
+		t.Fatalf("want *KeyringStore, got %T", store)
+	}
+}
+
+func TestNewSecretStore_FallbackRequiresPrompter(t *testing.T) {
+	// Force the keyring backend to fail so we hit the fallback branch.
+	keyring.MockInitWithError(errors.New("no D-Bus"))
+	t.Cleanup(keyring.MockInit)
+
+	if _, err := NewSecretStore(t.TempDir(), nil); err == nil {
+		t.Fatalf("expected error when prompter is nil")
+	}
+
+	dir := t.TempDir()
+	store, err := NewSecretStore(dir, func() (string, error) { return "p", nil })
+	if err != nil {
+		t.Fatalf("NewSecretStore (fallback): %v", err)
+	}
+	if _, ok := store.(*AgeFileStore); !ok {
+		t.Fatalf("want *AgeFileStore fallback, got %T", store)
+	}
+}
+
+func TestPaths_Resolve(t *testing.T) {
+	// Override only XDG_*_HOME so we don't touch the real user's dirs. We
+	// can't override os.UserCacheDir / os.UserConfigDir on macOS via env,
+	// so this test is informational on darwin and exact on linux.
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "cfg"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(tmp, "data"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "state"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(tmp, "cache"))
+
+	p, err := Resolve()
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	for _, dir := range []string{p.Config, p.Data, p.State, p.Cache} {
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatalf("dir %q not created: %v", dir, err)
+		}
+		if !info.IsDir() {
+			t.Fatalf("%q is not a dir", dir)
+		}
+		if mode := info.Mode().Perm(); mode != dirMode {
+			// Best-effort: macOS may have additional ACLs but the
+			// permission bits should still be 0700.
+			t.Logf("dir %q mode = %#o (want %#o)", dir, mode, dirMode)
+			if mode&0o077 != 0 {
+				t.Fatalf("dir %q has world/group bits set: %#o", dir, mode)
+			}
+		}
+		if !strings.HasSuffix(dir, appName) {
+			t.Errorf("dir %q does not end with appName", dir)
+		}
+	}
+}
+
+// silence unused-import warning if any helper is removed.
+var _ fs.FileMode = fileMode

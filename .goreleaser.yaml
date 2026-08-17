@@ -1,0 +1,163 @@
+version: 2
+
+project_name: lazytg
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: lazytg
+    main: ./cmd/lazytg
+    binary: lazytg
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/kar43lov/lazytg/cmd/lazytg/cmd.version={{.Version}}
+      - -X github.com/kar43lov/lazytg/cmd/lazytg/cmd.commit={{.Commit}}
+      - -X github.com/kar43lov/lazytg/cmd/lazytg/cmd.date={{.Date}}
+      # Telegram API credentials, injected from repository secrets so release
+      # binaries work out of the box while the repo itself stays clean — an
+      # api_id found in public source is refused by Telegram forever
+      # (API_ID_PUBLISHED_FLOOD).
+      #
+      # `index .Env "…"` yields "" for an unset variable instead of failing
+      # the template, which keeps `--snapshot` builds working locally. The
+      # names are deliberately NOT LAZYTG_API_ID/LAZYTG_API_HASH: those are
+      # the user-facing runtime vars and are likely exported in a
+      # maintainer's own shell, which would silently bake personal
+      # credentials into a public release.
+      - -X github.com/kar43lov/lazytg/internal/tg.embeddedAPIID={{ index .Env "LAZYTG_RELEASE_API_ID" }}
+      - -X github.com/kar43lov/lazytg/internal/tg.embeddedAPIHash={{ index .Env "LAZYTG_RELEASE_API_HASH" }}
+    flags:
+      - -trimpath
+
+archives:
+  - id: default
+    ids: [lazytg]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  sort: asc
+  use: git
+  filters:
+    # Match Conventional Commits both with and without a scope: `docs:`
+    # AND `docs(install):` should both be excluded from public release notes.
+    exclude:
+      - '^docs(\([^)]+\))?(!)?:'
+      - '^test(\([^)]+\))?(!)?:'
+      - '^chore(\([^)]+\))?(!)?:'
+      - "Merge pull request"
+      - "Merge branch"
+
+nfpms:
+  - id: default
+    package_name: lazytg
+    vendor: lazytg contributors
+    homepage: https://github.com/kar43lov/lazytg
+    maintainer: kar43lov <noreply@github.com>
+    description: |
+      Local-first Telegram TUI client with FTS5 search.
+      Telegram automatically puts unofficial clients under observation.
+      Use with a test account first.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    ids:
+      - lazytg
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/lazytg/LICENSE
+      - src: README.md
+        dst: /usr/share/doc/lazytg/README.md
+
+brews:
+  - name: lazytg
+    ids:
+      - default
+    repository:
+      owner: kar43lov
+      name: homebrew-lazytg
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/kar43lov/lazytg
+    description: Local-first Telegram TUI client with FTS5 search
+    license: MIT
+    skip_upload: '{{ if .Prerelease }}true{{ end }}'
+    install: |
+      bin.install "lazytg"
+    test: |
+      system "#{bin}/lazytg", "version"
+    caveats: |
+      Telegram automatically puts unofficial clients under observation.
+      Use lazytg with a test account first. See:
+      https://github.com/kar43lov/lazytg/blob/main/docs/SECURITY.md
+
+      Set LAZYTG_API_ID and LAZYTG_API_HASH env vars before first run.
+      Get them at https://my.telegram.org/apps
+
+signs:
+  # Подпись checksums.txt — сохраняем как было (быстрая верификация всего набора).
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - --yes
+    output: true
+
+  # Per-archive подпись через sigstore bundle (cosign sign-blob --bundle).
+  # Это даёт возможность пользователям проверять конкретный архив без скачивания
+  # всех файлов — `cosign verify-blob --bundle <archive>.sigstore.json <archive>`.
+  - id: archives
+    cmd: cosign
+    artifacts: archive
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - --yes
+    output: true
+
+release:
+  prerelease: auto
+  draft: false
+  name_template: "lazytg {{ .Version }}"
+  github:
+    owner: kar43lov
+    name: lazytg
+  header: |
+    ## lazytg {{ .Version }}
+
+    > ⚠️ Telegram automatically puts unofficial clients under observation. Use lazytg with a test account first. See [SECURITY.md](https://github.com/kar43lov/lazytg/blob/main/docs/SECURITY.md).
+
+    Pure-Go build, single static binary. Database is unencrypted by default — rely on filesystem permissions (the startup permissions audit enforces `0600`/`0700`) and OS-level disk encryption. SQLCipher (CGo, opt-in) is deferred past v0.1.
+  footer: |
+    **Full Changelog**: https://github.com/kar43lov/lazytg/compare/{{ .PreviousTag }}...{{ .Tag }}

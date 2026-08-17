@@ -33,3 +33,11 @@ vendor/
 
 # Logs
 *.log
+
+# ralphex progress logs
+.ralphex/progress/
+
+# Local tool scratch space: review markers, captured diffs, agent output.
+# Session-local by nature, and the review marker holds a bare md5 that the
+# secret scanner reads as an api_hash shape.
+.claude/tmp/
