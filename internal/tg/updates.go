@@ -94,6 +94,20 @@ func (d *UpdatesDispatcher) Manager(storage updates.StateStorage, hasher updates
 	})
 }
 
+// SeenMessage reports whether this message has already been published, and
+// records it when it has not. It is the same LRU the live path dedupes
+// against, exported so the polling fallback shares one filter with it rather
+// than keeping a second, blind one.
+//
+// The two paths overlap by design — polling is a net under push, not a
+// replacement — and the watermarks alone cannot close the overlap: the
+// polling source reads the store's newest id, then makes a network call, and
+// a live update landing in that window is newer than the watermark the call
+// was made with. One filter across both paths closes it wherever it happens.
+func (d *UpdatesDispatcher) SeenMessage(chatID, messageID int64) bool {
+	return d.seen(dedupKey{chatID: chatID, messageID: messageID})
+}
+
 // HandlerFunc returns the telegram.UpdateHandler view of the dispatcher.
 // Useful when wiring without updates.Manager (raw updates handler).
 func (d *UpdatesDispatcher) HandlerFunc() telegram.UpdateHandlerFunc {

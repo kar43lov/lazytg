@@ -22,6 +22,12 @@ import (
 // bounded, and pointless work for as long as the process takes to exit.
 var errSessionStopped = fmt.Errorf("session supervisor is stopped: %w", context.Canceled)
 
+// errSessionStuck is returned by Restart when the session it is replacing did
+// not finish unwinding in time. It is deliberately retryable — unlike
+// errSessionStopped it does not wrap context.Canceled — so the reconnect
+// manager backs off and tries again once the old session is really gone.
+var errSessionStuck = errors.New("previous session did not stop in time; not opening a second one")
+
 // sessionSupervisor owns the lifetime of the MTProto run loop.
 //
 // gotd's Client.Run holds exactly one connection. It reconnects internally
@@ -53,6 +59,12 @@ type sessionSupervisor struct {
 	// be started before the handshake or reused across sessions.
 	gapRecovery func(context.Context) error
 
+	// grace is how long a teardown may take before it is treated as stuck.
+	// A field rather than the constant directly so the timeout branch —
+	// which decides whether a second session may open — is testable in
+	// milliseconds instead of seconds.
+	grace time.Duration
+
 	mu      sync.Mutex
 	cancel  context.CancelFunc
 	done    chan struct{}
@@ -62,7 +74,7 @@ type sessionSupervisor struct {
 // newSessionSupervisor wires a supervisor around an already-built client.
 // parent bounds every session it will ever start.
 func newSessionSupervisor(parent context.Context, client *tgclient.Client, log *slog.Logger) *sessionSupervisor {
-	return &sessionSupervisor{parent: parent, client: client, log: log}
+	return &sessionSupervisor{parent: parent, client: client, log: log, grace: shutdownGrace}
 }
 
 // Start brings a session up and blocks until it is authorised and holding the
@@ -107,7 +119,14 @@ func (s *sessionSupervisor) Start(ctx context.Context, timeout time.Duration) er
 // and unofficial clients are already under observation — see the ban-risk
 // note in CLAUDE.md.
 func (s *sessionSupervisor) Restart(ctx context.Context) error {
-	s.stopCurrent()
+	if !s.stopCurrent() {
+		// Starting anyway would put two Run loops on one account, which
+		// Telegram sees as two devices logging in — on a client already
+		// under observation for being unofficial, and repeatedly, since a
+		// flapping link retries. Staying offline one more backoff is the
+		// cheaper failure by a wide margin.
+		return errSessionStuck
+	}
 	return s.Start(ctx, attachTimeout)
 }
 
@@ -220,16 +239,17 @@ func (s *sessionSupervisor) await(ctx context.Context, ready <-chan error, timeo
 }
 
 // stopCurrent cancels whichever session is running now, if any, and waits for
-// its goroutine to unwind.
-func (s *sessionSupervisor) stopCurrent() {
+// its goroutine to unwind. It reports whether the session is actually gone:
+// callers that go on to start another one must not do so on a false.
+func (s *sessionSupervisor) stopCurrent() bool {
 	s.mu.Lock()
 	cancel, done := s.cancel, s.done
 	s.cancel, s.done = nil, nil
 	s.mu.Unlock()
 	if cancel == nil {
-		return
+		return true
 	}
-	s.wait(cancel, done)
+	return s.wait(cancel, done)
 }
 
 // teardown is stopCurrent for a session whose handles the caller still holds:
@@ -245,14 +265,18 @@ func (s *sessionSupervisor) teardown(cancel context.CancelFunc, done chan struct
 	s.wait(cancel, done)
 }
 
-// wait cancels and gives the goroutine shutdownGrace to finish. The wait
-// matters because the caller closes the SQLite handle right after, and a
-// goroutine still persisting an update would hit a closed database.
-func (s *sessionSupervisor) wait(cancel context.CancelFunc, done <-chan struct{}) {
+// wait cancels and gives the goroutine its grace period to finish, reporting
+// whether it did. The wait matters twice over: the caller closes the SQLite
+// handle right after, and a goroutine still persisting an update would hit a
+// closed database — and a session that has not returned yet still holds a
+// connection to Telegram.
+func (s *sessionSupervisor) wait(cancel context.CancelFunc, done <-chan struct{}) bool {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(shutdownGrace):
-		s.log.Warn("tui: telegram session did not stop in time", "waited", shutdownGrace)
+		return true
+	case <-time.After(s.grace):
+		s.log.Warn("tui: telegram session did not stop in time", "waited", s.grace)
+		return false
 	}
 }

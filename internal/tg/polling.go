@@ -43,6 +43,15 @@ type MessagePollingFetcher interface {
 	Latest(ctx context.Context, chat PolledChat, sinceID int64) ([]events.MessageReceived, int64, error)
 }
 
+// MessageDeduper is the cross-path duplicate filter the fallback publishes
+// through. *UpdatesDispatcher satisfies it; nil disables the check, which is
+// what the fallback's own unit tests use.
+type MessageDeduper interface {
+	// SeenMessage reports whether the message was already published by any
+	// path, recording it when it was not.
+	SeenMessage(chatID, messageID int64) bool
+}
+
 // PollingFallback drives a periodic pull of active chats when the
 // updates.Manager is unavailable. It publishes new MessageReceived
 // events onto the bus exactly like UpdatesDispatcher would, so
@@ -58,6 +67,8 @@ type PollingFallback struct {
 	bus      *events.Bus
 	log      *slog.Logger
 	interval time.Duration
+
+	dedup MessageDeduper
 
 	mu        sync.Mutex
 	watermark map[int64]int64
@@ -82,6 +93,15 @@ func NewPollingFallback(source PollingActiveSource, fetcher MessagePollingFetche
 		watermark: make(map[int64]int64),
 		failures:  make(map[int64]int),
 	}
+}
+
+// WithDeduper points the fallback at the filter the live path uses, so a
+// message cannot be published twice when both paths see it. Returns the
+// fallback for chaining. Without it the fallback still avoids repeating
+// itself between ticks, but not the one-tick overlap with push updates.
+func (p *PollingFallback) WithDeduper(d MessageDeduper) *PollingFallback {
+	p.dedup = d
+	return p
 }
 
 // Run blocks until ctx is cancelled, polling every interval. Errors are
@@ -118,6 +138,9 @@ func (p *PollingFallback) tick(ctx context.Context) {
 		}
 		p.noteSuccess(c.ChatID)
 		for _, m := range msgs {
+			if p.dedup != nil && p.dedup.SeenMessage(m.ChatID, m.MessageID) {
+				continue
+			}
 			p.bus.Publish(m)
 		}
 		if latest > since {

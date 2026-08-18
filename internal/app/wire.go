@@ -414,15 +414,6 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 	historyFetcher := tgclient.NewHistoryFetcher(client.API())
 	a.HistoryFetcher = historyFetcher
 
-	// The polling fallback is opt-in and stays off by default: it is steady
-	// background traffic on an account that Telegram already watches more
-	// closely for being an unofficial client.
-	if a.Polling {
-		a.PollingSvc = tgclient.NewPollingFallback(
-			pollingSourceAdapter{repo: a.Repo, peers: a.Peers},
-			tgclient.NewPollingFetcher(historyFetcher),
-			a.Bus, a.Log, 0)
-	}
 	a.History = coresync.NewHistoryService(historyFetcher, peerLookupAdapter{peers: a.Peers}, a.Repo, a.Bus, a.Log)
 	// Log rather than swallow: a nil Backfill means chats open with whatever
 	// history is already cached and never fetch more, which is indistinguishable
@@ -462,6 +453,20 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 	// dispatcher nobody is feeding.
 	if a.Updates == nil {
 		a.Updates = tgclient.NewUpdatesDispatcher(a.Bus, a.Log)
+	}
+
+	// The polling fallback is opt-in and stays off by default: it is steady
+	// background traffic on an account Telegram already watches more closely
+	// for being an unofficial client. Built after the dispatcher because it
+	// publishes through the dispatcher's duplicate filter — the two paths
+	// overlap by design, and one filter across both is what keeps a message
+	// that arrives on each from being shown twice.
+	if a.Polling {
+		a.PollingSvc = tgclient.NewPollingFallback(
+			pollingSourceAdapter{repo: a.Repo, peers: a.Peers},
+			tgclient.NewPollingFetcher(historyFetcher),
+			a.Bus, a.Log, 0).
+			WithDeduper(a.Updates)
 	}
 	a.Reconnect = coresync.NewReconnectManager(
 		reconnectAdapter{client: client, restart: attachOpts.reconnect},

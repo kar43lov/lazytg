@@ -276,3 +276,42 @@ func TestPollingFallback_DoesNotFloodTheLogDuringAnOutage(t *testing.T) {
 		t.Fatal("no debug lines — the repeated failures went unrecorded entirely")
 	}
 }
+
+// TestPollingFallback_DedupesAgainstTheLivePath closes the overlap the
+// watermarks cannot. The source reads the store's newest id, then the poll
+// makes a network call, and a live update landing in that window is newer
+// than the watermark the call was made with — so the fallback republishes a
+// message the push path has just shown. One filter across both paths is what
+// makes "appears exactly once" true rather than merely likely.
+func TestPollingFallback_DedupesAgainstTheLivePath(t *testing.T) {
+	t.Parallel()
+
+	bus := events.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ch := bus.Subscribe(ctx)
+
+	dispatcher := NewUpdatesDispatcher(bus, nil)
+	// The live path published message 9 while the poll below was in flight.
+	if dispatcher.SeenMessage(7, 9) {
+		t.Fatal("dispatcher reported an unseen message as seen")
+	}
+
+	source := &fakeActiveSource{chats: []PolledChat{{ChatID: 7}}}
+	fetcher := &fakeFetcher{
+		answers: map[int64][]events.MessageReceived{
+			7: {{ChatID: 7, MessageID: 9, Text: "already delivered by the dispatcher"}},
+		},
+		latest: map[int64]int64{7: 9},
+	}
+	fb := NewPollingFallback(source, fetcher, bus, nil, 5*time.Millisecond).
+		WithDeduper(dispatcher)
+	go func() { _ = fb.Run(ctx) }()
+
+	time.Sleep(60 * time.Millisecond)
+	select {
+	case ev := <-ch:
+		t.Fatalf("published a message the live path had already shown: %+v", ev)
+	default:
+	}
+}

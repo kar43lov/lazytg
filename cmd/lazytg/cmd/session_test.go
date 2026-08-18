@@ -77,3 +77,49 @@ func TestSessionSupervisor_StopIsAShutdownNotAFailure(t *testing.T) {
 		t.Fatalf("Restart after Stop = %v — reconnect will keep retrying through shutdown", err)
 	}
 }
+
+// TestSessionSupervisor_RefusesToOpenASecondSession is the ban-risk guard.
+// A teardown that does not finish inside the grace period used to be a warn
+// line and nothing more: Restart went on to open a new session while the old
+// Run loop was still holding a connection. Two Run loops on one account are
+// two devices logging in, on a client Telegram already watches for being
+// unofficial, and a flapping link produces the situation over and over.
+func TestSessionSupervisor_RefusesToOpenASecondSession(t *testing.T) {
+	t.Parallel()
+	s := newSessionSupervisor(context.Background(), nil, slog.New(slog.DiscardHandler))
+	s.grace = 10 * time.Millisecond
+
+	// A session whose goroutine never returns: done stays open.
+	_, cancel := context.WithCancel(context.Background())
+	s.cancel, s.done = cancel, make(chan struct{})
+
+	// The client is nil, so reaching Start would panic — not reaching it is
+	// half the assertion, and the error names the reason.
+	restartErr := s.Restart(context.Background())
+	if !errors.Is(restartErr, errSessionStuck) {
+		t.Fatalf("Restart = %v want errSessionStuck", restartErr)
+	}
+	// Retryable on purpose: the manager has to come back once the old
+	// session is really gone, so this must not read as a shutdown the way
+	// errSessionStopped deliberately does.
+	if errors.Is(restartErr, context.Canceled) {
+		t.Fatal("errSessionStuck wraps context.Canceled — the manager would stop retrying instead of waiting the old session out")
+	}
+}
+
+// TestSessionSupervisor_WaitReportsACleanStop pins the other branch: a
+// goroutine that does finish must not be reported as stuck, or every
+// reconnect would spend one extra backoff refusing to start.
+func TestSessionSupervisor_WaitReportsACleanStop(t *testing.T) {
+	t.Parallel()
+	s := newSessionSupervisor(context.Background(), nil, slog.New(slog.DiscardHandler))
+	s.grace = time.Second
+
+	_, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	close(done)
+
+	if !s.wait(cancel, done) {
+		t.Fatal("wait reported a finished goroutine as stuck")
+	}
+}
