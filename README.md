@@ -263,7 +263,7 @@ All subcommands accept:
 - `--api-id` / `--api-hash` — override the API credentials for one run (takes precedence over the env vars and over anything compiled into the binary; `--api-hash` is visible in `ps`, so prefer `LAZYTG_API_HASH`).
 - `--debug` — duplicates JSON logs to stderr in addition to the rotated file sink.
 - `--log-level debug|info|warn|error` (default `info`).
-- `--polling` — reserved, currently a no-op (wire-up deferred to a v0.1 follow-up; see CHANGELOG `Known gaps`).
+- `--polling` — poll the 3 most recently active chats every 3 s for messages the push path may have dropped. A net under live updates, not a replacement; off by default (constant background traffic).
 
 Full reference, env vars, and `keymap.toml` overrides live in
 [docs/CONFIGURATION.md](docs/CONFIGURATION.md).

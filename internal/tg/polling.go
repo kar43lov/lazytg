@@ -123,12 +123,21 @@ func (p *PollingFallback) tick(ctx context.Context) {
 	}
 }
 
-// since returns the highest message id we have seen for chat. Zero on
-// first poll so the very first tick still publishes the latest batch.
+// since returns the highest message id we have seen for chat: the larger of
+// our own watermark and the one the source reports. Zero on first poll with
+// an empty chat, so the very first tick still publishes the latest batch.
+//
+// Taking the maximum rather than preferring the watermark is what keeps the
+// fallback from fighting the live path. Both run at once — polling is a net
+// under a gap-prone connection, not a replacement for updates — and the
+// source derives LastSeenID from what is actually stored. So a message the
+// dispatcher already delivered and persisted is above the source's
+// watermark, and without the max it would be published a second time on the
+// next tick.
 func (p *PollingFallback) since(c PolledChat) int64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if w, ok := p.watermark[c.ChatID]; ok {
+	if w, ok := p.watermark[c.ChatID]; ok && w > c.LastSeenID {
 		return w
 	}
 	return c.LastSeenID

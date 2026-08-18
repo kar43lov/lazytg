@@ -281,3 +281,100 @@ func TestReconnectManager_MaxAttemptsRespected(t *testing.T) {
 		t.Fatalf("connect count = %d want 2", got)
 	}
 }
+
+// reportingReconnectClient is a fakeReconnectClient that also implements
+// ConnectionStateReporter, so the manager's transport-state pump can be
+// driven from the test goroutine.
+type reportingReconnectClient struct {
+	*fakeReconnectClient
+	states chan string
+}
+
+func newReportingReconnectClient() *reportingReconnectClient {
+	return &reportingReconnectClient{
+		fakeReconnectClient: newFakeReconnectClient(),
+		states:              make(chan string, 8),
+	}
+}
+
+func (r *reportingReconnectClient) ConnectionStates() <-chan string { return r.states }
+
+// TestReconnectManager_RepublishesTransportStates covers the case the manager
+// used to be blind to: the transport reconnecting under an active run loop.
+// Nothing calls Connect there — gotd repairs itself and Run never returns —
+// so before the client could report its own state the indicator sat on its
+// last value for the entire outage.
+func TestReconnectManager_RepublishesTransportStates(t *testing.T) {
+	t.Parallel()
+	client := newReportingReconnectClient()
+	bus := events.New()
+	subCtx, cancelSub := context.WithCancel(context.Background())
+	defer cancelSub()
+	ch := bus.Subscribe(subCtx)
+
+	mgr := NewReconnectManager(client, bus, nil, ReconnectConfig{})
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- mgr.Run(runCtx) }()
+
+	client.states <- ConnectionStateOffline
+	client.states <- ConnectionStateConnecting
+	client.states <- ConnectionStateOnline
+
+	got := drainConnectionStates(t, ch, 3, 2*time.Second)
+	if len(got) < 3 {
+		t.Fatalf("got %d events want 3: %+v", len(got), got)
+	}
+	want := []string{ConnectionStateOffline, ConnectionStateConnecting, ConnectionStateOnline}
+	for i, w := range want {
+		if got[i].State != w {
+			t.Fatalf("event %d = %s want %s (all: %+v)", i, got[i].State, w, got)
+		}
+	}
+	// No disconnect was signalled, so the repair path must not have run: the
+	// transport fixed itself and the manager only reported it.
+	if client.connectCount() != 0 {
+		t.Fatalf("connect calls = %d want 0 — the manager reconnected a live session", client.connectCount())
+	}
+
+	cancelRun()
+	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("run err = %v", err)
+	}
+}
+
+// TestReconnectManager_SuppressesRepeatedTransportStates pins the dedup.
+// gotd emits "connecting" once per attempt, and a flapping link produces a
+// long run of identical events; republishing each one wakes every bus
+// subscriber — the whole UI — to redraw a cell that did not change.
+func TestReconnectManager_SuppressesRepeatedTransportStates(t *testing.T) {
+	t.Parallel()
+	client := newReportingReconnectClient()
+	bus := events.New()
+	subCtx, cancelSub := context.WithCancel(context.Background())
+	defer cancelSub()
+	ch := bus.Subscribe(subCtx)
+
+	mgr := NewReconnectManager(client, bus, nil, ReconnectConfig{})
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- mgr.Run(runCtx) }()
+
+	client.states <- ConnectionStateConnecting
+	client.states <- ConnectionStateConnecting
+	client.states <- ConnectionStateConnecting
+	client.states <- ConnectionStateOnline
+
+	got := drainConnectionStates(t, ch, 4, 500*time.Millisecond)
+	if len(got) != 2 {
+		t.Fatalf("published %d events want 2 (repeats suppressed): %+v", len(got), got)
+	}
+	if got[0].State != ConnectionStateConnecting || got[1].State != ConnectionStateOnline {
+		t.Fatalf("events = %+v want connecting then online", got)
+	}
+
+	cancelRun()
+	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("run err = %v", err)
+	}
+}

@@ -107,10 +107,16 @@
 - [ ] Если вы были scrolled-up — позиция чтения не меняется (sticky scroll работает)
 - [ ] Если вы были на bottom — viewport скроллится к новому сообщению
 
-### 13. Polling fallback (N/A в v0.1)
+### 13. Polling fallback
 
-`--polling` флаг зарезервирован, но в v0.1 — no-op (см. CHANGELOG `Known gaps`).
-Шаг пропускается до wire-up в follow-up релизе.
+Запустить `lazytg --polling --debug` и убедиться по логу, что fallback поднялся
+(`tui: history polling engaged`), а сообщения не дублируются в треде: polling
+работает вместе с push-обновлениями и обязан пропускать всё, что live-путь уже
+сохранил.
+
+- [ ] В логе есть `tui: history polling engaged`
+- [ ] Входящее сообщение появляется в треде ровно один раз
+- [ ] Без флага строки `history polling engaged` в логе нет
 
 ### 14. Reconnect
 

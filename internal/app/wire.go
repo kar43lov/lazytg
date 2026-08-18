@@ -18,7 +18,10 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sort"
 	"sync"
+
+	"github.com/gotd/td/telegram/updates"
 
 	"github.com/kar43lov/lazytg/internal/core/config"
 	"github.com/kar43lov/lazytg/internal/core/domain"
@@ -167,11 +170,17 @@ type App struct {
 	// thinner than the viewport.
 	HistoryFetcher *tgclient.HistoryFetcher
 
-	// Polling controls whether the cmd layer should engage PollingFallback
-	// instead of subscribing to UpdatesDispatcher. The fallback itself is
-	// constructed in cmd/tui.go because it takes the active-chat source
-	// from the UI layer.
+	// Polling mirrors the --polling flag: it makes AttachClient build
+	// PollingSvc below. It is not a replacement for the live dispatcher but
+	// a net under it — see PollingSvc.
 	Polling bool
+
+	// PollingSvc periodically re-reads the most recently active chats and
+	// publishes anything the live path did not deliver. Non-nil only when
+	// Polling is set, because it costs one messages.getHistory per polled
+	// chat per tick forever, and lazytg's whole update story is otherwise
+	// push-based. Started by the cmd layer alongside the session.
+	PollingSvc *tgclient.PollingFallback
 
 	closed sync.Once
 }
@@ -359,6 +368,23 @@ func loadKeymap(override, configDir string) (keymap.Keymap, error) {
 	return keymap.Load(path)
 }
 
+// AttachOption customises AttachClient. Options exist so the cmd layer can
+// hand in the one thing only it owns — the session supervisor — without
+// AttachClient growing a parameter that every test then has to pass nil for.
+type AttachOption func(*attachOptions)
+
+type attachOptions struct {
+	reconnect func(context.Context) error
+}
+
+// WithReconnector supplies the function ReconnectManager calls to stand a
+// dead session back up. Without it the manager can still observe a
+// disconnect and report it, but it cannot repair one: the MTProto run loop
+// belongs to the cmd layer, and only the cmd layer can start another.
+func WithReconnector(fn func(context.Context) error) AttachOption {
+	return func(o *attachOptions) { o.reconnect = fn }
+}
+
 // AttachClient wires the MTProto-aware services on top of an active
 // *tg.Client + the persistent peer cache. After AttachClient the App is
 // ready to drive sends, history fetches, updates dispatch and reconnect
@@ -374,14 +400,29 @@ func loadKeymap(override, configDir string) (keymap.Keymap, error) {
 // The method is idempotent: calling it twice replaces the previous
 // services with the new ones, which is useful when a reconnect rebuilds
 // the underlying gotd client.
-func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client) {
+func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts ...AttachOption) {
 	if client == nil {
 		return
 	}
 	a.Client = client
 
+	var attachOpts attachOptions
+	for _, opt := range opts {
+		opt(&attachOpts)
+	}
+
 	historyFetcher := tgclient.NewHistoryFetcher(client.API())
 	a.HistoryFetcher = historyFetcher
+
+	// The polling fallback is opt-in and stays off by default: it is steady
+	// background traffic on an account that Telegram already watches more
+	// closely for being an unofficial client.
+	if a.Polling {
+		a.PollingSvc = tgclient.NewPollingFallback(
+			pollingSourceAdapter{repo: a.Repo, peers: a.Peers},
+			tgclient.NewPollingFetcher(historyFetcher),
+			a.Bus, a.Log, 0)
+	}
 	a.History = coresync.NewHistoryService(historyFetcher, peerLookupAdapter{peers: a.Peers}, a.Repo, a.Bus, a.Log)
 	// Log rather than swallow: a nil Backfill means chats open with whatever
 	// history is already cached and never fetch more, which is indistinguishable
@@ -422,7 +463,9 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client) {
 	if a.Updates == nil {
 		a.Updates = tgclient.NewUpdatesDispatcher(a.Bus, a.Log)
 	}
-	a.Reconnect = coresync.NewReconnectManager(reconnectAdapter{client: client}, a.Bus, a.Log, coresync.ReconnectConfig{})
+	a.Reconnect = coresync.NewReconnectManager(
+		reconnectAdapter{client: client, restart: attachOpts.reconnect},
+		a.Bus, a.Log, coresync.ReconnectConfig{})
 
 	// Stage 3 file pipelines: tg.Downloader streams bytes, tg.Uploader
 	// + Sender feed the FilesAdapter that satisfies both files.TGUploader
@@ -619,6 +662,130 @@ func (a peerLookupAdapter) Lookup(ctx context.Context, chatID int64) (coresync.P
 	}, nil
 }
 
+// UpdatesManager builds the gap-recovering update handler for dispatcher,
+// backed by this App's SQLite state and peer tables. The cmd layer installs
+// the result as the client's update handler and then calls
+// Client.RunGapRecovery once the session is authorised.
+//
+// Built here rather than in the cmd layer because it needs two storage
+// handles the App already owns, and because "which storage backs the update
+// state" is a composition decision, not a command-line one.
+func (a *App) UpdatesManager(dispatcher *tgclient.UpdatesDispatcher) *updates.Manager {
+	if dispatcher == nil || a.StateRepo == nil {
+		return nil
+	}
+	return dispatcher.Manager(a.StateRepo, channelAccessHasher{peers: a.Peers})
+}
+
+// channelAccessHasher lets updates.Manager reuse the peer table lazytg
+// already keeps instead of the in-memory default. It matters across
+// restarts: the manager loads a channel's stored pts only when it can also
+// find that channel's access hash, so with the in-memory hasher every
+// channel is skipped on the next start and gap recovery covers only private
+// chats and basic groups.
+//
+// userID is ignored on purpose. Accounts are separated by data directory
+// (the --account flag picks one), so a database only ever holds one
+// account's peers, and threading an id through would encode a scoping rule
+// the storage layer does not have.
+type channelAccessHasher struct {
+	peers *sqlite.PeerRepo
+}
+
+func (h channelAccessHasher) SetChannelAccessHash(ctx context.Context, _, channelID, accessHash int64) error {
+	if h.peers == nil {
+		return errors.New("updates: no peer store")
+	}
+	// Preserve the recorded kind when the row already exists. Channels and
+	// supergroups both address as InputPeerChannel, so overwriting one with
+	// the other would not break sending — it would just quietly make the
+	// stored type wrong for everything else that reads it.
+	peerType := domain.ChatTypeChannel
+	if existing, err := h.peers.Get(ctx, channelID); err == nil && existing.Type != "" {
+		peerType = existing.Type
+	}
+	return h.peers.Save(ctx, domain.Peer{ID: channelID, Type: peerType, AccessHash: accessHash})
+}
+
+func (h channelAccessHasher) GetChannelAccessHash(ctx context.Context, _, channelID int64) (int64, bool, error) {
+	if h.peers == nil {
+		return 0, false, nil
+	}
+	peer, err := h.peers.Get(ctx, channelID)
+	if err != nil {
+		if errors.Is(err, sqlite.ErrPeerNotFound) {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	return peer.AccessHash, true, nil
+}
+
+// pollingActiveChats caps how many conversations one poll pulls. Three at
+// the default three-second cadence is one request per second — well under
+// the send guard's ceiling, and close to the traffic a person reading their
+// most recent conversations would generate anyway. Raising it is a ban-risk
+// decision, not a throughput one.
+const pollingActiveChats = 3
+
+// pollingSourceAdapter answers the fallback's only question — which chats to
+// pull and from which message id — out of the local mirror, so the polling
+// loop needs no connection to the UI and no state of its own.
+//
+// Ordering is by last activity alone, deliberately ignoring the pinned-first
+// order GetChats returns: pinning says where a chat sits in the list, not
+// where messages are arriving, and a dormant pinned chat would otherwise
+// occupy one of the three slots permanently.
+type pollingSourceAdapter struct {
+	repo  *sqlite.Repo
+	peers *sqlite.PeerRepo
+}
+
+func (a pollingSourceAdapter) Active(ctx context.Context) ([]tgclient.PolledChat, error) {
+	chats, err := a.repo.GetChats(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("polling: read chats: %w", err)
+	}
+	sort.SliceStable(chats, func(i, j int) bool {
+		return chats[i].LastMessageDate.After(chats[j].LastMessageDate)
+	})
+
+	lookup := peerLookupAdapter{peers: a.peers}
+	out := make([]tgclient.PolledChat, 0, pollingActiveChats)
+	for _, c := range chats {
+		if len(out) == pollingActiveChats {
+			break
+		}
+		peer, err := lookup.Lookup(ctx, c.ID)
+		if err != nil {
+			// No access hash cached: the chat cannot be addressed over
+			// MTProto at all. Skipped silently on purpose — logging here
+			// would produce a line every three seconds for as long as the
+			// dialog sync has not caught up.
+			continue
+		}
+		out = append(out, tgclient.PolledChat{
+			ChatID:     c.ID,
+			AccessHash: peer.AccessHash,
+			Type:       peer.Type,
+			LastSeenID: a.newestStored(ctx, c.ID),
+		})
+	}
+	return out, nil
+}
+
+// newestStored is the id of the newest message already in the mirror, which
+// is what keeps the fallback from re-publishing whatever the live dispatcher
+// has already delivered. A read failure yields 0 rather than an error: the
+// worst case is one duplicate publish, and the persistence path upserts.
+func (a pollingSourceAdapter) newestStored(ctx context.Context, chatID int64) int64 {
+	msgs, err := a.repo.GetMessages(ctx, chatID, 1, 0)
+	if err != nil || len(msgs) == 0 {
+		return 0
+	}
+	return msgs[0].ID
+}
+
 // peerResolverAdapter bridges *sqlite.PeerRepo into tg.PeerResolver. Same
 // shape as peerLookupAdapter but lives in the tg-side contract because
 // Sender consumes domain.Peer directly.
@@ -630,23 +797,39 @@ func (a peerResolverAdapter) Resolve(ctx context.Context, chatID int64) (domain.
 	return a.peers.Get(ctx, chatID)
 }
 
-// reconnectAdapter bridges *tg.Client into coresync.ReconnectClient. The
-// real Connect/Ping operations need to be issued from inside Client.Run
-// — until we plumb that, AttachClient gets a stub that delegates Connect
-// to a no-op (the cmd layer drives the real Run loop) and Ping to a
-// presence check via Auth().Status. This is enough for ReconnectManager
-// to keep state-machine logic correct; full reconnect orchestration lives
-// in cmd/tui.go.
+// reconnectAdapter bridges *tg.Client into coresync.ReconnectClient.
+//
+// The MTProto run loop is owned by the cmd layer, because it needs the TUI's
+// context and its lifetime is the TUI's lifetime. Connect therefore delegates
+// to the restart function that layer supplies (cmd's sessionSupervisor.
+// Restart), rather than pretending to reconnect on its own: for one release
+// this method returned nil immediately, which told ReconnectManager that a
+// dead session had been repaired and left the client bound to a connection
+// that could no longer send.
+//
+// The adapter also forwards the client's transport-level state feed, so the
+// manager can report gotd's own in-session reconnects without owning them.
 type reconnectAdapter struct {
-	client *tgclient.Client
+	client  *tgclient.Client
+	restart func(context.Context) error
 }
 
-func (a reconnectAdapter) Connect(_ context.Context) error {
-	// The actual connect is owned by the cmd layer via tg.Client.Run.
-	// Reconnect inside an active session is a gotd-internal concern; the
-	// adapter exists so ReconnectManager has a non-nil dependency that
-	// returns nil quickly when the session is up.
-	return nil
+func (a reconnectAdapter) Connect(ctx context.Context) error {
+	if a.restart == nil {
+		// Reported rather than swallowed: a manager that believes it
+		// reconnected publishes "online" over a session that is gone, which
+		// is the one outcome worse than staying offline.
+		return errors.New("reconnect: no session supervisor wired (pass app.WithReconnector)")
+	}
+	return a.restart(ctx)
+}
+
+// ConnectionStates satisfies coresync.ConnectionStateReporter.
+func (a reconnectAdapter) ConnectionStates() <-chan string {
+	if a.client == nil {
+		return nil
+	}
+	return a.client.ConnectionStates()
 }
 
 func (a reconnectAdapter) Ping(ctx context.Context) error {

@@ -168,3 +168,53 @@ func drainEvents(t *testing.T, ch <-chan events.Event, n int, total time.Duratio
 	}
 	return out
 }
+
+// TestPollingFallback_HonoursTheStoredWatermark covers the two update paths
+// running at once. The fallback polls and lands on message 8, so its own
+// watermark is 8. The live dispatcher then delivers message 9 and it gets
+// persisted, which makes the source report 9 as LastSeenID on the next tick.
+// Preferring the in-memory watermark there republishes message 9 — the
+// fallback generating duplicates of exactly the traffic it exists to back up,
+// once per tick for as long as that chat stays quiet.
+func TestPollingFallback_HonoursTheStoredWatermark(t *testing.T) {
+	t.Parallel()
+
+	bus := events.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ch := bus.Subscribe(ctx)
+
+	source := &fakeActiveSource{chats: []PolledChat{{ChatID: 7}}}
+	fetcher := &fakeFetcher{
+		answers: map[int64][]events.MessageReceived{
+			7: {{ChatID: 7, MessageID: 8, Text: "found by polling"}},
+		},
+		latest: map[int64]int64{7: 8},
+	}
+	fb := NewPollingFallback(source, fetcher, bus, nil, 5*time.Millisecond)
+	go func() { _ = fb.Run(ctx) }()
+
+	// Tick one: the fallback finds message 8 itself and sets its watermark.
+	first := drainEvents(t, ch, 1, time.Second)
+	if got := first[0].(events.MessageReceived).MessageID; got != 8 {
+		t.Fatalf("first event = %d want 8", got)
+	}
+
+	// The live path now delivers message 9 and stores it, so the source —
+	// which reads the mirror — starts reporting it as the newest seen.
+	source.mu.Lock()
+	source.chats = []PolledChat{{ChatID: 7, LastSeenID: 9}}
+	source.mu.Unlock()
+	fetcher.mu.Lock()
+	fetcher.answers[7] = append(fetcher.answers[7],
+		events.MessageReceived{ChatID: 7, MessageID: 9, Text: "delivered by the dispatcher"})
+	fetcher.latest[7] = 9
+	fetcher.mu.Unlock()
+
+	time.Sleep(60 * time.Millisecond)
+	select {
+	case ev := <-ch:
+		t.Fatalf("republished a message the live path had already stored: %+v", ev)
+	default:
+	}
+}
