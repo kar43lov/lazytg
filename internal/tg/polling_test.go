@@ -3,6 +3,7 @@ package tg
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -216,5 +217,62 @@ func TestPollingFallback_HonoursTheStoredWatermark(t *testing.T) {
 	case ev := <-ch:
 		t.Fatalf("republished a message the live path had already stored: %+v", ev)
 	default:
+	}
+}
+
+// countingHandler counts slog records by level so a test can assert on log
+// volume rather than on log text.
+type countingHandler struct {
+	mu     sync.Mutex
+	counts map[slog.Level]int
+}
+
+func newCountingHandler() *countingHandler {
+	return &countingHandler{counts: make(map[slog.Level]int)}
+}
+
+func (h *countingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *countingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.counts[r.Level]++
+	return nil
+}
+
+func (h *countingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *countingHandler) WithGroup(string) slog.Handler      { return h }
+
+func (h *countingHandler) count(l slog.Level) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.counts[l]
+}
+
+// TestPollingFallback_DoesNotFloodTheLogDuringAnOutage covers what a dropped
+// connection does to a fallback that keeps ticking. Every poll fails for
+// every polled chat, so warning on each one is 60 lines a minute — enough to
+// rotate the log file and carry off the diagnostics that explain the outage.
+// One warn opens the streak, the rest are debug.
+func TestPollingFallback_DoesNotFloodTheLogDuringAnOutage(t *testing.T) {
+	t.Parallel()
+
+	handler := newCountingHandler()
+	source := &fakeActiveSource{chats: []PolledChat{{ChatID: 7}}}
+	fetcher := &fakeFetcher{err: errors.New("network down")}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	fb := NewPollingFallback(source, fetcher, events.New(), slog.New(handler), time.Millisecond)
+	go func() { _ = fb.Run(ctx) }()
+
+	time.Sleep(80 * time.Millisecond)
+	cancel()
+
+	if got := handler.count(slog.LevelWarn); got != 1 {
+		t.Fatalf("warn lines = %d want exactly 1 for one failure streak", got)
+	}
+	if handler.count(slog.LevelDebug) == 0 {
+		t.Fatal("no debug lines — the repeated failures went unrecorded entirely")
 	}
 }

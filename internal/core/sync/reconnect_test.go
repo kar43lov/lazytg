@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/goleak"
+
 	"github.com/kar43lov/lazytg/internal/core/events"
 )
 
@@ -305,7 +307,13 @@ func (r *reportingReconnectClient) ConnectionStates() <-chan string { return r.s
 // so before the client could report its own state the indicator sat on its
 // last value for the entire outage.
 func TestReconnectManager_RepublishesTransportStates(t *testing.T) {
-	t.Parallel()
+	// Not parallel: goleak inspects the whole process's goroutine set, and a
+	// sibling test running concurrently would be indistinguishable from a
+	// leak. The state pump is a goroutine the manager starts and never joins,
+	// so its cleanup has to be asserted somewhere — test/perf's leak test
+	// deliberately does not wire the MTProto services and says as much.
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
 	client := newReportingReconnectClient()
 	bus := events.New()
 	subCtx, cancelSub := context.WithCancel(context.Background())
@@ -341,6 +349,8 @@ func TestReconnectManager_RepublishesTransportStates(t *testing.T) {
 	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
 		t.Fatalf("run err = %v", err)
 	}
+	// Run returning does not join the pump: it exits on its own once the
+	// context is done, and goleak's own retry window is what waits for it.
 }
 
 // TestReconnectManager_SuppressesRepeatedTransportStates pins the dedup.
@@ -376,5 +386,112 @@ func TestReconnectManager_SuppressesRepeatedTransportStates(t *testing.T) {
 	cancelRun()
 	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
 		t.Fatalf("run err = %v", err)
+	}
+}
+
+// tearingDownClient reproduces what the real supervisor does inside Connect:
+// standing a new session up stops the old one, and that teardown reports
+// itself on the very channel the manager is about to read from again.
+type tearingDownClient struct {
+	*fakeReconnectClient
+	teardownErr error
+}
+
+func (c *tearingDownClient) Connect(ctx context.Context) error {
+	if err := c.fakeReconnectClient.Connect(ctx); err != nil {
+		return err
+	}
+	// The replaced session's run loop returns and signals, exactly as
+	// tg.Client.Run does when its context is cancelled.
+	select {
+	case c.disconnect <- c.teardownErr:
+	default:
+	}
+	return nil
+}
+
+// TestReconnectManager_IgnoresTheReplacedSessionsDisconnect pins the failure a
+// working Connect introduces. context.Canceled reads as user-initiated
+// shutdown, so the manager returned as soon as it finished its first
+// successful reconnect: recovery worked once per process and never again,
+// with nothing in the log to say so.
+func TestReconnectManager_IgnoresTheReplacedSessionsDisconnect(t *testing.T) {
+	t.Parallel()
+	client := &tearingDownClient{
+		fakeReconnectClient: newFakeReconnectClient(),
+		teardownErr:         context.Canceled,
+	}
+	bus := events.New()
+	subCtx, cancelSub := context.WithCancel(context.Background())
+	defer cancelSub()
+	ch := bus.Subscribe(subCtx)
+
+	rec := &recordingSleep{}
+	mgr := NewReconnectManager(client, bus, nil, ReconnectConfig{
+		InitialBackoff: time.Millisecond,
+		MaxBackoff:     time.Millisecond,
+	})
+	mgr.sleep = rec.sleep
+	mgr.jitter = func() float64 { return 0 }
+
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+	done := make(chan error, 1)
+	go func() { done <- mgr.Run(runCtx) }()
+
+	client.disconnect <- errors.New("transport closed")
+
+	got := drainConnectionStates(t, ch, 3, 2*time.Second)
+	if len(got) < 3 || got[2].State != ConnectionStateOnline {
+		t.Fatalf("did not reach online: %+v", got)
+	}
+
+	// The manager must still be waiting for the *next* real disconnect.
+	select {
+	case err := <-done:
+		t.Fatalf("manager exited after one reconnect (err = %v) — it read its own teardown as a shutdown", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if client.connectCount() != 1 {
+		t.Fatalf("connect calls = %d want 1 — the manager restarted a session it had just brought back", client.connectCount())
+	}
+}
+
+// TestReconnectManager_ReplacedSessionErrorDoesNotLoop is the other half: a
+// teardown that reports a plain error rather than context.Canceled. That one
+// does not stop the manager — it sends it round again, tearing down the
+// session it has just recovered, once per cycle, on an account Telegram
+// already watches for running an unofficial client.
+func TestReconnectManager_ReplacedSessionErrorDoesNotLoop(t *testing.T) {
+	t.Parallel()
+	client := &tearingDownClient{
+		fakeReconnectClient: newFakeReconnectClient(),
+		teardownErr:         errors.New("session replaced"),
+	}
+	bus := events.New()
+	subCtx, cancelSub := context.WithCancel(context.Background())
+	defer cancelSub()
+	ch := bus.Subscribe(subCtx)
+
+	rec := &recordingSleep{}
+	mgr := NewReconnectManager(client, bus, nil, ReconnectConfig{
+		InitialBackoff: time.Millisecond,
+		MaxBackoff:     time.Millisecond,
+	})
+	mgr.sleep = rec.sleep
+	mgr.jitter = func() float64 { return 0 }
+
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+	go func() { _ = mgr.Run(runCtx) }()
+
+	client.disconnect <- errors.New("transport closed")
+	if got := drainConnectionStates(t, ch, 3, 2*time.Second); len(got) < 3 {
+		t.Fatalf("did not reach online: %+v", got)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	if n := client.connectCount(); n != 1 {
+		t.Fatalf("connect calls = %d want 1 — the manager is cycling on its own teardown signal", n)
 	}
 }

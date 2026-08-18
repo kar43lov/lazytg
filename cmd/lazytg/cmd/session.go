@@ -12,9 +12,15 @@ import (
 )
 
 // errSessionStopped is returned by Start when the supervisor has already been
-// torn down. It exists so a reconnect attempt that lands during shutdown fails
-// loudly in the log instead of quietly resurrecting a session the user closed.
-var errSessionStopped = errors.New("session supervisor is stopped")
+// torn down, so a reconnect attempt that lands during shutdown cannot quietly
+// resurrect a session the user closed.
+//
+// It wraps context.Canceled deliberately. ReconnectManager treats a cancelled
+// context as user-initiated shutdown and stops; without the wrapping it would
+// read "supervisor stopped" as one more failed attempt and keep retrying with
+// backoff against a supervisor that will never start anything again — quiet,
+// bounded, and pointless work for as long as the process takes to exit.
+var errSessionStopped = fmt.Errorf("session supervisor is stopped: %w", context.Canceled)
 
 // sessionSupervisor owns the lifetime of the MTProto run loop.
 //
@@ -119,7 +125,17 @@ func (s *sessionSupervisor) Stop() {
 // ready. It is the goroutine body; everything it needs is passed in so a
 // session started after this one cannot have its channels swapped underneath.
 func (s *sessionSupervisor) run(sessionCtx context.Context, ready chan<- error, done chan struct{}) {
-	defer close(done)
+	// The gap-recovery goroutine has to be joined before done closes, and
+	// not merely cancelled. done is what Restart waits on before starting
+	// the next session, and the update manager is shared across sessions:
+	// the next session resets it, so a previous run still unwinding would
+	// have its state torn out from under it while its own goroutines are
+	// still writing pts to the same rows.
+	var gap sync.WaitGroup
+	defer func() {
+		gap.Wait()
+		close(done)
+	}()
 	runErr := s.client.Run(sessionCtx, func(runCtx context.Context) error {
 		authorized, err := s.client.IsAuthorized(runCtx)
 		if err != nil {
@@ -131,7 +147,7 @@ func (s *sessionSupervisor) run(sessionCtx context.Context, ready chan<- error, 
 			return errNotAuthorized
 		}
 
-		s.startGapRecovery(runCtx)
+		s.startGapRecovery(runCtx, &gap)
 
 		// Report readiness and let the caller do the attaching. Calling
 		// AttachClient from here would race the timeout: cancelling a context
@@ -167,11 +183,13 @@ func (s *sessionSupervisor) run(sessionCtx context.Context, ready chan<- error, 
 // never succeeded still forwards updates to the handler as they arrive,
 // which is exactly what lazytg did before the manager was wired. Tearing the
 // session down over it would trade "no gap recovery" for "no updates".
-func (s *sessionSupervisor) startGapRecovery(runCtx context.Context) {
+func (s *sessionSupervisor) startGapRecovery(runCtx context.Context, gap *sync.WaitGroup) {
 	if s.gapRecovery == nil {
 		return
 	}
+	gap.Add(1)
 	go func() {
+		defer gap.Done()
 		if err := s.gapRecovery(runCtx); err != nil && !errors.Is(err, context.Canceled) {
 			s.log.Warn("tui: update gap recovery stopped — live updates continue without it", "err", err)
 		}

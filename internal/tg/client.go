@@ -7,7 +7,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
+	"github.com/gotd/td/bin"
 	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/updates"
@@ -95,7 +97,28 @@ type ClientConfig struct {
 // deadlock; only the most recent error is preserved (subsequent writes
 // non-blocking-drop when the buffer is full — newer error wins).
 type Client struct {
-	tg         *telegram.Client
+	// cfg is kept so a new gotd client can be built for the next session.
+	// gotd's Client is single-use: Run cancels the client context on the way
+	// out, and the next Run returns "client already closed" without touching
+	// the network. Reconnecting therefore means a new gotd client, not
+	// another Run on the old one.
+	cfg ClientConfig
+
+	// api is built once, over this Client as the invoker, and handed to
+	// every service at attach time. It has to outlive any single connection:
+	// the panes capture their dependencies at construction, so a reconnect
+	// that swapped the object underneath them would be a data race against
+	// the Bubble Tea goroutine. Swapping what the invoker resolves to
+	// instead keeps every holder pointing at the same stable object.
+	api *tg.Client
+
+	mu  sync.RWMutex
+	tgc *telegram.Client
+	// used marks the current gotd client as already run, so the first Run
+	// uses the client New built (a login flow may already be holding it via
+	// Raw) and only later ones rotate.
+	used bool
+
 	disconnect chan error
 	states     chan string
 }
@@ -113,12 +136,21 @@ func New(cfg ClientConfig) (*Client, error) {
 		return nil, errors.New("session storage is required")
 	}
 	c := &Client{
+		cfg:        cfg,
 		disconnect: make(chan error, 1),
 		states:     make(chan string, 1),
 	}
-	c.tg = telegram.NewClient(cfg.APIID, cfg.APIHash, telegram.Options{
-		SessionStorage: cfg.SessionStore,
-		UpdateHandler:  cfg.UpdateHandler,
+	c.tgc = c.newTelegramClient()
+	c.api = tg.NewClient(c)
+	return c, nil
+}
+
+// newTelegramClient builds one gotd client from the stored config. Called
+// once by New and again for every session after the first.
+func (c *Client) newTelegramClient() *telegram.Client {
+	return telegram.NewClient(c.cfg.APIID, c.cfg.APIHash, telegram.Options{
+		SessionStorage: c.cfg.SessionStore,
+		UpdateHandler:  c.cfg.UpdateHandler,
 		// gotd reconnects on its own while Run is executing, and until
 		// v0.161 it did so silently: the status bar could sit on "online"
 		// through an entire outage because the only thing that ever moved
@@ -126,7 +158,35 @@ func New(cfg ClientConfig) (*Client, error) {
 		// telling us what it is actually doing.
 		OnConnectionState: c.onConnectionState,
 	})
-	return c, nil
+}
+
+// current returns the gotd client this session is using.
+func (c *Client) current() *telegram.Client {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.tgc
+}
+
+// rotate hands back the client the next Run should use, replacing a spent
+// one. gotd cancels its client context when Run returns, so reusing that
+// object yields "client already closed" immediately — a reconnect built on
+// it would fail forever without a single packet sent.
+func (c *Client) rotate() *telegram.Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.used {
+		c.used = true
+		return c.tgc
+	}
+	c.tgc = c.newTelegramClient()
+	return c.tgc
+}
+
+// Invoke satisfies tg.Invoker by routing every RPC to the client of the
+// current session. This indirection is what lets API() stay a fixed object
+// across reconnects.
+func (c *Client) Invoke(ctx context.Context, input bin.Encoder, output bin.Decoder) error {
+	return c.current().Invoke(ctx, input, output)
 }
 
 // onConnectionState translates gotd's connection lifecycle into the state
@@ -246,12 +306,12 @@ func parseCredentialPair(rawID, hash, idName, hashName string) (int, string, err
 // files (auth.go, future history.go, …) can use it without making the field
 // public to other packages — the wrapper itself stays unexported across
 // package boundaries by convention.
-func (c *Client) Raw() *telegram.Client { return c.tg }
+func (c *Client) Raw() *telegram.Client { return c.current() }
 
 // API returns the raw RPC client used to issue typed MTProto calls
 // (messages.getHistory, messages.sendMessage, …). The Stage 2 sync helpers
 // in this package call it to keep `internal/core` free of gotd imports.
-func (c *Client) API() *tg.Client { return c.tg.API() }
+func (c *Client) API() *tg.Client { return c.api }
 
 // Run starts the MTProto session and blocks until fn returns or ctx is
 // cancelled. fn is invoked with a sub-context that is cancelled when the
@@ -264,7 +324,7 @@ func (c *Client) API() *tg.Client { return c.tg.API() }
 // listener cannot stall the close path; the buffer (cap=1) keeps the
 // latest signal and drops earlier ones.
 func (c *Client) Run(ctx context.Context, fn func(ctx context.Context) error) error {
-	err := c.tg.Run(ctx, fn)
+	err := c.rotate().Run(ctx, fn)
 	c.signalDisconnect(err)
 	return err
 }
@@ -324,7 +384,7 @@ func (c *Client) OnDisconnect() <-chan error { return c.disconnect }
 // precisely the behaviour lazytg had before the manager was wired. The
 // caller is expected to log and carry on rather than tear the session down.
 func (c *Client) RunGapRecovery(ctx context.Context, m *updates.Manager) error {
-	self, err := c.tg.Self(ctx)
+	self, err := c.current().Self(ctx)
 	if err != nil {
 		return fmt.Errorf("updates: self: %w", err)
 	}
@@ -355,7 +415,7 @@ func RunManager(ctx context.Context, m *updates.Manager, api updates.API, selfID
 // Must be called from inside Client.Run because gotd needs an active
 // connection to ask the server.
 func (c *Client) IsAuthorized(ctx context.Context) (bool, error) {
-	status, err := c.tg.Auth().Status(ctx)
+	status, err := c.current().Auth().Status(ctx)
 	if err != nil {
 		return false, fmt.Errorf("auth status: %w", err)
 	}

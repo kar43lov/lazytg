@@ -61,6 +61,7 @@ type PollingFallback struct {
 
 	mu        sync.Mutex
 	watermark map[int64]int64
+	failures  map[int64]int
 }
 
 // NewPollingFallback wires a fallback. interval <= 0 falls back to
@@ -79,6 +80,7 @@ func NewPollingFallback(source PollingActiveSource, fetcher MessagePollingFetche
 		log:       log,
 		interval:  interval,
 		watermark: make(map[int64]int64),
+		failures:  make(map[int64]int),
 	}
 }
 
@@ -111,15 +113,47 @@ func (p *PollingFallback) tick(ctx context.Context) {
 		since := p.since(c)
 		msgs, latest, err := p.fetcher.Latest(ctx, c, since)
 		if err != nil {
-			p.log.Warn("polling: fetch failed", "chat_id", c.ChatID, "err", err)
+			p.noteFailure(c.ChatID, err)
 			continue
 		}
+		p.noteSuccess(c.ChatID)
 		for _, m := range msgs {
 			p.bus.Publish(m)
 		}
 		if latest > since {
 			p.advance(c.ChatID, latest)
 		}
+	}
+}
+
+// noteFailure logs a failed poll at a volume that survives an outage. Every
+// tick of a dropped connection fails for every polled chat, so a plain warn
+// per failure is 60 lines a minute — enough to rotate the log file and take
+// the diagnostics that explain the outage with it. The first failure in a
+// streak is a warn; the rest are debug, and recovery is stated once.
+func (p *PollingFallback) noteFailure(chatID int64, err error) {
+	p.mu.Lock()
+	p.failures[chatID]++
+	streak := p.failures[chatID]
+	p.mu.Unlock()
+
+	if streak == 1 {
+		p.log.Warn("polling: fetch failed", "chat_id", chatID, "err", err)
+		return
+	}
+	p.log.Debug("polling: fetch still failing", "chat_id", chatID, "consecutive", streak, "err", err)
+}
+
+// noteSuccess closes a failure streak, saying so once so the log shows when
+// polling came back rather than only when it broke.
+func (p *PollingFallback) noteSuccess(chatID int64) {
+	p.mu.Lock()
+	streak := p.failures[chatID]
+	delete(p.failures, chatID)
+	p.mu.Unlock()
+
+	if streak > 0 {
+		p.log.Info("polling: fetch recovered", "chat_id", chatID, "after_failures", streak)
 	}
 }
 

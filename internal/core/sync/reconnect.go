@@ -191,6 +191,7 @@ func (m *ReconnectManager) retry(ctx context.Context) error {
 			backoff = nextBackoff(backoff, m.cfg.MaxBackoff)
 			continue
 		}
+		m.dropStaleDisconnect()
 		if err := m.client.Ping(ctx); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
@@ -235,6 +236,40 @@ func (m *ReconnectManager) pumpStates(ctx context.Context, states <-chan string)
 			m.log.Debug("reconnect: transport state", "state", state)
 			m.publish(state)
 		}
+	}
+}
+
+// dropStaleDisconnect discards a disconnect signal left over from the session
+// Connect just replaced. Standing a new session up means tearing the old one
+// down, and that teardown reports itself on the same channel — so without
+// this, the loop below reads its own doing as a fresh failure the moment it
+// finishes recovering.
+//
+// The consequences were not subtle. A cancelled run loop reports
+// context.Canceled, which Run treats as user-initiated shutdown, so the
+// manager returned and no further disconnect was ever handled: reconnection
+// worked exactly once per process. A failed attempt instead leaves a real
+// error behind, and that one sends the manager into a cycle of tearing down
+// the session it had just brought back — an account logging in over and over
+// on a client Telegram already watches for being unofficial.
+//
+// The trigger is narrower than "any reconnect", which is why it is worth
+// naming: a session that died on its own has already reported, and the
+// manager has already consumed that report, so replacing it adds nothing to
+// the channel. The leftover appears when the session being replaced was
+// still alive — the previous attempt connected and then failed its Ping, or
+// its handshake failed after a live session had been torn down for it. That
+// is the flapping case, not an exotic one.
+//
+// Called between Connect and Ping on purpose. Anything in the channel at that
+// point predates the new session by construction, and Ping is what confirms
+// the new session is alive, so a genuine failure in the gap between them is
+// caught rather than swallowed.
+func (m *ReconnectManager) dropStaleDisconnect() {
+	select {
+	case err := <-m.client.OnDisconnect():
+		m.log.Debug("reconnect: dropped a disconnect from the replaced session", "err", err)
+	default:
 	}
 }
 

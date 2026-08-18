@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gotd/td/session"
 	"github.com/gotd/td/telegram"
 
 	coresync "github.com/kar43lov/lazytg/internal/core/sync"
@@ -84,5 +85,55 @@ func TestOnConnectionState_NeverBlocks(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("callback blocked with a full buffer and no reader")
+	}
+}
+
+// newTestClient builds a Client without touching the network. gotd's
+// constructor does no I/O, so this exercises the real wiring.
+func newTestClient(t *testing.T) *Client {
+	t.Helper()
+	c, err := New(ClientConfig{APIID: 1, APIHash: "hash", SessionStore: &session.StorageMemory{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return c
+}
+
+// TestClient_RotatesTheGotdClientBetweenSessions is the reason reconnect can
+// work at all. gotd's Client is single-use: Run cancels the client context on
+// the way out, so the next Run returns "client already closed" without
+// sending a packet. A supervisor that restarts sessions on one gotd client
+// would fail every time, forever, and report it as a network problem.
+func TestClient_RotatesTheGotdClientBetweenSessions(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t)
+
+	built := c.current()
+	if first := c.rotate(); first != built {
+		t.Fatal("the first session got a different client than New built — a login holding Raw() would be talking to a discarded one")
+	}
+	second := c.rotate()
+	if second == built {
+		t.Fatal("the second session reused the spent client — every reconnect would fail with \"client already closed\"")
+	}
+	if c.current() != second {
+		t.Fatal("current() did not follow the rotation")
+	}
+}
+
+// TestClient_APISurvivesRotation pins the other half. Services capture
+// Client.API() at attach time and the UI panes capture those services at
+// construction, so the object handed out has to be the same one forever —
+// swapping what it resolves to is the only safe way to reconnect underneath
+// a running TUI.
+func TestClient_APISurvivesRotation(t *testing.T) {
+	t.Parallel()
+	c := newTestClient(t)
+
+	api := c.API()
+	c.rotate()
+	c.rotate()
+	if c.API() != api {
+		t.Fatal("API() returned a new object after a reconnect — every service wired at attach would still hold the old one")
 	}
 }

@@ -60,3 +60,20 @@ func TestSessionSupervisor_AwaitPrefersALateReady(t *testing.T) {
 		t.Fatalf("await discarded a ready session that landed on the deadline: %v", err)
 	}
 }
+
+// TestSessionSupervisor_StopIsAShutdownNotAFailure pins how the reconnect
+// manager must read a stopped supervisor. Restart is called from the
+// manager's own goroutine, which is still running while the user quits, and
+// the manager's context is the TUI's rather than the session's — so without
+// context.Canceled in the chain it would treat "stopped" as one more failed
+// attempt and keep retrying against something that will never start again.
+func TestSessionSupervisor_StopIsAShutdownNotAFailure(t *testing.T) {
+	t.Parallel()
+	s := newSessionSupervisor(context.Background(), nil, slog.New(slog.DiscardHandler))
+	s.Stop()
+
+	err := s.Restart(context.Background())
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Restart after Stop = %v — reconnect will keep retrying through shutdown", err)
+	}
+}
