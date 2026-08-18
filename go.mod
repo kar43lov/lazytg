@@ -3,15 +3,15 @@ module github.com/kar43lov/lazytg
 go 1.25.0
 
 require (
-	charm.land/bubbles/v2 v2.1.0
-	charm.land/bubbletea/v2 v2.0.2
-	charm.land/lipgloss/v2 v2.0.2
+	charm.land/bubbles/v2 v2.1.1
+	charm.land/bubbletea/v2 v2.0.7
+	charm.land/lipgloss/v2 v2.0.4
 	filippo.io/age v1.3.1
 	github.com/BurntSushi/toml v1.6.0
-	github.com/charmbracelet/x/ansi v0.11.6
+	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/google/uuid v1.6.0
 	github.com/gotd/td v0.143.0
-	github.com/sahilm/fuzzy v0.1.1
+	github.com/sahilm/fuzzy v0.1.3
 	github.com/spf13/cobra v1.10.2
 	github.com/zalando/go-keyring v0.2.8
 	go.uber.org/goleak v1.3.0
@@ -26,8 +26,8 @@ require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/charmbracelet/colorprofile v0.4.2 // indirect
-	github.com/charmbracelet/ultraviolet v0.0.0-20260205113103-524a6607adb8 // indirect
+	github.com/charmbracelet/colorprofile v0.4.3 // indirect
+	github.com/charmbracelet/ultraviolet v0.0.0-20260525132238-948f4557a654 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
@@ -48,10 +48,10 @@ require (
 	github.com/gotd/neo v0.1.5 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/compress v1.18.5 // indirect
-	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
+	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-runewidth v0.0.21 // indirect
+	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/ogen-go/ogen v1.19.0 // indirect
@@ -72,7 +72,7 @@ require (
 	golang.org/x/mod v0.34.0 // indirect
 	golang.org/x/net v0.52.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/tools v0.43.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	modernc.org/libc v1.72.0 // indirect
