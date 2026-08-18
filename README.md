@@ -133,24 +133,49 @@ Anything not on this list is out of scope until it lands here — see the non-go
 - Go ≥ 1.25 to build (`go.mod` toolchain pin).
 - On Linux: a running D-Bus session with a Secret Service provider (gnome-keyring, KWallet, etc.) so the keyring can hold the passphrase for you. Headless boxes prompt for it at startup instead.
 - SQLite ≥ 3.34 is bundled by `modernc.org/sqlite` — no system SQLite required.
-- Telegram API credentials — already embedded in release binaries. Builds from source need your own in `LAZYTG_API_ID` / `LAZYTG_API_HASH` (see <https://my.telegram.org/apps>); the repository carries no key, because an `api_id` published in source is blocked by Telegram permanently.
+- Telegram API credentials — every build needs a pair, and **no lazytg build ships one, releases included**. Register an application at <https://my.telegram.org/apps> (one form, one minute) and export `LAZYTG_API_ID` / `LAZYTG_API_HASH`. A key compiled into a public binary is a published key — `strings` prints it — and Telegram blocks published keys permanently for every user of that build at once, which is why releases deliberately carry none. If that form will not issue an application for your number, which is common from some regions, [docs/INSTALL.md](docs/INSTALL.md#when-mytelegramorg-will-not-issue-credentials) lists what actually works. `lazytg version` prints which of the three sources is in effect, so "is it me or the build?" is one command.
 
-## Quickstart (2 steps)
+## Quickstart
+
+> **No release is tagged yet**, so `brew`, `.deb`, `.rpm`, the releases page and
+> `go install …@latest` have nothing to serve. Until the first tag there are
+> exactly two ways to get lazytg: build it, or have someone hand you a binary
+> they built. Both are below, and neither takes more than a few minutes.
+
+**Build it yourself** — needs Go ≥ 1.25 and takes about a minute:
 
 ```sh
-# 1. install — release binaries ship with API credentials embedded
-brew install kar43lov/lazytg/lazytg
+git clone https://github.com/kar43lov/lazytg.git && cd lazytg
+make build                             # → bin/lazytg
 
-# 2. log in (phone → code → 2FA)
-lazytg login --account +71234567890
-# → Telegram sends a code, lazytg prompts for it
-# → If 2FA is enabled, lazytg asks for the cloud password (no echo)
+# Telegram API credentials: register an app once at https://my.telegram.org/apps
+export LAZYTG_API_ID=1234567
+export LAZYTG_API_HASH=0123456789abcdef0123456789abcdef
 
-lazytg                                 # opens the TUI
+./bin/lazytg login --account +71234567890
+# → Telegram sends a code (usually to the Telegram app on your other devices,
+#   not by SMS — the prompt says which), then the 2FA password if you have one
+./bin/lazytg                           # opens the TUI
 ```
 
-Other install paths (`.deb`, `.rpm`, manual signed tarball, `go install`)
-are documented in [docs/INSTALL.md](docs/INSTALL.md).
+**Got a binary from someone else** — no Go, no clone:
+
+```sh
+chmod +x lazytg
+xattr -d com.apple.quarantine lazytg   # macOS only — Gatekeeper blocks it otherwise
+./lazytg version                       # check the `api:` line first
+./lazytg login --account +71234567890
+```
+
+The `api:` line tells you whether you still need credentials of your own:
+`embedded` means they are compiled in and you need nothing, `none` means export
+`LAZYTG_API_ID` / `LAZYTG_API_HASH` as above. Why macOS blocks an unsigned
+binary, and what to do without a terminal, is in
+[docs/INSTALL.md → A binary someone built for you](docs/INSTALL.md#a-binary-someone-built-for-you).
+
+Handing a build to someone else is documented in
+[Sharing a build](#sharing-a-build); every install path that becomes available
+once a release is tagged is in [docs/INSTALL.md](docs/INSTALL.md).
 
 ## Install
 
@@ -162,19 +187,57 @@ cd lazytg
 make build          # → bin/lazytg
 ```
 
-A source build carries no API credentials — register an application at
-<https://my.telegram.org/apps> and export `LAZYTG_API_ID` / `LAZYTG_API_HASH`
-before logging in. `lazytg version` reports which credential source is active.
+`make build` is `go build -o bin/lazytg ./cmd/lazytg`; nothing else is needed,
+because the SQLite driver is pure Go (`modernc.org/sqlite`) and `CGO_ENABLED=0`
+builds work everywhere. A source build carries no API credentials — register an
+application at <https://my.telegram.org/apps> and export `LAZYTG_API_ID` /
+`LAZYTG_API_HASH` before logging in. `lazytg version` reports which credential
+source is active.
 
-Once a release is tagged, `go install github.com/kar43lov/lazytg/cmd/lazytg@latest` will also work.
+`go install github.com/kar43lov/lazytg/cmd/lazytg@latest` starts working once a
+release is tagged; today it has no version to resolve.
 
 ### Pre-built binaries
 
-Pre-built archives for `linux` and `darwin` (`amd64` + `arm64`) are published on the [Releases](https://github.com/kar43lov/lazytg/releases) page. SHA256 checksums and cosign keyless signatures are attached to every release. See [docs/VERIFY.md](docs/VERIFY.md) for the verification recipe.
+Not yet — the releases page is empty until the first tag. The pipeline that
+fills it (archives for `linux` and `darwin` × `amd64`/`arm64`, SHA256 checksums,
+cosign keyless signatures, a Homebrew tap, `.deb` and `.rpm`) is written and
+tested but has never run; what a maintainer must set up before it can is in
+[docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md). Verification recipes for
+when it does: [docs/VERIFY.md](docs/VERIFY.md).
 
 ### Encrypted database (deferred past v0.1)
 
 A `sqlcipher` build tag is reserved for the CGo-backed encrypted driver and is **not yet wired** — CGo SQLCipher integration is deferred past v0.1. The database is unencrypted regardless of build tag — rely on filesystem permissions (`0600` files / `0700` dirs, enforced by the startup permissions audit) and OS-level disk encryption.
+
+## Sharing a build
+
+lazytg is pure Go with no cgo, so one machine can build a binary for any other
+and the result is a single self-contained file — no runtime, no shared
+libraries, ~21 MB. Before the first release exists, this is how you give it to
+someone:
+
+```sh
+# 1. build for their platform — `uname -sm` on their machine says which
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o lazytg ./cmd/lazytg
+#   Darwin arm64 → darwin/arm64 · Darwin x86_64 → darwin/amd64
+#   Linux x86_64 → linux/amd64  · Linux aarch64 → linux/arm64   (no Windows target)
+
+# 2. send the file, and tell them two things:
+#    · macOS refuses it on first run — `xattr -d com.apple.quarantine lazytg`
+#    · register an app at https://my.telegram.org/apps for their own credentials
+```
+
+Credentials can be compiled in instead, so the recipient needs no setup, and
+that is the right call for a build going to one person you trust. It is
+deliberately *not* what public releases do: everyone running such a binary
+shares one `api_id` with you, and anyone can read it back out with `strings`,
+which for a public download means a published key. The full
+recipe, both trade-offs, and the macOS quarantine story are in
+[docs/INSTALL.md → Building for someone else](docs/INSTALL.md#building-for-someone-else).
+
+Use a test account first, whoever you hand this to: Telegram puts unofficial
+clients under observation ([docs/SECURITY.md](docs/SECURITY.md)).
 
 ## Authentication & sessions
 
@@ -193,7 +256,7 @@ lazytg logout   --account +71234567890   # drop the session blob
 All subcommands accept:
 
 - `--account <phone>` — phone number to operate on.
-- `--api-id` / `--api-hash` — override the API credentials for one run (takes precedence over the env vars and the embedded release key; `--api-hash` is visible in `ps`, so prefer `LAZYTG_API_HASH`).
+- `--api-id` / `--api-hash` — override the API credentials for one run (takes precedence over the env vars and over anything compiled into the binary; `--api-hash` is visible in `ps`, so prefer `LAZYTG_API_HASH`).
 - `--debug` — duplicates JSON logs to stderr in addition to the rotated file sink.
 - `--log-level debug|info|warn|error` (default `info`).
 - `--polling` — reserved, currently a no-op (wire-up deferred to a v0.1 follow-up; see CHANGELOG `Known gaps`).
@@ -231,7 +294,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full layout, dependency
 
 User docs:
 
-- [docs/INSTALL.md](docs/INSTALL.md) — every install path (brew, .deb, .rpm, manual, `go install`, build from source).
+- [docs/INSTALL.md](docs/INSTALL.md) — what works today (build from source, a binary someone built for you) and every path that opens up once a release is tagged (brew, .deb, .rpm, manual archive, `go install`), plus credentials setup and how to build for someone else's machine.
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — env vars, CLI flags, `keymap.toml`, multi-account.
 - [docs/SEARCH.md](docs/SEARCH.md) — query operators, FTS5 internals, DB-size guidance.
 - [docs/FILES.md](docs/FILES.md) — download/upload pipeline (`Ctrl+D` / `Ctrl+U`).

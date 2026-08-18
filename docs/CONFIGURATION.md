@@ -50,8 +50,8 @@ Files that may exist inside these directories:
 
 | Variable          | Purpose                                                                                                | Default / required           |
 |-------------------|--------------------------------------------------------------------------------------------------------|------------------------------|
-| `LAZYTG_API_ID`   | Telegram MTProto API ID. Get from <https://my.telegram.org/apps>.                                       | embedded in releases; **required for source builds** |
-| `LAZYTG_API_HASH` | Telegram MTProto API hash (32 hex chars).                                                              | embedded in releases; **required for source builds** |
+| `LAZYTG_API_ID`   | Telegram MTProto API ID. Get from <https://my.telegram.org/apps>.                                       | **required** — no lazytg build ships one, releases included |
+| `LAZYTG_API_HASH` | Telegram MTProto API hash (32 hex chars).                                                              | **required** — unless the binary was built with a pair compiled in |
 | `LAZYTG_DOWNLOADS`| Root directory for `Ctrl+D` file downloads. The chat title becomes a sub-folder; the filename is sanitised. | `~/Downloads/lazytg/`  |
 | `EDITOR`          | Command launched by `Ctrl+E` to compose long messages. Inherits the rest of the env (sandbox is v0.2). | `vi` if unset                |
 | `XDG_CONFIG_HOME` | Override for the config directory base.                                                                 | platform default             |
@@ -69,7 +69,7 @@ need them; `version` reports them without requiring them.
 |------------|------------|------------------------------------------------------------------------|
 | 1          | `flags`    | `--api-id` / `--api-hash`                                              |
 | 2          | `env`      | `LAZYTG_API_ID` / `LAZYTG_API_HASH`                                    |
-| 3          | `embedded` | `-ldflags` injection at release time, from repository secrets           |
+| 3          | `embedded` | `-ldflags` injection at build time. Public releases deliberately leave this empty (see [SECURITY.md](SECURITY.md#credentials-why-releases-ship-without-them)), so in practice a binary has this layer only when someone built it for you |
 
 Rules that follow from this:
 
@@ -89,8 +89,8 @@ Check what is in effect with `lazytg version`:
 api:    env (build embeds credentials: yes)
 ```
 
-The value is the source name, never the credentials. Release binaries built
-without the secrets configured report `none` and fall back to asking for the
+The value is the source name, never the credentials. Release binaries report
+`none` — that is the intended state, not a misconfiguration — and ask for the
 env vars.
 
 ---

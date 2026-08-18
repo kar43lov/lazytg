@@ -36,10 +36,12 @@ or a previous login attempt that aged out without finishing.
 
 **Symptom.** Any subcommand that opens a Telegram session refuses to start.
 
-**Diagnosis.** This binary was built from source. Release binaries carry
-credentials injected at build time; the repository does not contain them,
-because an `api_id` found in public source is blocked by Telegram forever.
-Confirm with:
+**Diagnosis.** This binary carries no credentials, which is the normal state for
+every lazytg build — releases included, deliberately: a key compiled into a
+public binary is a published key, and Telegram blocks published ones for every
+user of that build at once. The repository contains none for the same reason.
+The exception is a build someone made for you with a pair compiled in. Confirm
+which case you are in with:
 
 ```sh
 lazytg version | grep api      # → api:    none (no credentials — …)
@@ -136,6 +138,63 @@ in 2FA passwords.
 3. If the issue persists with an ASCII password, capture a
    `--log-level debug --debug` log and open an issue (the redactor will
    strip the password before write).
+
+---
+
+## Installing a binary someone sent you
+
+### macOS: "Apple could not verify 'lazytg' is free of malware"
+
+**Symptom.** A binary someone built for you refuses to launch. macOS shows
+*"Apple could not verify 'lazytg' is free of malware that may harm your Mac"*,
+or the terminal reports `zsh: killed  ./lazytg`.
+
+**Diagnosis.** Two things combine. A Go binary is only ad-hoc signed — no
+Developer ID, no notarisation — and any file that arrived through a browser,
+AirDrop or a messenger is tagged with the quarantine attribute. Gatekeeper
+refuses that pair. Confirm both:
+
+```sh
+xattr -p com.apple.quarantine lazytg   # prints a value → quarantined
+codesign -dv lazytg 2>&1 | grep Signature   # → Signature=adhoc
+```
+
+**Fix.** Remove the attribute, then run it:
+
+```sh
+xattr -d com.apple.quarantine lazytg
+chmod +x lazytg
+./lazytg version
+```
+
+Without a terminal: launch it once, let it be blocked, then System Settings →
+Privacy & Security → **Open Anyway**.
+
+This is not a lazytg-specific problem and there is nothing a build can do about
+it short of notarisation, which needs a paid Apple Developer account. Signed,
+notarised artifacts are a release-pipeline concern
+([RELEASE_PROCESS.md](RELEASE_PROCESS.md)); a binary handed over directly will
+always need this step.
+
+---
+
+### `cannot execute binary file: Exec format error`
+
+**Symptom.** The binary refuses to run on Linux with `Exec format error`, or on
+macOS with `Bad CPU type in executable`.
+
+**Diagnosis.** It was built for a different architecture — an `amd64` binary on
+an ARM machine, or the reverse. Check what you have against what you run:
+
+```sh
+file lazytg      # → ELF 64-bit LSB executable, x86-64 / Mach-O 64-bit executable arm64
+uname -sm        # → Linux aarch64 / Darwin arm64 / …
+```
+
+**Fix.** Ask for a rebuild targeting your platform — the mapping is in
+[INSTALL.md → Building for someone else](INSTALL.md#building-for-someone-else)
+— or [build from source](INSTALL.md#build-from-source) yourself, which cannot
+get this wrong.
 
 ---
 

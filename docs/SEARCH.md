@@ -173,4 +173,4 @@ Benchmark создаёт реалистичный корпус (20 чатов ×
 - [`docs/FILES.md`](FILES.md) — файлы (download/upload pipeline) — Stage 3 Tasks 6-7
 - [`docs/SECURITY.md`](SECURITY.md) — модель угроз, permissions, debug-bundle redaction
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) — слои core / storage / ui и depguard rules
-- План Stage 3: [`docs/plans/20260503-lazytg-stage3-search-files.md`](plans/20260503-lazytg-stage3-search-files.md)
+- План Stage 3: [`docs/plans/completed/20260503-lazytg-stage3-search-files.md`](plans/completed/20260503-lazytg-stage3-search-files.md)

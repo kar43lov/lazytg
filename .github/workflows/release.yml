@@ -70,13 +70,17 @@ jobs:
 
       - name: Guard Telegram API credentials
         # An unset secret expands to an empty string, which is a *valid*
-        # -ldflags value: goreleaser succeeds, the release publishes, and every
-        # binary reports `api: none` — users hit "no credentials available" on
-        # first login while CI stayed green throughout. Nothing else in the
-        # pipeline notices, so the check has to be explicit.
+        # -ldflags value: goreleaser succeeds and every binary reports
+        # `api: none`. That is the intended shape of a lazytg release — users
+        # bring their own credentials, because a key inside a public binary is a
+        # published key (docs/SECURITY.md → "Credentials: why releases ship
+        # without them"). So "neither secret set" is the expected state and only
+        # gets a note in the log.
         #
-        # Stable tags fail; prereleases warn, since an alpha built for a
-        # maintainer who exports their own credentials is still useful.
+        # What still fails the release is exactly one of the pair being set:
+        # that ships a binary whose embedded layer is half-built, and
+        # ResolveCredentials answers "build-time credentials are malformed
+        # (report this)" — an alarming error about a defect the user cannot fix.
         env:
           REF: ${{ github.ref_name }}
           LAZYTG_RELEASE_API_ID: ${{ secrets.LAZYTG_RELEASE_API_ID }}
@@ -108,12 +112,8 @@ jobs:
             echo "::error title=$MISSING missing::Only one of the two release secrets is set. That ships a binary that reports 'misconfigured: build-time credentials are malformed' on startup. Set both, or neither."
             exit 1
           fi
-          if [[ "$TAG" =~ -(alpha|beta|rc)\. ]]; then
-            echo "::warning title=release credentials unset::Prerelease $TAG will ship binaries without embedded credentials (api: none). Users must export LAZYTG_API_ID/LAZYTG_API_HASH themselves."
-            exit 0
-          fi
-          echo "::error title=release credentials unset::Stable tag $TAG would ship binaries that cannot log in out of the box (api: none). Configure both secrets and re-run via 'gh workflow run release.yml --ref $TAG'. See docs/RELEASE_PROCESS.md."
-          exit 1
+          echo "::notice title=no embedded credentials::$TAG ships binaries that report 'api: none', which is the documented default. Users export LAZYTG_API_ID/LAZYTG_API_HASH themselves; the brew caveats and docs/INSTALL.md tell them how. Set both secrets only if a release is meant to carry an application key of its own — and read docs/SECURITY.md first."
+          exit 0
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
@@ -132,11 +132,12 @@ jobs:
           # .goreleaser.yaml via `release.prerelease: auto` and
           # `brews[].skip_upload: '{{ if .Prerelease }}true{{ end }}'`.
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-          # Baked into the shipped binaries via -ldflags so users can log in
-          # without registering their own application. Absent secrets yield
-          # empty strings, which produces a working binary that asks the user
-          # for LAZYTG_API_ID/LAZYTG_API_HASH instead — degraded, not broken.
-          # Never echo these: the redaction handler covers lazytg's own logs,
-          # not workflow output.
+          # Left unset on purpose: releases ship without credentials of their
+          # own, so the binaries ask the user for LAZYTG_API_ID/LAZYTG_API_HASH.
+          # That is the documented default, not a degradation — the reasoning is
+          # in docs/SECURITY.md → "Credentials: why releases ship without them".
+          # The -ldflags wiring stays because the choice is reversible; setting
+          # both secrets bakes a pair in. Never echo them: the redaction handler
+          # covers lazytg's own logs, not workflow output.
           LAZYTG_RELEASE_API_ID: ${{ secrets.LAZYTG_RELEASE_API_ID }}
           LAZYTG_RELEASE_API_HASH: ${{ secrets.LAZYTG_RELEASE_API_HASH }}

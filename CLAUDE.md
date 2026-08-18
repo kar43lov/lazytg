@@ -65,9 +65,13 @@
 
 Планы: продуктовый — [`docs/plans/lazytg-v0.1.0.md`](docs/plans/lazytg-v0.1.0.md) (4 этапа, прошёл brainstorm + dialectic + Plan-Reviewer APPROVED); выполненные по этапам — [`docs/plans/completed/`](docs/plans/completed/).
 
-**Состояние (17.08.2026):** MTProto подключён к TUI (`cmd/lazytg/cmd/attach.go`), список чатов загружается (`internal/tg/dialogs.go` + `internal/core/sync/dialogs.go`). До этого TUI рисовал пустой локальный кеш: `SaveChat` вызывался только из тестов, загрузки диалогов в коде не было вовсе. Read + send покрыты unit-тестами и офлайн-запуском — **на живом аккаунте не проверялось ни разу**, и до первого smoke функционал рабочим не считать (`docs/MANUAL_SMOKE.md`, тестовый аккаунт — ban-risk).
+**Состояние (18.08.2026):** первый живой smoke на тестовом аккаунте пройден — логин, список чатов, чтение, отправка, live-обновления работают против реального Telegram. Он же вскрыл десяток дефектов, которых не видел ни один тест (UTC вместо локального времени, мёртвый индикатор соединения, лишние `getHistory`, сырые `user-<id>`, пустые превью); всё исправлено и влито (PR #17, #18). Мышь, выделение текста с копированием, перетаскиваемый разделитель, циклический переход по чатам — в `main`.
 
-Остаётся до v0.1.0: живой smoke, `--polling` wire-up, реальный reconnect (`reconnectAdapter.Connect` — заглушка), `updates.Manager` для gap recovery. См. `CHANGELOG.md` → Known gaps.
+🔴 **Релиза нет: тегов 0, `gh release list` пуст.** Пайплайн (goreleaser + cosign + brew/deb/rpm) написан, прогнан локально в snapshot, но на теге не запускался ни разу. Tap `kar43lov/homebrew-lazytg` создан 18.08.2026; остаётся secret `HOMEBREW_TAP_GITHUB_TOKEN` (PAT с `contents: write` на tap) и сам тег. Отсюда правило для доков: **не описывать релизные пути как доступные** — до первого тега рабочих способов ровно два, сборка из исходников и переданный вручную бинарник (`README.md` → Sharing a build, `docs/INSTALL.md`).
+
+🔴 **Релизы намеренно выходят без вшитых Telegram-кредов** (решение 18.08.2026): ключ в публичном бинарнике извлекается через `strings`, а опубликованный `api_id` Telegram блокирует навсегда и сразу у всех пользователей сборки. Механизм вшивания (`-ldflags` в `.goreleaser.yaml`) оставлен, secrets `LAZYTG_RELEASE_API_*` просто не заданы; гейт в `release.yml` считает пустую пару нормой и падает только на «задан ровно один». Обоснование — `docs/SECURITY.md` → Credentials: why releases ship without them. Личные креды мейнтейнера в secrets не класть.
+
+Остаётся до v0.1.0: `--polling` wire-up, реальный reconnect (`reconnectAdapter.Connect` — заглушка), `updates.Manager` для gap recovery. См. `CHANGELOG.md` → Known gaps.
 
 ---
 
