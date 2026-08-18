@@ -292,14 +292,11 @@ func TestTUISmoke(t *testing.T) {
 		t.Fatalf("expected thread to render Bob's message; got:\n%s", ap.View().Content)
 	}
 
-	// Tab focuses the input pane.
-	tab := tea.KeyPressMsg{Code: tea.KeyTab}
-	model, cmd = model.Update(tab)
-	if cmd != nil {
-		model, _ = runCmd(t, model, cmd)
-	}
+	// Picking a chat leaves focus on the composer, so typing can start
+	// immediately — no Tab in between. Asserted here rather than only in the
+	// app unit tests because this is the flow a user actually performs.
 	if model.(uiapp.App).Focus() != uiapp.FocusInput {
-		t.Fatalf("Tab should land focus on FocusInput; got %s", model.(uiapp.App).Focus())
+		t.Fatalf("selecting a chat should focus the composer; got %s", model.(uiapp.App).Focus())
 	}
 
 	// Type "hello" then Enter — input pane forwards to fakeSender.

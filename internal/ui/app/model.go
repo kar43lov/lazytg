@@ -14,6 +14,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
 	"github.com/kar43lov/lazytg/internal/core/events"
@@ -267,6 +268,29 @@ type App struct {
 	height   int
 	focus    FocusTarget
 	tooSmall bool
+
+	// chatsWidth is the user's split position, set by dragging the separator.
+	// 0 means "auto" — the 30%-of-width default. Kept as an absolute column
+	// count rather than a ratio: a drag says "this wide", and re-deriving a
+	// percentage would make the pane creep on every resize.
+	chatsWidth int
+
+	// draggingText is true while a left-button drag that started inside the
+	// thread is in progress, so motion events extend the selection instead of
+	// being ignored — and a drag that began elsewhere never does.
+	draggingText bool
+
+	// lastClickAt / lastClickCell power double-click detection: bubbletea
+	// reports individual presses, so "the same spot twice, quickly" has to be
+	// recognised here. Zero time means "no click yet".
+	lastClickAt   time.Time
+	lastClickCell [2]int
+
+	// draggingSep is true between pressing the separator and releasing the
+	// button. It is what lets the pointer wander off the one-column-wide
+	// separator mid-drag without the drag being dropped — nobody can keep a
+	// pointer inside a single column while moving it.
+	draggingSep bool
 
 	keymap keymap.Keymap
 	bus    *events.Bus

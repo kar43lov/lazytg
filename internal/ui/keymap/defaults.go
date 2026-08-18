@@ -22,6 +22,8 @@ type Keymap struct {
 	ToggleHelp  key.Binding
 	FocusNext   key.Binding
 	FocusPrev   key.Binding
+	NextChat    key.Binding
+	PrevChat    key.Binding
 	ScrollUp    key.Binding
 	ScrollDown  key.Binding
 	Search      key.Binding
@@ -64,6 +66,22 @@ func Default() Keymap {
 		FocusPrev: key.NewBinding(
 			key.WithKeys("shift+tab"),
 			key.WithHelp("shift+tab", "focus prev"),
+		),
+		// Chat cycling is global on purpose: it works from the composer too, so
+		// switching conversations never costs a focus change first.
+		//
+		// ctrl+tab reaches the application only in terminals that implement key
+		// disambiguation (the Kitty keyboard protocol — Ghostty, kitty, WezTerm,
+		// recent iTerm2); elsewhere the terminal sends a plain tab and focus
+		// cycling takes it. The alt+n / alt+p aliases are the portable path, and
+		// keymap.toml can rebind either.
+		NextChat: key.NewBinding(
+			key.WithKeys("ctrl+tab", "alt+n"),
+			key.WithHelp("ctrl+tab/alt+n", "next chat"),
+		),
+		PrevChat: key.NewBinding(
+			key.WithKeys("ctrl+shift+tab", "alt+p"),
+			key.WithHelp("ctrl+shift+tab/alt+p", "prev chat"),
 		),
 		ScrollUp: key.NewBinding(
 			key.WithKeys("ctrl+b", "pgup"),

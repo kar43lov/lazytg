@@ -92,7 +92,11 @@ func (m Model) renderResults() string {
 // wrapping search.Hit before passing it in (Stage 4). For Stage 3
 // the user can correlate the chat-id with the chats pane.
 func formatHit(hit search.Hit) string {
-	meta := fmt.Sprintf("chat=%d  %s", hit.ChatID, hit.Message.Date.Format("2006-01-02 15:04"))
+	// Local(), for the same reason as the thread header: search hits carry the
+	// stored UTC instant, and a result row dated three hours off is worse here
+	// than in the thread — the timestamp is the only thing telling two similar
+	// hits apart.
+	meta := fmt.Sprintf("chat=%d  %s", hit.ChatID, hit.Message.Date.Local().Format("2006-01-02 15:04"))
 	snippet := renderSnippet(hit.Snippet)
 	if snippet == "" {
 		snippet = hit.Message.Text

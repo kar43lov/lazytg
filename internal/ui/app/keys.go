@@ -19,6 +19,20 @@ type focusCycledMsg struct{ Direction int }
 type helpToggledMsg struct{}
 
 // cmdNextFocus advances focus to the next FocusTarget in spatial order.
+// chatCycledMsg is emitted by cmdNextChat / cmdPrevChat. Chat switching is a
+// global gesture — it works from the composer, so a conversation can be changed
+// mid-sentence without a focus dance first — and going through a Cmd keeps it
+// observable in tests, the same way focus cycling does.
+type chatCycledMsg struct{ Delta int }
+
+func cmdNextChat() tea.Cmd {
+	return func() tea.Msg { return chatCycledMsg{Delta: +1} }
+}
+
+func cmdPrevChat() tea.Cmd {
+	return func() tea.Msg { return chatCycledMsg{Delta: -1} }
+}
+
 func cmdNextFocus() tea.Cmd {
 	return func() tea.Msg { return focusCycledMsg{Direction: +1} }
 }

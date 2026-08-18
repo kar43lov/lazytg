@@ -78,6 +78,11 @@ type Chat struct {
 	LastMessageDate time.Time
 	UnreadCount     int
 	Pinned          bool
+
+	// LastMessagePreview is the text of the chat's newest cached message,
+	// filled by the read path only (GetChats) and ignored on write. It is a
+	// display convenience, not part of the stored chat row.
+	LastMessagePreview string
 }
 
 // Message is a stored message belonging to a Chat. RawBlob holds the

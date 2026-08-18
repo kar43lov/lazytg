@@ -77,8 +77,18 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
 	case tea.WindowSizeMsg:
 		return a.handleResize(m), nil
+	case tea.MouseClickMsg:
+		return a.handleMouseClick(m)
+	case tea.MouseWheelMsg:
+		return a.handleMouseWheel(m)
+	case tea.MouseMotionMsg:
+		return a.handleMouseMotion(m)
+	case tea.MouseReleaseMsg:
+		return a.handleMouseRelease(m)
 	case focusCycledMsg:
 		return a.applyFocusChange(m.Direction), nil
+	case chatCycledMsg:
+		return a.handleChatCycled(m)
 	case helpToggledMsg:
 		a.help.Visible = !a.help.Visible
 		return a, nil
@@ -306,6 +316,14 @@ func (a App) handleChatSelected(msg chats.ChatSelectedMsg) (tea.Model, tea.Cmd) 
 	if title, ok := a.chatTitle(msg.ChatID); ok {
 		a.status.ChatTitle = title
 	}
+
+	a = a.applyDirectory(msg.ChatID)
+
+	// Picking a chat is the start of writing in it, so the composer takes
+	// focus and the next keystroke is text rather than a list navigation key.
+	// This is what every chat client does and what the pane cycle made
+	// awkward: pick a chat, then Tab twice before you can type.
+	a = a.setFocus(FocusInput)
 
 	return a, tea.Batch(cmds...)
 }
@@ -636,6 +654,10 @@ func (a App) applySearchJumpLoaded(msg searchJumpLoadedMsg) (tea.Model, tea.Cmd)
 	}
 	a.thread = a.thread.LoadJumpWindow(msg.ChatID, msg.Messages, msg.MessageID, jumpAround)
 	a.pendingScroll = nil
+	// Names, but not focus: a jump lands the user on a specific message to
+	// read, so the thread keeps the cursor. Only the chat-picking paths move
+	// it to the composer.
+	a = a.applyDirectory(msg.ChatID)
 	return a, nil
 }
 
@@ -763,6 +785,12 @@ func (a App) handlePaletteSelected(msg palette.SelectedMsg) (tea.Model, tea.Cmd)
 		a.status.ChatTitle = title
 	}
 
+	// A palette pick is a chat pick: same directory refresh and same landing
+	// spot for the cursor. Diverging here is how one entry point ends up
+	// showing "user-8385473863" while the other shows names.
+	a = a.applyDirectory(chatID)
+	a = a.setFocus(FocusInput)
+
 	if a.paletteFrecency != nil {
 		fr := a.paletteFrecency
 		log := a.log
@@ -875,6 +903,42 @@ func (a App) chatTitle(id int64) (string, bool) {
 	return "", false
 }
 
+// handleChatCycled moves the chat-list selection by one and opens what it lands
+// on. The pane's own order is authoritative — pinned first, then by last
+// message, the same order the list renders — so "next" is what the user sees,
+// and the selection wraps rather than stopping at the ends.
+func (a App) handleChatCycled(msg chatCycledMsg) (tea.Model, tea.Cmd) {
+	updated, cmd, ok := a.chats.CycleSelection(msg.Delta)
+	if !ok {
+		return a, nil
+	}
+	a.chats = updated
+	return a, cmd
+}
+
+// applyDirectory hands the thread pane the names it needs to label senders and
+// tells it whether the open chat is 1:1.
+//
+// The chat list is the only sender directory v0.1 has: storage keeps peer ids
+// and access hashes but no names, so a title is available exactly for peers the
+// user has a dialog with. That covers the other party of every private chat,
+// which is where an unnamed "user-8385473863" was most jarring.
+func (a App) applyDirectory(chatID int64) App {
+	items := a.chats.Items()
+	names := make(map[int64]string, len(items))
+	private := false
+	for _, it := range items {
+		if name := it.Name(); name != "" {
+			names[it.ID()] = name
+		}
+		if it.ID() == chatID {
+			private = it.Type() == domain.ChatTypePrivate
+		}
+	}
+	a.thread = a.thread.SetDirectory(names, private)
+	return a
+}
+
 // handleResize updates the cached dimensions, recomputes per-pane sizes, and
 // flips the small-terminal flag. Called from Update on tea.WindowSizeMsg.
 func (a App) handleResize(msg tea.WindowSizeMsg) App {
@@ -883,27 +947,24 @@ func (a App) handleResize(msg tea.WindowSizeMsg) App {
 	if a.tooSmall {
 		return a
 	}
+	// Re-clamp the dragged split against the new width: a split that was
+	// comfortable in a wide window can leave the thread one column wide after
+	// a shrink, and 0 puts the layout back on the automatic ratio.
+	a.chatsWidth = clampChatsWidth(a.chatsWidth, a.width)
+	return a.applySizes()
+}
 
-	chatsW := a.width * 30 / 100
-	if chatsW < 20 {
-		chatsW = 20
-	}
-	threadW := a.width - chatsW - 1 // -1 for the vertical separator column.
-	if threadW < 1 {
-		threadW = 1
-	}
+// applySizes pushes the current geometry into every pane. Split out of
+// handleResize because dragging the separator changes the geometry without a
+// terminal resize, and both paths must size the panes identically.
+func (a App) applySizes() App {
+	l := computeLayout(a.width, a.height, a.chatsWidth)
 
-	const (
-		statusH = 1
-		inputH  = 3
-	)
-	paneH := a.height - statusH - inputH
-	if paneH < 1 {
-		paneH = 1
-	}
-
-	a.chats = a.chats.SetSize(chatsW, paneH)
-	a.thread = a.thread.SetSize(threadW, paneH)
+	a.chats = a.chats.SetSize(l.chatsW, l.paneH)
+	// Re-wrapping moves every character in the thread, so a highlight recorded
+	// in line/column cells now covers different text. Dragging the separator
+	// with a selection on screen made it crawl across unrelated lines.
+	a.thread = a.thread.ClearSelection().SetSize(l.threadW, l.paneH)
 	a.input = a.input.SetWidth(a.width)
 	a.search = a.search.SetSize(a.width, a.height)
 	a.palette = a.palette.SetSize(a.width, a.height)
@@ -965,6 +1026,10 @@ func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 			return cmd, true
 		}
 		return nil, true
+	case key.Matches(k, a.keymap.NextChat):
+		return cmdNextChat(), true
+	case key.Matches(k, a.keymap.PrevChat):
+		return cmdPrevChat(), true
 	case key.Matches(k, a.keymap.FocusNext):
 		return cmdNextFocus(), true
 	case key.Matches(k, a.keymap.FocusPrev):
@@ -1079,7 +1144,14 @@ func (a App) applyScrollKey(k tea.KeyPressMsg) (App, tea.Cmd, bool) {
 func (a App) applyFocusChange(dir int) App {
 	const total = 3 // FocusChats / FocusInput / FocusThread.
 	next := (int(a.focus) + dir + total) % total
-	a.focus = FocusTarget(next)
+	return a.setFocus(FocusTarget(next))
+}
+
+// setFocus moves focus to an explicit target and syncs every pane's focus flag.
+// Cycling (Tab) and pointing (a click) both land here, so the two cannot drift
+// into different notions of "focused".
+func (a App) setFocus(target FocusTarget) App {
+	a.focus = target
 	a.chats = a.chats.SetFocus(a.focus == FocusChats)
 	a.input = a.input.SetFocus(a.focus == FocusInput)
 	a.thread = a.thread.SetFocus(a.focus == FocusThread)

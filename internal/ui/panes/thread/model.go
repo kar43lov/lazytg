@@ -65,8 +65,28 @@ type Model struct {
 
 	viewport viewport.Model
 	chatID   int64
-	messages []domain.Message
-	outgoing []OutgoingMessage
+
+	// sel is the in-progress or finished text selection, nil when nothing is
+	// selected. Held as a pointer so the zero Model has no selection without a
+	// separate flag.
+	sel *selection
+
+	// dragCache holds the rendered body for the duration of a drag. Re-rendering
+	// every message on every mouse-motion event measured at 3.1ms of the 4.1ms
+	// each event costs on a 200-message page (BenchmarkRenderContent vs
+	// BenchmarkApplySelectionOnly) — at 60 events per second that is a quarter
+	// of a core spent re-formatting text that did not change, on the goroutine
+	// the whole UI runs on. The trade-off is deliberate and bounded: a message
+	// arriving mid-drag becomes visible when the drag ends.
+	dragCache *renderedThread
+
+	// authorNames maps a sender id to a display name, supplied by the app from
+	// the chat list. Private tells resolveAuthor it may treat "not the peer" as
+	// "the reader"; both are refreshed by SetDirectory when a chat is opened.
+	authorNames map[int64]string
+	private     bool
+	messages    []domain.Message
+	outgoing    []OutgoingMessage
 	// pendingServerIDs maps localID → serverID for sent optimistic
 	// rows whose server-echo MessageReceived has not yet arrived. Used
 	// by applyIncoming to dedupe — the next live event with that
@@ -174,6 +194,7 @@ func (m Model) Init() tea.Cmd { return nil }
 // otherwise race against their own previous loads.
 func (m Model) OpenChat(chatID int64) (Model, tea.Cmd) {
 	m.loadGen++
+	m = m.dropSelection()
 	m.chatID = chatID
 	m.messages = nil
 	m.outgoing = nil
@@ -211,6 +232,7 @@ func (m Model) OpenChat(chatID int64) (Model, tea.Cmd) {
 // failure recovery symmetric.
 func (m Model) ReloadAfterJumpFailure(chatID int64) (Model, tea.Cmd) {
 	m.loadGen++
+	m = m.dropSelection()
 	m.chatID = chatID
 	m.messages = nil
 	m.oldestID = 0
@@ -273,7 +295,13 @@ func (m Model) YOffset() int { return m.viewport.YOffset() }
 func (m Model) SetSize(width, height int) Model {
 	m.Width = width
 	m.Height = height
-	w := width
+	// The app wraps this pane in a lipgloss box of exactly `width` columns with
+	// one column of padding on each side, so the body has two fewer columns to
+	// work with. Handing the viewport the full width made every long line two
+	// columns too wide: lipgloss then wrapped the overflow onto its own line,
+	// which pushed the rows below out of the box — text simply vanished off the
+	// bottom as the separator was dragged.
+	w := width - paneHPadding
 	if w < minViewportWidth {
 		w = minViewportWidth
 	}
@@ -287,6 +315,17 @@ func (m Model) SetSize(width, height int) Model {
 	if len(m.messages) > 0 {
 		m.viewport.SetContent(m.renderAll())
 	}
+	return m
+}
+
+// SetDirectory supplies what the pane needs to name senders: display names
+// keyed by sender id (the app takes them from the loaded chat list) and whether
+// the open chat is a 1:1 dialog. Called on every chat switch — the names map is
+// shared by reference and must not be mutated afterwards.
+func (m Model) SetDirectory(names map[int64]string, private bool) Model {
+	m.authorNames = names
+	m.private = private
+	m.viewport.SetContent(m.renderAll())
 	return m
 }
 
@@ -380,21 +419,43 @@ func (m Model) ScrollTo(messageID int64, around int) Model {
 // regular history because they are always the most recent thing the
 // user did — sticky-bottom rendering matches the user's mental model.
 func (m Model) renderAll() string {
-	var b strings.Builder
-	width := m.viewport.Width()
-	for i, msg := range m.messages {
-		if i > 0 {
-			b.WriteString("\n\n")
-		}
-		b.WriteString(FormatMessage(msg, width, nil))
+	content, spans := m.renderContent()
+	if m.sel == nil {
+		return content
 	}
-	for _, out := range m.outgoing {
+	return applySelection(content, spans, *m.sel)
+}
+
+// renderContent builds the thread body and, alongside it, the line range each
+// message occupies. The spans are what turns a pointer position into "this
+// message", so they are produced by the renderer itself rather than
+// re-derived: a second implementation of the same layout would drift, and the
+// drift would show up as selecting the wrong message.
+func (m Model) renderContent() (string, []blockSpan) {
+	if m.dragCache != nil {
+		return m.dragCache.content, m.dragCache.spans
+	}
+	var b strings.Builder
+	spans := make([]blockSpan, 0, len(m.messages)+len(m.outgoing))
+	width := m.viewport.Width()
+	line := 0
+	appendBlock := func(rendered string) {
 		if b.Len() > 0 {
 			b.WriteString("\n\n")
+			line += 2
 		}
-		b.WriteString(RenderOptimistic(out))
+		b.WriteString(rendered)
+		height := strings.Count(rendered, "\n") + 1
+		spans = append(spans, blockSpan{start: line, end: line + height})
+		line += height - 1
 	}
-	return b.String()
+	for _, msg := range m.messages {
+		appendBlock(formatMessageAs(msg, width, nil, resolveAuthor(msg, m.chatID, m.private, m.authorNames)))
+	}
+	for _, out := range m.outgoing {
+		appendBlock(RenderOptimistic(out))
+	}
+	return b.String(), spans
 }
 
 // Outgoing returns a copy of the optimistic-UI entries currently
@@ -429,6 +490,7 @@ func (m Model) Outgoing() []OutgoingMessage {
 // jump window with the chat's tail.
 func (m Model) SwitchTo(chatID int64) Model {
 	m.loadGen++
+	m = m.dropSelection()
 	m.chatID = chatID
 	m.messages = nil
 	m.outgoing = nil
@@ -492,6 +554,7 @@ func (m Model) SwitchTo(chatID int64) Model {
 // manual reload.
 func (m Model) LoadJumpWindow(chatID int64, messages []domain.Message, scrollToID int64, around int) Model {
 	m.loadGen++
+	m = m.dropSelection()
 	m.chatID = chatID
 
 	var maxWindowID int64
@@ -670,3 +733,7 @@ func (m *Model) recomputeOldestID() {
 	}
 	m.oldestID = oldest
 }
+
+// paneHPadding mirrors the chats pane's constant: the app renders both panes in
+// a box with one column of padding per side.
+const paneHPadding = 2

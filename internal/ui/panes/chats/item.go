@@ -35,6 +35,10 @@ type ChatItem struct {
 // the caller). preview can be empty for a freshly-discovered chat that has
 // no cached messages yet.
 func NewChatItem(c domain.Chat, preview string) ChatItem {
+	// A preview is one row in a list: newlines from a multi-line message would
+	// push every chat below it down and break the row arithmetic the mouse
+	// hit-test relies on.
+	preview = strings.Join(strings.Fields(preview), " ")
 	return ChatItem{
 		id:              c.ID,
 		name:            c.Title,

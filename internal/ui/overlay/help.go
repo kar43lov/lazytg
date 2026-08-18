@@ -92,6 +92,8 @@ func (h Help) rows() []row {
 		{"toggle help", h.Keymap.ToggleHelp},
 		{"focus next", h.Keymap.FocusNext},
 		{"focus prev", h.Keymap.FocusPrev},
+		{"next chat", h.Keymap.NextChat},
+		{"prev chat", h.Keymap.PrevChat},
 		{"scroll up", h.Keymap.ScrollUp},
 		{"scroll down", h.Keymap.ScrollDown},
 		{"search", h.Keymap.Search},

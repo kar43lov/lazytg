@@ -61,6 +61,11 @@ type Model struct {
 	log   *slog.Logger
 	chats []ChatItem
 
+	// itemRows is how many terminal rows one list row occupies, captured
+	// from the delegate at construction (bubbles exposes no getter on
+	// list.Model). Mouse hit-testing needs it; see mouse.go.
+	itemRows int
+
 	// reloadGeneration is incremented every time a DialogUpdated arrives.
 	// reloadDebouncedMsg with a stale generation is dropped so only the
 	// most recent tick performs the repo read.
@@ -92,9 +97,10 @@ func newModel(repo Repository, log *slog.Logger) Model {
 	l.SetShowPagination(false)  // few-dozen-chats lists fit in one page
 	l.SetFilteringEnabled(true) // keep the built-in '/' filter
 	return Model{
-		list: l,
-		repo: repo,
-		log:  log,
+		list:     l,
+		repo:     repo,
+		log:      log,
+		itemRows: delegate.Height() + delegate.Spacing(),
 	}
 }
 
@@ -133,7 +139,12 @@ func (m Model) SelectedItem() (ChatItem, bool) {
 func (m Model) SetSize(width, height int) Model {
 	m.Width = width
 	m.Height = height
-	w := width
+	// Two columns go to the pane box's padding (see paneHPadding): the bubbles
+	// delegate truncates to whatever width it is given, so a list sized to the
+	// full pane produced rows two columns too wide, which lipgloss wrapped onto
+	// a second line. That turned a two-row item into three, shifted every row
+	// below it, and pushed the last chat out of the pane entirely.
+	w := width - paneHPadding
 	if w < minListWidth {
 		w = minListWidth
 	}
@@ -168,7 +179,7 @@ func loadCmd(repo Repository) tea.Cmd {
 		}
 		items := make([]ChatItem, 0, len(raw))
 		for _, c := range raw {
-			items = append(items, NewChatItem(c, ""))
+			items = append(items, NewChatItem(c, c.LastMessagePreview))
 		}
 		sortChatItems(items)
 		return chatsLoadedMsg{items: items}
@@ -193,3 +204,10 @@ func sortChatItems(items []ChatItem) {
 		return a.id < b.id
 	})
 }
+
+// paneHPadding is how many columns the app's pane box takes for its own
+// horizontal padding (one on each side). Declared here rather than imported
+// from the app package: internal/ui/app already imports this package, and the
+// value is part of the contract SetSize is given, not a layout decision the
+// pane makes.
+const paneHPadding = 2
