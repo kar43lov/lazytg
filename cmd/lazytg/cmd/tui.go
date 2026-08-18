@@ -20,12 +20,14 @@ import (
 
 // initialConnState maps the attach outcome onto the connection indicator.
 //
-// statusbar.New starts at "connecting", and in v0.1 nothing ever moves it off:
-// events.ConnectionStateChanged is published only by ReconnectManager, which
-// runs on reconnect attempts and not on the initial attach. So a fully working
-// session showed a yellow "connecting" for the whole run, and an offline one
-// claimed it was still trying — the indicator was decorative. Found on the
-// first live smoke.
+// statusbar.New starts at "connecting" and events.ConnectionStateChanged is
+// published only by ReconnectManager, which reports what the transport does
+// from the moment startReconnect launches it — not before. Seeding the state
+// from the attach outcome covers that first gap: without it a fully working
+// session showed a yellow "connecting" until the connection first changed,
+// and an offline one claimed it was still trying. Found on the first live
+// smoke, when the manager was never started at all and the seed was the only
+// value the indicator ever had.
 func initialConnState(attached bool) string {
 	if attached {
 		return statusbar.StateOnline

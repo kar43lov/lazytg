@@ -3,6 +3,7 @@ package tg
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -167,4 +168,150 @@ func drainEvents(t *testing.T, ch <-chan events.Event, n int, total time.Duratio
 		}
 	}
 	return out
+}
+
+// TestPollingFallback_HonoursTheStoredWatermark covers the two update paths
+// running at once. The fallback polls and lands on message 8, so its own
+// watermark is 8. The live dispatcher then delivers message 9 and it gets
+// persisted, which makes the source report 9 as LastSeenID on the next tick.
+// Preferring the in-memory watermark there republishes message 9 — the
+// fallback generating duplicates of exactly the traffic it exists to back up,
+// once per tick for as long as that chat stays quiet.
+func TestPollingFallback_HonoursTheStoredWatermark(t *testing.T) {
+	t.Parallel()
+
+	bus := events.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ch := bus.Subscribe(ctx)
+
+	source := &fakeActiveSource{chats: []PolledChat{{ChatID: 7}}}
+	fetcher := &fakeFetcher{
+		answers: map[int64][]events.MessageReceived{
+			7: {{ChatID: 7, MessageID: 8, Text: "found by polling"}},
+		},
+		latest: map[int64]int64{7: 8},
+	}
+	fb := NewPollingFallback(source, fetcher, bus, nil, 5*time.Millisecond)
+	go func() { _ = fb.Run(ctx) }()
+
+	// Tick one: the fallback finds message 8 itself and sets its watermark.
+	first := drainEvents(t, ch, 1, time.Second)
+	if got := first[0].(events.MessageReceived).MessageID; got != 8 {
+		t.Fatalf("first event = %d want 8", got)
+	}
+
+	// The live path now delivers message 9 and stores it, so the source —
+	// which reads the mirror — starts reporting it as the newest seen.
+	source.mu.Lock()
+	source.chats = []PolledChat{{ChatID: 7, LastSeenID: 9}}
+	source.mu.Unlock()
+	fetcher.mu.Lock()
+	fetcher.answers[7] = append(fetcher.answers[7],
+		events.MessageReceived{ChatID: 7, MessageID: 9, Text: "delivered by the dispatcher"})
+	fetcher.latest[7] = 9
+	fetcher.mu.Unlock()
+
+	time.Sleep(60 * time.Millisecond)
+	select {
+	case ev := <-ch:
+		t.Fatalf("republished a message the live path had already stored: %+v", ev)
+	default:
+	}
+}
+
+// countingHandler counts slog records by level so a test can assert on log
+// volume rather than on log text.
+type countingHandler struct {
+	mu     sync.Mutex
+	counts map[slog.Level]int
+}
+
+func newCountingHandler() *countingHandler {
+	return &countingHandler{counts: make(map[slog.Level]int)}
+}
+
+func (h *countingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *countingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.counts[r.Level]++
+	return nil
+}
+
+func (h *countingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *countingHandler) WithGroup(string) slog.Handler      { return h }
+
+func (h *countingHandler) count(l slog.Level) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.counts[l]
+}
+
+// TestPollingFallback_DoesNotFloodTheLogDuringAnOutage covers what a dropped
+// connection does to a fallback that keeps ticking. Every poll fails for
+// every polled chat, so warning on each one is 60 lines a minute — enough to
+// rotate the log file and carry off the diagnostics that explain the outage.
+// One warn opens the streak, the rest are debug.
+func TestPollingFallback_DoesNotFloodTheLogDuringAnOutage(t *testing.T) {
+	t.Parallel()
+
+	handler := newCountingHandler()
+	source := &fakeActiveSource{chats: []PolledChat{{ChatID: 7}}}
+	fetcher := &fakeFetcher{err: errors.New("network down")}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	fb := NewPollingFallback(source, fetcher, events.New(), slog.New(handler), time.Millisecond)
+	go func() { _ = fb.Run(ctx) }()
+
+	time.Sleep(80 * time.Millisecond)
+	cancel()
+
+	if got := handler.count(slog.LevelWarn); got != 1 {
+		t.Fatalf("warn lines = %d want exactly 1 for one failure streak", got)
+	}
+	if handler.count(slog.LevelDebug) == 0 {
+		t.Fatal("no debug lines — the repeated failures went unrecorded entirely")
+	}
+}
+
+// TestPollingFallback_DedupesAgainstTheLivePath closes the overlap the
+// watermarks cannot. The source reads the store's newest id, then the poll
+// makes a network call, and a live update landing in that window is newer
+// than the watermark the call was made with — so the fallback republishes a
+// message the push path has just shown. One filter across both paths is what
+// makes "appears exactly once" true rather than merely likely.
+func TestPollingFallback_DedupesAgainstTheLivePath(t *testing.T) {
+	t.Parallel()
+
+	bus := events.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ch := bus.Subscribe(ctx)
+
+	dispatcher := NewUpdatesDispatcher(bus, nil)
+	// The live path published message 9 while the poll below was in flight.
+	if dispatcher.SeenMessage(7, 9) {
+		t.Fatal("dispatcher reported an unseen message as seen")
+	}
+
+	source := &fakeActiveSource{chats: []PolledChat{{ChatID: 7}}}
+	fetcher := &fakeFetcher{
+		answers: map[int64][]events.MessageReceived{
+			7: {{ChatID: 7, MessageID: 9, Text: "already delivered by the dispatcher"}},
+		},
+		latest: map[int64]int64{7: 9},
+	}
+	fb := NewPollingFallback(source, fetcher, bus, nil, 5*time.Millisecond).
+		WithDeduper(dispatcher)
+	go func() { _ = fb.Run(ctx) }()
+
+	time.Sleep(60 * time.Millisecond)
+	select {
+	case ev := <-ch:
+		t.Fatalf("published a message the live path had already shown: %+v", ev)
+	default:
+	}
 }

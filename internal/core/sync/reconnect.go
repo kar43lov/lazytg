@@ -46,6 +46,21 @@ type ReconnectClient interface {
 	OnDisconnect() <-chan error
 }
 
+// ConnectionStateReporter is the optional second half of ReconnectClient: a
+// client that can describe transport-level state on its own. The MTProto
+// library reconnects inside an active session without the run loop ever
+// returning, so a client that only signals OnDisconnect leaves the status
+// indicator frozen through an entire outage and moves it only when the
+// session dies outright.
+//
+// Implementations return a channel of the ConnectionState* values above; the
+// channel must never be closed while the client is in use, and it may drop
+// intermediate values (only the current state is interesting). Returning nil
+// means "this client cannot report state", which is not an error.
+type ConnectionStateReporter interface {
+	ConnectionStates() <-chan string
+}
+
 // ReconnectConfig groups the optional knobs so the constructor signature
 // stays stable. Zero values fall back to documented defaults — 1s/60s
 // matches what gotd's own samples use, with ±10% jitter to avoid
@@ -123,6 +138,16 @@ func NewReconnectManager(client ReconnectClient, bus *events.Bus, log *slog.Logg
 //  4. context.Canceled disconnect errors are treated as user-initiated
 //     shutdown — no reconnect attempt is made.
 func (m *ReconnectManager) Run(ctx context.Context) error {
+	// Transport-level transitions (step 0, effectively) are pumped in
+	// parallel: the retry loop below blocks for as long as a backoff lasts,
+	// and a state feed that is only read between disconnects would deliver
+	// an outage's worth of news minutes late.
+	if reporter, ok := m.client.(ConnectionStateReporter); ok {
+		if states := reporter.ConnectionStates(); states != nil {
+			go m.pumpStates(ctx, states)
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -166,6 +191,7 @@ func (m *ReconnectManager) retry(ctx context.Context) error {
 			backoff = nextBackoff(backoff, m.cfg.MaxBackoff)
 			continue
 		}
+		m.dropStaleDisconnect()
 		if err := m.client.Ping(ctx); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
@@ -181,6 +207,69 @@ func (m *ReconnectManager) retry(ctx context.Context) error {
 		m.log.Info("reconnect: online", "attempt", attempt)
 		m.publish(ConnectionStateOnline)
 		return nil
+	}
+}
+
+// pumpStates republishes the client's own connection-state feed onto the bus
+// until ctx is cancelled. Repeats are swallowed: gotd reports "connecting"
+// once per attempt, and a run of identical events would wake every bus
+// subscriber (the whole UI included) to redraw a cell that did not change.
+//
+// The pump and the retry loop below can both publish. That is deliberate and
+// not a race for correctness: they describe the same connection, the pump
+// while the run loop is alive and the retry loop once it is not, and a status
+// indicator only ever shows the most recent value.
+func (m *ReconnectManager) pumpStates(ctx context.Context, states <-chan string) {
+	last := ""
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case state, ok := <-states:
+			if !ok {
+				return
+			}
+			if state == "" || state == last {
+				continue
+			}
+			last = state
+			m.log.Debug("reconnect: transport state", "state", state)
+			m.publish(state)
+		}
+	}
+}
+
+// dropStaleDisconnect discards a disconnect signal left over from the session
+// Connect just replaced. Standing a new session up means tearing the old one
+// down, and that teardown reports itself on the same channel — so without
+// this, the loop below reads its own doing as a fresh failure the moment it
+// finishes recovering.
+//
+// The consequences were not subtle. A cancelled run loop reports
+// context.Canceled, which Run treats as user-initiated shutdown, so the
+// manager returned and no further disconnect was ever handled: reconnection
+// worked exactly once per process. A failed attempt instead leaves a real
+// error behind, and that one sends the manager into a cycle of tearing down
+// the session it had just brought back — an account logging in over and over
+// on a client Telegram already watches for being unofficial.
+//
+// The trigger is narrower than "any reconnect", which is why it is worth
+// naming: a session that died on its own has already reported, and the
+// manager has already consumed that report, so replacing it adds nothing to
+// the channel. The leftover appears when the session being replaced was
+// still alive — the previous attempt connected and then failed its Ping, or
+// its handshake failed after a live session had been torn down for it. That
+// is the flapping case, not an exotic one.
+//
+// Called between Connect and Ping on purpose. Anything in the channel at that
+// point predates the new session by construction, and Ping is what confirms
+// the new session is alive, so a genuine failure in the gap between them is
+// caught rather than swallowed.
+func (m *ReconnectManager) dropStaleDisconnect() {
+	select {
+	case err := <-m.client.OnDisconnect():
+		m.log.Debug("reconnect: dropped a disconnect from the replaced session", "err", err)
+	default:
 	}
 }
 

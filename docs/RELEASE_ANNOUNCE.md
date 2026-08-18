@@ -15,7 +15,7 @@
 ## Highlights
 
 - 🔍 **Instant search across your entire history.** SQLite FTS5 trigram-индекс локально на диске. p95 ≈ 47ms на 100k сообщений (SLA <100ms — запас 2×). Никакого зависания на серверном `messages.search`.
-- ⚡ **Live-updates < 5ms p95.** Полученное сообщение → отрисовка в TUI в среднем за 4ms (SLA <500ms — запас 100×). Через `UpdatesDispatcher` поверх gotd-хендлера; `updates.Manager` с SQLite-state написан и покрыт тестами, но в v0.1 не подключён — значит нет gap recovery после разрыва связи (см. Honesty section).
+- ⚡ **Live-updates < 5ms p95.** Полученное сообщение → отрисовка в TUI в среднем за 4ms (SLA <500ms — запас 100×). Через `updates.Manager` с SQLite-state: сообщения приходят упорядоченно, а пропуски после разрыва связи закрываются `getDifference`. Если менеджер не поднялся, обновления всё равно доставляются — теряется только восстановление пропусков (см. Honesty section).
 - 🔐 **Local-first.** История + индекс на вашем диске. Сессия — в `age`-файле `<config>/secrets.age` (0600), пароль от него генерируется один раз и лежит в OS keyring (Keychain / Secret Service); на headless-машинах пароль спрашивается при старте. Encrypted DB (`sqlcipher` build tag) отложена на v0.2 — сейчас полагаемся на permission audit (0600) + OS-level disk encryption.
 - ⌨️ **emacs/readline ввод по умолчанию + $EDITOR delegation.** `Ctrl+E` открывает `$EDITOR` для длинных сообщений. Vim-mode — opt-in в v0.2 (намеренно — половинчатая реализация даёт mode confusion, см. dialectic в плане).
 - 📥📤 **Files.** `Ctrl+D` — download с прогрессом. `Ctrl+U` — upload с file picker. Permissions автоматически `0600`.
@@ -34,6 +34,7 @@
 - **Не replacement для Telegram Desktop.** Если вы хотите stickers, voice/video calls, secret chats, inline media preview — это **не наш target**. Мы — tool для tmux-resident developers, которые хотят поиск по своим перепискам и быстрый текстовый ввод без ухода из терминала. См. ["Что НЕ делаем никогда" в CLAUDE.md](../CLAUDE.md#что-не-делаем-никогда-явный-non-goal-после-dialectic).
 - **Windows билды отложены на v0.2.** TUI keys/colors на cmd.exe требуют отдельного тестового цикла, которого у нас в v0.1 не было.
 - **Beta-period подтверждён ≥3 внешними тестерами.** Но выборка маленькая. Bug reports особенно ценны в первые недели.
+- **Gap recovery, reconnect и polling — самое молодое в релизе.** `updates.Manager`, перезапуск сессии после разрыва и `--polling` покрыты unit-тестами, но проверить их можно только на живом разрыве связи: шаги 13–14 в [MANUAL_SMOKE.md](MANUAL_SMOKE.md) — то, что стоит пройти до анонса, а не после.
 
 ---
 

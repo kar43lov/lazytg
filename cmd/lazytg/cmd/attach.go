@@ -7,6 +7,9 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/gotd/td/telegram"
+	"github.com/gotd/td/telegram/updates"
+
 	"github.com/kar43lov/lazytg/internal/app"
 	tgclient "github.com/kar43lov/lazytg/internal/tg"
 	"github.com/kar43lov/lazytg/internal/ui/input"
@@ -66,132 +69,100 @@ func attachTelegram(ctx context.Context, rt *app.App, log *slog.Logger) (stop fu
 	dispatcher := tgclient.NewUpdatesDispatcher(rt.Bus, log)
 	rt.Updates = dispatcher
 
-	client, err := newClientWithUpdates(tgclient.NewSessionStore(secrets, phone), dispatcher.HandlerFunc())
+	// The update handler is the manager when one can be built, and the bare
+	// dispatcher otherwise. The manager is a strict superset: without its Run
+	// it forwards updates exactly as the dispatcher does, and with it they
+	// arrive ordered and gaps are closed through getDifference.
+	handler, manager := updateHandler(rt, dispatcher, log)
+
+	client, err := newClientWithUpdates(tgclient.NewSessionStore(secrets, phone), handler)
 	if err != nil {
 		log.Warn("tui: cannot build telegram client, offline", "err", err)
 		return noop
 	}
 
-	// attachCtx scopes the connection attempt so it can be abandoned on
-	// timeout. Without that, a handshake completing after we gave up would call
-	// AttachClient behind the already-built UI: the panes captured their
-	// dependencies at construction and would never see the services, while the
-	// writes themselves race with the reads that already happened. Worse, the
-	// dialog sync would never start, leaving a connected session with a
-	// permanently empty chat list. Abandoning is the determinate outcome.
-	//
-	// On success the cancel travels back to the caller as `stop` instead of
-	// firing here — the session has to outlive this function.
-	attachCtx, cancelAttach := context.WithCancel(ctx)
-
-	// ready carries the outcome of the first connection attempt. Buffered so
-	// the run goroutine never blocks on a send after we stopped waiting.
-	ready := make(chan error, 1)
-	// runDone closes when the session goroutine is fully gone, so shutdown can
-	// wait for it. Without that wait, cancelling the context returns
-	// immediately and the caller proceeds to close the SQLite handle while the
-	// goroutine may still be persisting an update.
-	runDone := make(chan struct{})
-	go func() {
-		defer close(runDone)
-		runErr := client.Run(attachCtx, func(runCtx context.Context) error {
-			authorized, err := client.IsAuthorized(runCtx)
-			if err != nil {
-				ready <- fmt.Errorf("auth status: %w", err)
-				return err
-			}
-			if !authorized {
-				ready <- errNotAuthorized
-				return errNotAuthorized
-			}
-
-			// Report readiness and let the caller do the attaching. Calling
-			// AttachClient from here would race the timeout: cancelling a
-			// context does not interrupt code already running, so a handshake
-			// finishing just after the deadline would wire services onto the
-			// App while the caller was already building the UI from the
-			// offline values. The caller attaches only on the success branch
-			// of its select, which closes that window by construction rather
-			// than by a well-placed check.
-			ready <- nil
-
-			// Hold the connection open. Returning here would tear down the
-			// session the services are about to bind to.
-			<-runCtx.Done()
-			return runCtx.Err()
-		})
-		// Run can fail before the callback ever executes (DNS, handshake,
-		// migration). Report that instead of letting the wait time out.
-		select {
-		case ready <- runErr:
-		default:
-			// Nobody is waiting any more, so this is the session ending
-			// mid-flight rather than a failed handshake. It has to be logged
-			// here or it goes nowhere: reconnect is still a stub, so the
-			// services stay bound to a dead client and the user sees sends
-			// failing with no stated cause.
-			if runErr != nil && !errors.Is(runErr, context.Canceled) {
-				log.Warn("tui: telegram session ended — sends and live updates stop until restart",
-					"err", runErr)
-			}
+	// The run loop lives in a supervisor rather than a bare goroutine so a
+	// session that dies later can be stood back up. See session.go.
+	supervisor := newSessionSupervisor(ctx, client, log)
+	if manager != nil {
+		supervisor.gapRecovery = func(runCtx context.Context) error {
+			return client.RunGapRecovery(runCtx, manager)
 		}
-	}()
-
-	select {
-	case err := <-ready:
-		if err != nil {
-			cancelAttach()
-			log.Warn("tui: telegram attach failed, opening on local cache", "err", err)
-			return noop
-		}
-		// Wire the MTProto services here, on the goroutine that goes on to
-		// build the UI. Everything the panes read is written before they are
-		// constructed, so no synchronisation is needed and the timeout branch
-		// cannot leave a half-attached App behind.
-		rt.AttachClient(ctx, client)
-	case <-time.After(attachTimeout):
-		// A ready signal that landed in the same instant would otherwise be
-		// thrown away: `select` picks randomly among ready cases, so a session
-		// that connected right on the deadline could be torn down for no
-		// reason. Check once more before giving up.
-		select {
-		case err := <-ready:
-			if err == nil {
-				rt.AttachClient(ctx, client)
-				log.Info("tui: telegram session attached just before the deadline")
-				startSync(ctx, rt, log)
-				return sessionStopper(cancelAttach, runDone, log)
-			}
-			log.Warn("tui: telegram attach failed, opening on local cache", "err", err)
-		default:
-			log.Warn("tui: telegram did not connect in time, opening on local cache",
-				"waited", attachTimeout)
-		}
-		cancelAttach()
-		return noop
-	case <-ctx.Done():
-		cancelAttach()
+	}
+	if err := supervisor.Start(ctx, attachTimeout); err != nil {
+		log.Warn("tui: telegram attach failed, opening on local cache", "err", err)
 		return noop
 	}
+
+	// Wire the MTProto services here, on the goroutine that goes on to build
+	// the UI. Everything the panes read is written before they are
+	// constructed, so no synchronisation is needed and a failed attach cannot
+	// leave a half-attached App behind.
+	rt.AttachClient(ctx, client, app.WithReconnector(supervisor.Restart))
 
 	log.Info("tui: telegram session attached", "account", phone)
+	startReconnect(ctx, rt, log)
+	startPolling(ctx, rt, log)
 	startSync(ctx, rt, log)
-	return sessionStopper(cancelAttach, runDone, log)
+	return supervisor.Stop
 }
 
-// sessionStopper builds the teardown closure: cancel the session context, then
-// wait — briefly — for the goroutine to unwind. The wait matters because the
-// caller closes the SQLite handle right after, and a goroutine still persisting
-// an update would hit a closed database.
-func sessionStopper(cancel context.CancelFunc, runDone <-chan struct{}, log *slog.Logger) func() {
-	return func() {
-		cancel()
-		select {
-		case <-runDone:
-		case <-time.After(shutdownGrace):
-			log.Warn("tui: telegram session did not stop in time", "waited", shutdownGrace)
-		}
+// updateHandler picks what the client hands updates to. It returns the
+// manager separately because the caller has to start it from inside the
+// session, once the connection is up and the account id can be asked for.
+//
+// A nil manager is not an error state: it means the update state storage is
+// unavailable, and lazytg then behaves as it did for its whole first
+// release — updates are delivered as they arrive, and anything missed during
+// an outage is picked up by the dialog sync and the freshness check instead
+// of by getDifference.
+func updateHandler(rt *app.App, dispatcher *tgclient.UpdatesDispatcher, log *slog.Logger) (telegram.UpdateHandler, *updates.Manager) {
+	manager := rt.UpdatesManager(dispatcher)
+	if manager == nil {
+		log.Warn("tui: no update state storage — live updates run without gap recovery")
+		return dispatcher.HandlerFunc(), nil
 	}
+	return manager, manager
+}
+
+// startReconnect runs the reconnect state machine for the lifetime of the
+// session. It was built by AttachClient from the first commit that introduced
+// it and started by nobody, which made the whole thing inert: no reconnect
+// after a drop, and — since ReconnectManager is the only publisher of
+// events.ConnectionStateChanged — a connection indicator frozen on whatever
+// value the initial attach put there.
+func startReconnect(ctx context.Context, rt *app.App, log *slog.Logger) {
+	if rt.Reconnect == nil {
+		log.Warn("tui: reconnect manager unavailable — a dropped session will not come back")
+		return
+	}
+	go func() {
+		if err := rt.Reconnect.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Warn("tui: reconnect manager exited", "err", err)
+		}
+	}()
+}
+
+// startPolling engages the history-polling fallback, which exists only when
+// --polling was passed. Until this call the flag was a no-op: it reached
+// app.Config and stopped there, so a user who set it because live updates
+// were not arriving got exactly the behaviour they were trying to work
+// around, with no indication that nothing had changed.
+//
+// The fallback runs alongside the live dispatcher rather than replacing it.
+// The push path is the one that delivers within a second, and polling three
+// chats every three seconds is a net for what a gap-prone connection drops
+// silently — not a substitute for updates.
+func startPolling(ctx context.Context, rt *app.App, log *slog.Logger) {
+	if rt.PollingSvc == nil {
+		return
+	}
+	log.Info("tui: history polling engaged", "interval", tgclient.DefaultPollingInterval)
+	go func() {
+		if err := rt.PollingSvc.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Warn("tui: polling fallback exited", "err", err)
+		}
+	}()
 }
 
 // startSync kicks off the background work that fills the local mirror: the

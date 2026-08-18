@@ -43,6 +43,15 @@ type MessagePollingFetcher interface {
 	Latest(ctx context.Context, chat PolledChat, sinceID int64) ([]events.MessageReceived, int64, error)
 }
 
+// MessageDeduper is the cross-path duplicate filter the fallback publishes
+// through. *UpdatesDispatcher satisfies it; nil disables the check, which is
+// what the fallback's own unit tests use.
+type MessageDeduper interface {
+	// SeenMessage reports whether the message was already published by any
+	// path, recording it when it was not.
+	SeenMessage(chatID, messageID int64) bool
+}
+
 // PollingFallback drives a periodic pull of active chats when the
 // updates.Manager is unavailable. It publishes new MessageReceived
 // events onto the bus exactly like UpdatesDispatcher would, so
@@ -59,8 +68,11 @@ type PollingFallback struct {
 	log      *slog.Logger
 	interval time.Duration
 
+	dedup MessageDeduper
+
 	mu        sync.Mutex
 	watermark map[int64]int64
+	failures  map[int64]int
 }
 
 // NewPollingFallback wires a fallback. interval <= 0 falls back to
@@ -79,7 +91,17 @@ func NewPollingFallback(source PollingActiveSource, fetcher MessagePollingFetche
 		log:       log,
 		interval:  interval,
 		watermark: make(map[int64]int64),
+		failures:  make(map[int64]int),
 	}
+}
+
+// WithDeduper points the fallback at the filter the live path uses, so a
+// message cannot be published twice when both paths see it. Returns the
+// fallback for chaining. Without it the fallback still avoids repeating
+// itself between ticks, but not the one-tick overlap with push updates.
+func (p *PollingFallback) WithDeduper(d MessageDeduper) *PollingFallback {
+	p.dedup = d
+	return p
 }
 
 // Run blocks until ctx is cancelled, polling every interval. Errors are
@@ -111,10 +133,14 @@ func (p *PollingFallback) tick(ctx context.Context) {
 		since := p.since(c)
 		msgs, latest, err := p.fetcher.Latest(ctx, c, since)
 		if err != nil {
-			p.log.Warn("polling: fetch failed", "chat_id", c.ChatID, "err", err)
+			p.noteFailure(c.ChatID, err)
 			continue
 		}
+		p.noteSuccess(c.ChatID)
 		for _, m := range msgs {
+			if p.dedup != nil && p.dedup.SeenMessage(m.ChatID, m.MessageID) {
+				continue
+			}
 			p.bus.Publish(m)
 		}
 		if latest > since {
@@ -123,12 +149,52 @@ func (p *PollingFallback) tick(ctx context.Context) {
 	}
 }
 
-// since returns the highest message id we have seen for chat. Zero on
-// first poll so the very first tick still publishes the latest batch.
+// noteFailure logs a failed poll at a volume that survives an outage. Every
+// tick of a dropped connection fails for every polled chat, so a plain warn
+// per failure is 60 lines a minute — enough to rotate the log file and take
+// the diagnostics that explain the outage with it. The first failure in a
+// streak is a warn; the rest are debug, and recovery is stated once.
+func (p *PollingFallback) noteFailure(chatID int64, err error) {
+	p.mu.Lock()
+	p.failures[chatID]++
+	streak := p.failures[chatID]
+	p.mu.Unlock()
+
+	if streak == 1 {
+		p.log.Warn("polling: fetch failed", "chat_id", chatID, "err", err)
+		return
+	}
+	p.log.Debug("polling: fetch still failing", "chat_id", chatID, "consecutive", streak, "err", err)
+}
+
+// noteSuccess closes a failure streak, saying so once so the log shows when
+// polling came back rather than only when it broke.
+func (p *PollingFallback) noteSuccess(chatID int64) {
+	p.mu.Lock()
+	streak := p.failures[chatID]
+	delete(p.failures, chatID)
+	p.mu.Unlock()
+
+	if streak > 0 {
+		p.log.Info("polling: fetch recovered", "chat_id", chatID, "after_failures", streak)
+	}
+}
+
+// since returns the highest message id we have seen for chat: the larger of
+// our own watermark and the one the source reports. Zero on first poll with
+// an empty chat, so the very first tick still publishes the latest batch.
+//
+// Taking the maximum rather than preferring the watermark is what keeps the
+// fallback from fighting the live path. Both run at once — polling is a net
+// under a gap-prone connection, not a replacement for updates — and the
+// source derives LastSeenID from what is actually stored. So a message the
+// dispatcher already delivered and persisted is above the source's
+// watermark, and without the max it would be published a second time on the
+// next tick.
 func (p *PollingFallback) since(c PolledChat) int64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if w, ok := p.watermark[c.ChatID]; ok {
+	if w, ok := p.watermark[c.ChatID]; ok && w > c.LastSeenID {
 		return w
 	}
 	return c.LastSeenID

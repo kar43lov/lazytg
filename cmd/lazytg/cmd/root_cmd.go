@@ -32,7 +32,7 @@ func newRootCmd() *cobra.Command {
 	pf.StringVar(&flagConfig, "config", "", "path to config file (reserved; no-op until stage 2)")
 	pf.BoolVar(&flagDebug, "debug", false, "enable verbose logging to stderr")
 	pf.StringVar(&flagLogLevel, "log-level", "info", "logging level: debug|info|warn|error")
-	pf.BoolVar(&flagPolling, "polling", false, "force history polling instead of updates.Manager (fallback for gap-prone connections)")
+	pf.BoolVar(&flagPolling, "polling", false, "poll recent chats for messages the live update path may have dropped (gap-prone connections)")
 	pf.StringVar(&flagAPIID, "api-id", "", "Telegram api_id, overrides "+tgclient.EnvAPIID+" and the embedded value")
 	// Passing a secret on the command line puts it in `ps` output and shell
 	// history. The flag exists for scripted one-offs; the help text steers

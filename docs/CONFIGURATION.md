@@ -104,7 +104,7 @@ env vars.
 | `--account <phone>`              | E.164 phone of the account to operate on (`+79991112233`). Selects the session for multi-account. |
 | `--debug`                        | Duplicate JSON logs to stderr. Otherwise logs go only to the rotated state-dir file.              |
 | `--log-level debug\|info\|warn\|error` | Log verbosity. Default `info`.                                                                |
-| `--polling`                      | **Reserved (no-op in v0.1)** — flag is parsed and stored but `PollingFallback` wire-up into `runTUI` is deferred (see CHANGELOG `Known gaps`). Will engage 3 s history polling when wired in a v0.1 follow-up. |
+| `--polling`                      | Poll the 3 most recently active chats every 3 s for messages the live update path may have dropped. Runs *in addition* to push updates, not instead of them; off by default because it is constant background traffic. |
 | `--config <path>`                | **Reserved** — no-op in v0.1, kept so existing scripts do not break when `config.toml` lands in v0.2. |
 
 ### Subcommand flags

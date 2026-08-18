@@ -191,6 +191,6 @@ Pre-conditions before tagging stable (see [`docs/RELEASE_PROCESS.md`](RELEASE_PR
 
 ## Scope discipline
 
-Stages 1–3 of the v0.1.0 roadmap have shipped (foundation, TUI, search/files/security). Stage 4 (release pipeline + alpha/beta cycle) is in progress. Please keep PRs scoped to current-stage work and to the Stage 2 carry-over wiring (MTProto attach in `runTUI`, `BackfillService.Start`, `--polling` consumer, `reconnectAdapter.Connect`). The full plan is in [`docs/plans/lazytg-v0.1.0.md`](plans/lazytg-v0.1.0.md).
+Stages 1–3 of the v0.1.0 roadmap have shipped (foundation, TUI, search/files/security). Stage 4 (release pipeline + alpha/beta cycle) is in progress. The Stage 2 carry-over wiring is done — MTProto attach in `runTUI`, `BackfillService.Start`, the `--polling` consumer, a real `reconnectAdapter.Connect` and `updates.Manager` are all in place — so please keep PRs scoped to current-stage work. The full plan is in [`docs/plans/lazytg-v0.1.0.md`](plans/lazytg-v0.1.0.md).
 
 When in doubt about scope, open an issue or a discussion first.

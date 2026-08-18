@@ -60,14 +60,52 @@ func NewUpdatesDispatcher(bus *events.Bus, log *slog.Logger) *UpdatesDispatcher 
 	}
 }
 
+// maxChannelDifferenceConcurrency bounds how many
+// updates.getChannelDifference calls the manager may have in flight at once.
+// Recovering a gap means one such call per channel, and an account in many
+// active channels would otherwise fire all of them the instant the
+// connection comes back — a burst that is both rate-limit bait and exactly
+// the traffic shape a human client never produces. Four keeps recovery
+// prompt while leaving the pattern unremarkable.
+const maxChannelDifferenceConcurrency = 4
+
 // Manager constructs a gotd updates.Manager wired through this dispatcher.
-// Pass the returned manager into telegram.Options.UpdateHandler to start
-// receiving updates with gap recovery and pts/qts state persistence.
-func (d *UpdatesDispatcher) Manager(storage updates.StateStorage) *updates.Manager {
+// Pass the returned manager into telegram.Options.UpdateHandler, then call
+// Client.RunGapRecovery once the session is authorised: the handler alone
+// forwards updates as they arrive, and it is Run that adds ordering and
+// getDifference recovery on top.
+//
+// hasher may be nil, in which case channel access hashes live in memory and
+// are lost on exit — the manager then skips every channel on the next start
+// and recovers only the common (user and basic-group) sequence.
+func (d *UpdatesDispatcher) Manager(storage updates.StateStorage, hasher updates.ChannelAccessHasher) *updates.Manager {
 	return updates.New(updates.Config{
-		Handler: telegram.UpdateHandlerFunc(d.handle),
-		Storage: storage,
+		Handler:                         telegram.UpdateHandlerFunc(d.handle),
+		Storage:                         storage,
+		AccessHasher:                    hasher,
+		MaxChannelDifferenceConcurrency: maxChannelDifferenceConcurrency,
+		// OnTooLong fires when the gap is too wide to recover through
+		// getDifference. Nothing to do beyond saying so: the next dialog
+		// sync refreshes last_message_date, and the freshness check then
+		// pulls the affected chats' history the next time they are opened.
+		OnTooLong: func() {
+			d.log.Warn("updates: gap too long to recover — chats refresh on next open")
+		},
 	})
+}
+
+// SeenMessage reports whether this message has already been published, and
+// records it when it has not. It is the same LRU the live path dedupes
+// against, exported so the polling fallback shares one filter with it rather
+// than keeping a second, blind one.
+//
+// The two paths overlap by design — polling is a net under push, not a
+// replacement — and the watermarks alone cannot close the overlap: the
+// polling source reads the store's newest id, then makes a network call, and
+// a live update landing in that window is newer than the watermark the call
+// was made with. One filter across both paths closes it wherever it happens.
+func (d *UpdatesDispatcher) SeenMessage(chatID, messageID int64) bool {
+	return d.seen(dedupKey{chatID: chatID, messageID: messageID})
 }
 
 // HandlerFunc returns the telegram.UpdateHandler view of the dispatcher.
