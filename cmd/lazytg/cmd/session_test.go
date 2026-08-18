@@ -123,3 +123,36 @@ func TestSessionSupervisor_WaitReportsACleanStop(t *testing.T) {
 		t.Fatal("wait reported a finished goroutine as stuck")
 	}
 }
+
+// TestSessionSupervisor_RevokedAuthIsTerminal covers the one failure that
+// cannot be waited out. A session revoked from another device fails every
+// attempt identically, so a retryable error would have the reconnect manager
+// re-offer a dead auth key every backoff period for as long as the TUI stays
+// open — a client repeatedly presenting credentials Telegram has already
+// invalidated, on an account already watched for running an unofficial
+// client.
+func TestSessionSupervisor_RevokedAuthIsTerminal(t *testing.T) {
+	t.Parallel()
+	s := newSessionSupervisor(context.Background(), nil, slog.New(slog.DiscardHandler))
+	s.grace = 10 * time.Millisecond
+
+	// Stand in for the run goroutine reporting a revoked session.
+	ready := make(chan error, 1)
+	ready <- errNotAuthorized
+	_, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	close(done)
+
+	err := s.await(context.Background(), ready, time.Second)
+	if !errors.Is(err, errNotAuthorized) {
+		t.Fatalf("await = %v want errNotAuthorized", err)
+	}
+	// Start is what turns that into a terminal condition; drive the same
+	// branch directly since Start needs a client to reach the goroutine.
+	s.teardown(cancel, done)
+	s.markStopped()
+
+	if restartErr := s.Restart(context.Background()); !errors.Is(restartErr, context.Canceled) {
+		t.Fatalf("Restart after a revoked session = %v — the manager would keep retrying a dead auth key", restartErr)
+	}
+}

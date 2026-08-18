@@ -104,9 +104,29 @@ func (s *sessionSupervisor) Start(ctx context.Context, timeout time.Duration) er
 
 	if err := s.await(ctx, ready, timeout); err != nil {
 		s.teardown(cancel, done)
+		if errors.Is(err, errNotAuthorized) {
+			// A revoked authorisation does not heal by waiting. Left
+			// retryable, the reconnect manager would re-offer a dead auth key
+			// every backoff period for as long as the TUI stays open — a
+			// client repeatedly presenting credentials Telegram has already
+			// invalidated, which is exactly the behavioural trace this
+			// project tries not to leave. Marking the supervisor stopped
+			// makes the next Restart terminal; wrapping context.Canceled
+			// stops the manager on this attempt rather than the next one.
+			s.markStopped()
+			return fmt.Errorf("%w: %w", err, context.Canceled)
+		}
 		return err
 	}
 	return nil
+}
+
+// markStopped closes the supervisor to further sessions without touching a
+// running one — there is none at the call site, Start having just failed.
+func (s *sessionSupervisor) markStopped() {
+	s.mu.Lock()
+	s.stopped = true
+	s.mu.Unlock()
 }
 
 // Restart tears the current session down and starts a fresh one. This is the
@@ -134,9 +154,7 @@ func (s *sessionSupervisor) Restart(ctx context.Context) error {
 // idempotent, and after it returns no further session can be started — a
 // reconnect attempt in flight during shutdown gets errSessionStopped.
 func (s *sessionSupervisor) Stop() {
-	s.mu.Lock()
-	s.stopped = true
-	s.mu.Unlock()
+	s.markStopped()
 	s.stopCurrent()
 }
 
