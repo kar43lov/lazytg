@@ -114,8 +114,19 @@ brews:
       Use lazytg with a test account first. See:
       https://github.com/kar43lov/lazytg/blob/main/docs/SECURITY.md
 
-      Set LAZYTG_API_ID and LAZYTG_API_HASH env vars before first run.
-      Get them at https://my.telegram.org/apps
+      Before the first run, set your own Telegram API credentials:
+
+        export LAZYTG_API_ID=1234567
+        export LAZYTG_API_HASH=0123456789abcdef0123456789abcdef
+
+      Get them at https://my.telegram.org/apps — one form, one minute.
+      Releases deliberately carry no credentials of their own: an api_id
+      shipped inside a public binary is a published api_id, and Telegram
+      blocks those permanently for everyone using them at once.
+
+      If that page refuses to issue an application for your number (it is
+      known not to work from some regions), what does work is here:
+      https://github.com/kar43lov/lazytg/blob/main/docs/INSTALL.md#when-mytelegramorg-will-not-issue-credentials
 
 signs:
   # Подпись checksums.txt — сохраняем как было (быстрая верификация всего набора).

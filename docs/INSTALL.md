@@ -5,29 +5,93 @@
 > before touching your primary one. See [SECURITY.md](SECURITY.md) for the full
 > ban-risk policy.
 
-This page covers every supported install path for lazytg v0.1.x and the
-one-time API credentials setup. Verifying release artifacts is documented
-separately in [VERIFY.md](VERIFY.md); recipes referenced here delegate to it.
+This page covers every install path for lazytg v0.1.x and the one-time API
+credentials setup. Verifying release artifacts is documented separately in
+[VERIFY.md](VERIFY.md); recipes referenced here delegate to it.
 
 ---
 
-## Pick your install method
+## Available today
 
-| Method                                     | Best for                                      | Auto-update                          |
-|--------------------------------------------|-----------------------------------------------|--------------------------------------|
-| Homebrew tap (macOS / Linux)               | Default for macOS users                       | `brew upgrade`                       |
-| `.deb` (Debian / Ubuntu / Mint)            | apt-based distros, headless Linux             | manual download of the next release  |
-| `.rpm` (Fedora / RHEL / openSUSE)          | dnf/zypper distros                            | manual                               |
-| Manual binary archive                      | Anywhere — gives you a checksum + signature  | manual                               |
-| `go install`                                | You already have a Go ≥ 1.25 toolchain        | `go install …@latest`                |
-| Build from source                          | Hacking on lazytg                              | `git pull && make build`             |
+> 🔴 **No release has been tagged yet.** Everything that is served *from* a
+> release — Homebrew, `.deb`, `.rpm`, the signed archives, `go install …@latest`
+> — has nothing to fetch until the first tag exists, and following those recipes
+> now ends in a 404 rather than an install. The pipeline behind them is written
+> and tested; what a maintainer has to set up before it can run for the first
+> time is in [RELEASE_PROCESS.md](RELEASE_PROCESS.md) → *Подготовка*.
 
-Every release publishes the same set of artifacts; the choice is purely about
-delivery preference.
+| Method                                     | Best for                                     | Available |
+|--------------------------------------------|----------------------------------------------|-----------|
+| [Build from source](#build-from-source)    | Anyone with Go ≥ 1.25                        | **now**   |
+| [A binary someone built for you](#a-binary-someone-built-for-you) | No Go toolchain, no clone | **now** |
+| [Homebrew tap](#homebrew-macos-linux)      | Default for macOS users                      | first release |
+| [`.deb`](#deb-debian-ubuntu-mint)          | apt-based distros, headless Linux            | first release |
+| [`.rpm`](#rpm-fedora-rhel-opensuse)        | dnf/zypper distros                           | first release |
+| [Manual binary archive](#manual-binary-archive) | Anywhere — checksum + signature         | first release |
+| [`go install`](#go-install)                | You already have a Go toolchain              | first release |
+
+Once tagged, every release publishes the same set of artifacts and the choice
+becomes purely one of delivery preference.
+
+---
+
+## A binary someone built for you
+
+lazytg is pure Go with `CGO_ENABLED=0`, so one machine builds a binary that runs
+on any other with a matching OS and architecture: a single ~21 MB file, no
+runtime, no shared libraries, nothing to install alongside it.
+
+```sh
+chmod +x lazytg
+./lazytg version            # read the `api:` line before anything else
+```
+
+`lazytg version` answers the only question that decides your next step:
+
+| `api:` line | What it means | What you do |
+|---|---|---|
+| `embedded` | credentials are compiled into this binary | nothing — run `lazytg login` |
+| `env` | `LAZYTG_API_ID` / `LAZYTG_API_HASH` are set in your shell and win over anything compiled in | nothing |
+| `none (no credentials …)` | this build carries none | register an app (see [API credentials](#api-credentials)) and export the pair |
+
+### macOS blocks it on first run
+
+A Go binary carries only an ad-hoc signature — `codesign -dv` reports
+`adhoc, linker-signed` — and a file that arrived through a browser, AirDrop or a
+messenger also carries the quarantine attribute. Gatekeeper puts the two
+together and refuses to run it: *"Apple could not verify 'lazytg' is free of
+malware that may harm your Mac"*. Clear the attribute:
+
+```sh
+xattr -d com.apple.quarantine lazytg
+```
+
+Or, without the terminal: try to run it once, then System Settings → Privacy &
+Security → **Open Anyway**. Notarised builds that skip this entirely require an
+Apple Developer account and belong to the release pipeline, not to a binary
+handed over directly.
+
+Linux has no equivalent step — `chmod +x` is the whole ceremony.
+
+### Move it onto PATH
+
+```sh
+sudo install -m 0755 lazytg /usr/local/bin/lazytg   # macOS, most Linux
+# or, without sudo:
+install -m 0755 lazytg ~/.local/bin/lazytg          # ensure ~/.local/bin is on PATH
+```
+
+Trust matters more here than with a signed release: you are running a binary
+whose provenance is a person, not a checksum. If you would rather verify it
+yourself, [build from source](#build-from-source) instead — the recipe is three
+commands.
 
 ---
 
 ## Homebrew (macOS, Linux)
+
+> Available once the first release is tagged — see [Available today](#available-today).
+
 
 The Homebrew formula is auto-updated by GoReleaser on every **stable** tag
 (`v1.2.3`, no suffix). Pre-release tags (`-alpha`, `-beta`, `-rc`) ship to
@@ -45,6 +109,9 @@ The tap repo is `kar43lov/homebrew-lazytg`. The formula installs a single
 
 ## `.deb` (Debian, Ubuntu, Mint)
 
+> Available once the first release is tagged — see [Available today](#available-today).
+
+
 ```sh
 # pick the right arch — amd64 is most common, arm64 for Raspberry Pi 4+ / Ampere
 ARCH=amd64
@@ -60,6 +127,9 @@ The package places the binary at `/usr/bin/lazytg` and copies `LICENSE` +
 
 ## `.rpm` (Fedora, RHEL, openSUSE)
 
+> Available once the first release is tagged — see [Available today](#available-today).
+
+
 ```sh
 ARCH=amd64
 VERSION=0.1.0
@@ -73,6 +143,9 @@ Same layout as the `.deb`.
 ---
 
 ## Manual binary archive
+
+> Available once the first release is tagged — see [Available today](#available-today).
+
 
 Use this when you want to verify the cosign signature before installing,
 or when no package manager covers your distro.
@@ -111,6 +184,9 @@ not produced by this repo's `release.yml`.
 
 ## `go install`
 
+> Available once the first release is tagged — see [Available today](#available-today).
+
+
 Requires Go ≥ 1.25 (the `go.mod` toolchain pin).
 
 ```sh
@@ -135,9 +211,89 @@ make build              # → bin/lazytg
 ./bin/lazytg version
 ```
 
-`make build` resolves to `go build -o bin/lazytg ./cmd/lazytg` with
-version/commit/date ldflags. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
-full dev-loop targets (`make test`, `make lint`, `make bench`, `make tidy`).
+`make build` is exactly `go build -o bin/lazytg ./cmd/lazytg` — no ldflags of
+any kind, which has two consequences worth knowing before you wonder why:
+
+- **`lazytg version` reports `dev`**, with `commit: none` and `built: unknown`.
+  Version stamping happens in the release pipeline, not in `make build`.
+- **No API credentials are compiled in.** The binary resolves them at *run*
+  time from `LAZYTG_API_ID` / `LAZYTG_API_HASH` (or `--api-id` / `--api-hash`),
+  so they live in your shell, not in the file. Export them in `~/.zshrc` and
+  every build you ever make just works; export them in one terminal only and
+  lazytg will start in offline, cache-only mode everywhere else, saying
+  `offline` in the status bar and logging `cannot build telegram client`.
+  To bake a pair into the binary instead — the only way to hand a working build
+  to someone who has no credentials — use the `-ldflags` recipe in
+  [Building for someone else](#building-for-someone-else).
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full dev-loop targets
+(`make test`, `make lint`, `make bench`, `make tidy`).
+
+---
+
+## Building for someone else
+
+The other side of [A binary someone built for you](#a-binary-someone-built-for-you):
+you have the toolchain, they do not. Cross-compilation needs no extra setup —
+`CGO_ENABLED=0` plus `GOOS`/`GOARCH` is the whole recipe, and the output is one
+self-contained file.
+
+**1. Ask what they run.** `uname -sm` on their machine:
+
+| `uname -sm` output | Build command |
+|---|---|
+| `Darwin arm64` (Apple Silicon) | `CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o lazytg ./cmd/lazytg` |
+| `Darwin x86_64` (Intel Mac) | `CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o lazytg ./cmd/lazytg` |
+| `Linux x86_64` | `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o lazytg ./cmd/lazytg` |
+| `Linux aarch64` | `CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o lazytg ./cmd/lazytg` |
+
+`-trimpath` keeps your local paths out of the binary; `-s -w` drops the symbol
+table and DWARF data, which halves the size and is what release builds use.
+Windows is not a target — the TUI is written for POSIX terminals — and WSL
+counts as Linux. Verify what you produced before sending it:
+
+```sh
+file lazytg        # → Mach-O 64-bit executable arm64 / ELF 64-bit LSB executable, x86-64
+```
+
+**2. Decide about credentials.** The default — no credentials in the binary,
+recipient registers their own app at <https://my.telegram.org/apps> — is the
+recommended one: it is a single form, and it keeps your `api_id` yours. If you
+would rather hand over something that just works — reasonable for one person you
+trust, and the reason the machinery exists even though public releases
+deliberately do not use it — compile the pair in:
+
+```sh
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath \
+  -ldflags "-s -w \
+    -X github.com/kar43lov/lazytg/internal/tg.embeddedAPIID=1234567 \
+    -X github.com/kar43lov/lazytg/internal/tg.embeddedAPIHash=0123456789abcdef0123456789abcdef" \
+  -o lazytg ./cmd/lazytg
+
+./lazytg version    # must print: api: embedded (build embeds credentials: yes)
+```
+
+Know what that shares. An `api_id` identifies the *application*, not the user,
+so everyone running that binary shares one identity with you: if Telegram flags
+it, it is flagged for all of you at once, and the values are readable straight
+out of the file with `strings`. Anyone who exports `LAZYTG_API_ID` /
+`LAZYTG_API_HASH` locally overrides them, which is the escape hatch if a
+recipient later wants their own.
+
+🔴 **Never put those values in a file you commit.** `scripts/secret-scan.sh`
+runs as a pre-commit hook and as a CI job for exactly this reason: an `api_id`
+that appears in public source is refused by Telegram permanently
+(`API_ID_PUBLISHED_FLOOD`), and that verdict lands on every user of every build
+carrying it.
+
+**3. Send it with two sentences.** They will hit both of these otherwise:
+
+- macOS refuses the file on first run and the message accuses it of malware —
+  the fix is `xattr -d com.apple.quarantine lazytg`, explained under
+  [macOS blocks it on first run](#macos-blocks-it-on-first-run).
+- Telegram puts unofficial clients under observation, so a throwaway account
+  goes first. The full policy is [SECURITY.md](SECURITY.md); the risk is theirs
+  now as much as yours.
 
 ---
 
@@ -159,10 +315,20 @@ Rely instead on:
 
 ## API credentials
 
-**Release binaries need no setup.** Downloads from the releases page (and
-everything installed through brew, `.deb` or `.rpm`) carry lazytg's own
-`api_id` / `api_hash`, injected at build time from repository secrets. Install,
-run `lazytg login`, done.
+Every build needs an `api_id` / `api_hash` pair, and lazytg resolves it from
+three layers, in order: `--api-id` / `--api-hash` flags → `LAZYTG_API_ID` /
+`LAZYTG_API_HASH` environment variables → credentials compiled into the binary.
+`lazytg version` prints which layer is in effect.
+
+**No lazytg build carries credentials of its own — releases included, by
+choice.** An `api_id` compiled into a public binary is a published `api_id`:
+`strings lazytg | grep -E '^[0-9a-f]{32}$'` prints it, and Telegram blocks
+published ones permanently, for everyone using that build at the same time
+(`API_ID_PUBLISHED_FLOOD`). Their own documentation is explicit — *"obtain your
+own API id before you publish your app"*. So lazytg ships the machinery to embed
+a pair (see [Building for someone else](#building-for-someone-else)) but the
+public release does not use it, and every installation path asks you for your
+own credentials once.
 
 **Builds from source do.** The credentials are not in this repository — an
 `api_id` found in public source is refused by Telegram forever with
@@ -186,7 +352,7 @@ api:    embedded (build embeds credentials: yes)
 |------------|-----------------------------------------|------------|
 | `flags`    | `--api-id` / `--api-hash`               | highest    |
 | `env`      | `LAZYTG_API_ID` / `LAZYTG_API_HASH`     | middle     |
-| `embedded` | baked into official release binaries    | lowest     |
+| `embedded` | compiled in at build time with the `-ldflags` recipe in [Building for someone else](#building-for-someone-else). Public releases deliberately do not do this, so a binary reporting `embedded` came from a person, not from the releases page | lowest |
 
 Both halves of a source must be set together. Exporting only `LAZYTG_API_ID`
 is an error, not a silent fall-back to the embedded key — otherwise you would
@@ -195,23 +361,56 @@ believe you are running on your own credentials while you are not.
 `--api-hash` puts a secret in `ps` output and shell history; prefer the env
 var and keep the flag for scripted one-offs.
 
-### When to bring your own anyway
+### When my.telegram.org will not issue credentials
 
-The shipped key is a convenience, not a guarantee:
+The application form is not reachable from everywhere — from Russia in
+particular it frequently fails, either by never delivering the login code or by
+answering a bare `ERROR` when the application is submitted. That is a Telegram
+side restriction; lazytg cannot work around it, and no amount of retrying the
+form changes it. What actually works:
 
-- Everyone using a release shares one `api_id`. If Telegram blocks it — for
-  abuse by any user, or because the key leaks and gets flagged as published —
-  every release user loses login at once, and the fix on your side is exporting
-  your own credentials.
-- Telegram automatically puts accounts under observation when they log in
-  through an unofficial client. That happens regardless of whose `api_id` you
-  use, so the shipped key does not make you more visible than your own would —
-  but read the official [obtaining api_id](https://core.telegram.org/api/obtaining_api_id)
-  page and decide for yourself.
+1. **Complete the registration through a VPN** in a region where the form works.
+   You need it only once — the credentials keep working afterwards, wherever you
+   run lazytg from. The pair is tied to the Telegram account, not to the network
+   it was created on.
+2. **Get a binary from someone who already has credentials.** Anyone holding a
+   pair can compile it into a build for you in one command — the recipe is in
+   [Building for someone else](#building-for-someone-else). Understand the
+   trade for both sides: you share one application identity, so a block earned
+   by any of you lands on all of you, and whoever holds the key is the one
+   answering for how it gets used.
+3. **Build from source with a pair you were given.** Same result as (2) without
+   trusting someone else's binary: they hand you the two values, you compile
+   them in yourself or export them as environment variables.
 
-Registering your own application takes two minutes and isolates you from both
-failure modes. If <https://my.telegram.org> is unreachable from your country,
-the embedded credentials are the fallback that keeps lazytg usable.
+Whichever route you take, `lazytg version` tells you where you ended up: `env`,
+`embedded` or `none`.
+
+---
+
+### Running on someone else's key
+
+If you are using a binary with credentials compiled in, you are sharing one
+application identity with whoever built it and with everyone else they gave it
+to. What that means in practice:
+
+- **The blast radius is shared.** If Telegram blocks that `api_id` — for abuse
+  by any one of you, or because the key gets flagged as published — everyone
+  using that build loses login at the same moment. Your escape hatch is
+  immediate and needs no reinstall: export your own `LAZYTG_API_ID` /
+  `LAZYTG_API_HASH` and the env layer wins over the compiled-in one.
+- **The key holder answers for it.** The `api_id` identifies the application,
+  so behaviour flagged as abuse attaches to their key, not to your account.
+  Treat it as borrowed.
+- **Observation is unrelated to whose key it is.** Telegram puts accounts under
+  observation when they log in through any unofficial client, so a shared key
+  makes you no more visible than your own would. Read the official
+  [obtaining api_id](https://core.telegram.org/api/obtaining_api_id) page and
+  decide for yourself.
+
+Registering your own application takes about a minute and isolates you from the
+first two. When that is not possible, see
+[When my.telegram.org will not issue credentials](#when-mytelegramorg-will-not-issue-credentials).
 
 ---
 

@@ -15,8 +15,8 @@
 ## Highlights
 
 - 🔍 **Instant search across your entire history.** SQLite FTS5 trigram-индекс локально на диске. p95 ≈ 47ms на 100k сообщений (SLA <100ms — запас 2×). Никакого зависания на серверном `messages.search`.
-- ⚡ **Live-updates < 5ms p95.** Полученное сообщение → отрисовка в TUI в среднем за 4ms (SLA <500ms — запас 100×). Через `gotd updates.Manager` поверх SQLite-state.
-- 🔐 **Local-first.** История + индекс на вашем диске. Сессии в Keychain / Secret Service / wincred (через `zalando/go-keyring`). Encrypted DB (`sqlcipher` build tag) отложена на v0.2 — сейчас полагаемся на permission audit (0600) + OS-level disk encryption.
+- ⚡ **Live-updates < 5ms p95.** Полученное сообщение → отрисовка в TUI в среднем за 4ms (SLA <500ms — запас 100×). Через `UpdatesDispatcher` поверх gotd-хендлера; `updates.Manager` с SQLite-state написан и покрыт тестами, но в v0.1 не подключён — значит нет gap recovery после разрыва связи (см. Honesty section).
+- 🔐 **Local-first.** История + индекс на вашем диске. Сессия — в `age`-файле `<config>/secrets.age` (0600), пароль от него генерируется один раз и лежит в OS keyring (Keychain / Secret Service); на headless-машинах пароль спрашивается при старте. Encrypted DB (`sqlcipher` build tag) отложена на v0.2 — сейчас полагаемся на permission audit (0600) + OS-level disk encryption.
 - ⌨️ **emacs/readline ввод по умолчанию + $EDITOR delegation.** `Ctrl+E` открывает `$EDITOR` для длинных сообщений. Vim-mode — opt-in в v0.2 (намеренно — половинчатая реализация даёт mode confusion, см. dialectic в плане).
 - 📥📤 **Files.** `Ctrl+D` — download с прогрессом. `Ctrl+U` — upload с file picker. Permissions автоматически `0600`.
 - 🛡️ **Ban-risk-aware.** Send rate-limit guard 10 msg/sec (снижает поведенческий след). `lazytg debug-bundle` без секретов (доказано grep-тестом). Permission check 0600/0700 fail-fast при старте.
@@ -29,6 +29,7 @@
 ## Honesty section (важно — не вырезать)
 
 - **Quality:** v0.1.0 — first public release. Прошли 4 этапа (Stages 1-3 функциональные + Stage 4 release engineering), но реальный mileage — за вами.
+- **Нужны свои Telegram API credentials.** Релизные бинарники намеренно не несут ключа приложения: ключ внутри публичного бинарника — опубликованный ключ, а такой `api_id` Telegram блокирует навсегда и сразу у всех, кто им пользуется. Регистрация занимает минуту (<https://my.telegram.org/apps>), дальше `export LAZYTG_API_ID` / `LAZYTG_API_HASH`. Из некоторых стран форма не отдаёт приложение — обходные пути в [INSTALL.md](INSTALL.md#when-mytelegramorg-will-not-issue-credentials).
 - **Ban-risk:** Telegram автоматически ставит unofficial-клиенты под observation ([их слова, не наши](https://core.telegram.org/api/obtaining_api_id)). После дела Дурова в августе 2024 enforcement резко вырос. **Тестовый аккаунт — обязательно.**
 - **Не replacement для Telegram Desktop.** Если вы хотите stickers, voice/video calls, secret chats, inline media preview — это **не наш target**. Мы — tool для tmux-resident developers, которые хотят поиск по своим перепискам и быстрый текстовый ввод без ухода из терминала. См. ["Что НЕ делаем никогда" в CLAUDE.md](../CLAUDE.md#что-не-делаем-никогда-явный-non-goal-после-dialectic).
 - **Windows билды отложены на v0.2.** TUI keys/colors на cmd.exe требуют отдельного тестового цикла, которого у нас в v0.1 не было.
