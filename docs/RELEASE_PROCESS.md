@@ -66,12 +66,11 @@
    ```
    В `dist/` должны появиться tar.gz для всех 4 платформ + `.deb` + `.rpm`.
    `--skip=sign` обязателен локально — cosign keyless OIDC требует GitHub Actions runtime context и без него сборка падает на signs step. Подпись валидируется в release.yml.
-6. **Креды вшиты в релизный бинарник.** Шаг `Guard Telegram API credentials` в `release.yml` валит stable-тег при пустых secrets (для alpha/beta/rc — только `::warning`), так что молча уехать без кредов релиз уже не может. Финальная проверка на скачанном артефакте всё равно нужна — guard проверяет наличие secrets, а не то, что goreleaser их применил:
+6. **Креды НЕ вшиты — и это проверяется.** Релизы намеренно выходят без ключа приложения (шаг 4 «Подготовка», обоснование — `docs/SECURITY.md` → *Credentials: why releases ship without them*). Шаг `Guard Telegram API credentials` в `release.yml` считает пустую пару штатной на любом теге и печатает `::notice`; падение остаётся ровно на одном случае — задан ровно один секрет из двух. На скачанном артефакте ожидаемый результат:
    ```sh
-   ./lazytg version | grep api      # → api:    embedded (build embeds credentials: yes)
+   ./lazytg version | grep api      # → api:    none (no credentials — see docs/INSTALL.md)
    ```
-
-   Локальный snapshot по умолчанию даёт `api: none` — это правильно: `LAZYTG_RELEASE_API_*` не заданы на машине мейнтейнера. Проверить инъекцию локально можно, подставив фиктивные значения:
+   `api: embedded` на публичном релизе означает, что secrets кто-то задал — это отклонение от принятого решения, а не успех. Проверить, что механизм инъекции жив (если однажды понадобится собрать бинарник с ключом для конкретного человека), можно локально фиктивными значениями:
    ```sh
    LAZYTG_RELEASE_API_ID=1 LAZYTG_RELEASE_API_HASH=deadbeef goreleaser build --snapshot --clean --single-target
    ```

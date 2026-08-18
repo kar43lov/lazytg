@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.1] - 2026-08-18
+
+First tagged build. Alpha: the pipeline that produces it has never run before this
+tag, and the client itself has one live session behind it. Bring your own
+Telegram API credentials (`LAZYTG_API_ID` / `LAZYTG_API_HASH`) and a test
+account — see [docs/INSTALL.md](docs/INSTALL.md) and [docs/SECURITY.md](docs/SECURITY.md).
+
 ### Added
 
 - **Text selection in the thread, with copy to the clipboard.** Drag to select, release to copy; a drag inside one message is character-exact, and the moment it crosses into another message both are taken whole — the rule Telegram Desktop uses, and the one the user asked for ("выделяется сразу несколько целиком, даже если ты не до конца довёл"). A double click takes the message under the pointer, which is the common case without a precise drag. The highlight is reverse video (the one attribute every terminal renders identically) applied with cell-accurate, ANSI-aware slicing, so surrounding styling survives and the visible text is unchanged — `TestApplySelection_HighlightsWithoutChangingText` pins exactly that. Line ranges per message come from the renderer itself (`renderContent` returns content and spans together) rather than a second implementation of the same layout, because the two would drift and the drift would read as "it selects the wrong message". Copying goes through OSC 52 (`tea.SetClipboard`) instead of shelling out to pbcopy/xclip: it is the terminal's own clipboard channel, so it works over ssh and inside tmux with `set-clipboard on`, and lazytg needs to know nothing about the host. Whatever is highlighted is what lands in the clipboard, header row included when the selection covers whole messages — a character-exact drag inside one message is there for lifting out the text alone. A highlight is a range of screen cells with no tie to the text under it, so it is dropped wherever that text is replaced: opening another chat by any route, and any resize, including dragging the separator, which re-wraps every line (`TestSelection_DroppedWhenTheChatChanges`, `TestResizeDropsTheSelection`). The pane's own title row is inert, and a drag that actually selected something breaks the double-click pair, so pressing again on the same cell starts a new selection instead of copying the whole message.
