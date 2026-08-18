@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **Install docs caught up with the first tag.** They had been written for a project with no releases at all, so within an hour of `v0.1.0-alpha.1` they were wrong in the opposite direction — still announcing that "no release is tagged yet" and that the releases page is empty. Now they state what actually resolves: signed archives, `.deb`, `.rpm` and `go install` work from the alpha (verified by installing `@v0.1.0-alpha.1` and `@latest` — with no stable versions published, the module proxy resolves `@latest` to the prerelease, and the resulting binary reports `dev` because ldflags are applied by goreleaser only), while Homebrew waits for the first stable tag, since the formula is pushed on non-prerelease tags alone. The `.deb`/`.rpm`/archive recipes now carry the version that exists instead of a `0.1.0` that does not.
+
 ## [0.1.0-alpha.1] - 2026-08-18
 
 First tagged build. Alpha: the pipeline that produces it has never run before this

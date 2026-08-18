@@ -137,10 +137,11 @@ Anything not on this list is out of scope until it lands here — see the non-go
 
 ## Quickstart
 
-> **No release is tagged yet**, so `brew`, `.deb`, `.rpm`, the releases page and
-> `go install …@latest` have nothing to serve. Until the first tag there are
-> exactly two ways to get lazytg: build it, or have someone hand you a binary
-> they built. Both are below, and neither takes more than a few minutes.
+> **The first release is an alpha** ([v0.1.0-alpha.1](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.1)),
+> so signed archives, `.deb`, `.rpm` and `go install` work, while `brew` does not
+> yet: the formula is published from stable tags only. Below are the two paths
+> that need nothing but a terminal — build it yourself, or run a binary someone
+> built for you; [docs/INSTALL.md](docs/INSTALL.md) covers the rest.
 
 **Build it yourself** — needs Go ≥ 1.25 and takes about a minute:
 
@@ -199,12 +200,15 @@ release is tagged; today it has no version to resolve.
 
 ### Pre-built binaries
 
-Not yet — the releases page is empty until the first tag. The pipeline that
-fills it (archives for `linux` and `darwin` × `amd64`/`arm64`, SHA256 checksums,
-cosign keyless signatures, a Homebrew tap, `.deb` and `.rpm`) is written and
-tested but has never run; what a maintainer must set up before it can is in
-[docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md). Verification recipes for
-when it does: [docs/VERIFY.md](docs/VERIFY.md).
+[v0.1.0-alpha.1](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.1)
+is on the releases page: archives for `linux` and `darwin` × `amd64`/`arm64`,
+`.deb` and `.rpm`, SHA256 checksums, and cosign keyless signatures (a sigstore
+bundle per archive plus a signed `checksums.txt`). Verification recipes are in
+[docs/VERIFY.md](docs/VERIFY.md).
+
+Alpha means what it says: this is the first build the pipeline has ever
+produced, and the client behind it has had one live session. Homebrew is not
+served from it — the formula goes to the tap on stable tags only.
 
 ### Encrypted database (deferred past v0.1)
 

@@ -13,22 +13,22 @@ credentials setup. Verifying release artifacts is documented separately in
 
 ## Available today
 
-> 🔴 **No release has been tagged yet.** Everything that is served *from* a
-> release — Homebrew, `.deb`, `.rpm`, the signed archives, `go install …@latest`
-> — has nothing to fetch until the first tag exists, and following those recipes
-> now ends in a 404 rather than an install. The pipeline behind them is written
-> and tested; what a maintainer has to set up before it can run for the first
-> time is in [RELEASE_PROCESS.md](RELEASE_PROCESS.md) → *Подготовка*.
+> **The only release so far is an alpha**, [v0.1.0-alpha.1](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.1).
+> Its artifacts are real and verifiable — signed archives, `.deb`, `.rpm`,
+> checksums — and `go install` resolves it. **Homebrew is the exception**: the
+> formula is pushed to the tap from stable tags only, so `brew install` has
+> nothing to find until `v0.1.0` proper. Treat everything here as first-build
+> software: the pipeline that produced it had never run before that tag.
 
 | Method                                     | Best for                                     | Available |
 |--------------------------------------------|----------------------------------------------|-----------|
 | [Build from source](#build-from-source)    | Anyone with Go ≥ 1.25                        | **now**   |
 | [A binary someone built for you](#a-binary-someone-built-for-you) | No Go toolchain, no clone | **now** |
-| [Homebrew tap](#homebrew-macos-linux)      | Default for macOS users                      | first release |
-| [`.deb`](#deb-debian-ubuntu-mint)          | apt-based distros, headless Linux            | first release |
-| [`.rpm`](#rpm-fedora-rhel-opensuse)        | dnf/zypper distros                           | first release |
-| [Manual binary archive](#manual-binary-archive) | Anywhere — checksum + signature         | first release |
-| [`go install`](#go-install)                | You already have a Go toolchain              | first release |
+| [Manual binary archive](#manual-binary-archive) | Anywhere — checksum + signature         | **now** (alpha) |
+| [`.deb`](#deb-debian-ubuntu-mint)          | apt-based distros, headless Linux            | **now** (alpha) |
+| [`.rpm`](#rpm-fedora-rhel-opensuse)        | dnf/zypper distros                           | **now** (alpha) |
+| [`go install`](#go-install)                | You already have a Go toolchain              | **now** (alpha) |
+| [Homebrew tap](#homebrew-macos-linux)      | Default for macOS users                      | first stable tag |
 
 Once tagged, every release publishes the same set of artifacts and the choice
 becomes purely one of delivery preference.
@@ -90,7 +90,8 @@ commands.
 
 ## Homebrew (macOS, Linux)
 
-> Available once the first release is tagged — see [Available today](#available-today).
+> Available once the first stable tag is published — the formula is not pushed
+> for prereleases. See [Available today](#available-today).
 
 
 The Homebrew formula is auto-updated by GoReleaser on every **stable** tag
@@ -109,13 +110,14 @@ The tap repo is `kar43lov/homebrew-lazytg`. The formula installs a single
 
 ## `.deb` (Debian, Ubuntu, Mint)
 
-> Available once the first release is tagged — see [Available today](#available-today).
+> Available from [v0.1.0-alpha.1](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.1)
+> onward — an alpha, and the first build this pipeline ever produced.
 
 
 ```sh
 # pick the right arch — amd64 is most common, arm64 for Raspberry Pi 4+ / Ampere
 ARCH=amd64
-VERSION=0.1.0
+VERSION=0.1.0-alpha.1        # the only tag published so far
 curl -fsSLO "https://github.com/kar43lov/lazytg/releases/download/v${VERSION}/lazytg_${VERSION}_linux_${ARCH}.deb"
 sudo dpkg -i "lazytg_${VERSION}_linux_${ARCH}.deb"
 ```
@@ -127,12 +129,13 @@ The package places the binary at `/usr/bin/lazytg` and copies `LICENSE` +
 
 ## `.rpm` (Fedora, RHEL, openSUSE)
 
-> Available once the first release is tagged — see [Available today](#available-today).
+> Available from [v0.1.0-alpha.1](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.1)
+> onward — an alpha, and the first build this pipeline ever produced.
 
 
 ```sh
 ARCH=amd64
-VERSION=0.1.0
+VERSION=0.1.0-alpha.1        # the only tag published so far
 sudo dnf install "https://github.com/kar43lov/lazytg/releases/download/v${VERSION}/lazytg_${VERSION}_linux_${ARCH}.rpm"
 # or, on zypper distros:
 # sudo zypper install <same URL>
@@ -144,7 +147,8 @@ Same layout as the `.deb`.
 
 ## Manual binary archive
 
-> Available once the first release is tagged — see [Available today](#available-today).
+> Available from [v0.1.0-alpha.1](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.1)
+> onward — an alpha, and the first build this pipeline ever produced.
 
 
 Use this when you want to verify the cosign signature before installing,
@@ -153,7 +157,7 @@ or when no package manager covers your distro.
 ```sh
 ARCH=amd64                              # or arm64
 OS=linux                                # or darwin
-VERSION=0.1.0
+VERSION=0.1.0-alpha.1        # the only tag published so far
 BASE="https://github.com/kar43lov/lazytg/releases/download/v${VERSION}"
 
 curl -fsSLO "${BASE}/lazytg_${VERSION}_${OS}_${ARCH}.tar.gz"
@@ -184,7 +188,8 @@ not produced by this repo's `release.yml`.
 
 ## `go install`
 
-> Available once the first release is tagged — see [Available today](#available-today).
+> Available from [v0.1.0-alpha.1](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.1)
+> onward — an alpha, and the first build this pipeline ever produced.
 
 
 Requires Go ≥ 1.25 (the `go.mod` toolchain pin).
