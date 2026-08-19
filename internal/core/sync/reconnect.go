@@ -233,7 +233,14 @@ func (m *ReconnectManager) pumpStates(ctx context.Context, states <-chan string)
 				continue
 			}
 			last = state
-			m.log.Debug("reconnect: transport state", "state", state)
+			// Info, not Debug: this is the only record an outage leaves when
+			// gotd reconnects inside its own Run loop, which is the common
+			// case — the manager's own attempt lines never print. Debug meant
+			// a live smoke on 19.08.2026 watched the status bar go offline
+			// and back while the log file stayed empty, so nothing could be
+			// reconstructed afterwards. Repeats are already suppressed above,
+			// so this is one line per actual transition.
+			m.log.Info("reconnect: transport state", "state", state)
 			m.publish(state)
 		}
 	}

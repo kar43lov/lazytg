@@ -217,7 +217,7 @@ func (m Model) applyIncoming(ev events.MessageReceived) (Model, tea.Cmd) {
 		m.outgoing = removeOutgoing(m.outgoing, localID)
 		delete(m.pendingServerIDs, ev.MessageID)
 	}
-	m.messages = append(m.messages, domain.Message{
+	m.messages = insertByDate(m.messages, domain.Message{
 		ID:     ev.MessageID,
 		ChatID: ev.ChatID,
 		FromID: ev.FromID,
@@ -231,6 +231,47 @@ func (m Model) applyIncoming(ev events.MessageReceived) (Model, tea.Cmd) {
 		m.viewport.GotoBottom()
 	}
 	return m, nil
+}
+
+// insertByDate places msg into a slice held in ascending (Date, ID) order.
+// It scans back from the tail, so the ordinary case — a message newer than
+// everything on screen — costs one comparison and an append.
+//
+// The thread used to append unconditionally, which rendered messages in
+// arrival order rather than chronological order. That held while one producer
+// existed; since Stage 4 there are two (the live update path and the polling
+// fallback), they race, and a reconnect delivers a backlog through whichever
+// wins. Observed on 19.08.2026: two messages sent seconds apart during an
+// outage appeared swapped once the link came back.
+//
+// ID breaks ties because Telegram stamps whole seconds: two messages sent in
+// the same second are ordered by the server's own sequence, not by ours.
+//
+// This ordering leans on an invariant worth stating, because the pagination
+// cursors depend on it: within one chat Telegram hands out ids in ascending
+// order of date, so (Date, ID) and ID alone produce the same sequence, and
+// ties resolve by id either way. Editing a message does not change its date
+// (edit_date is a separate field) and a forward is a new message with a new
+// id and a new date, so neither breaks it. If that ever stops holding, this
+// function and the id-based cursors in repo.go go out of step and scroll-up
+// can skip a row — change both together.
+func insertByDate(msgs []domain.Message, msg domain.Message) []domain.Message {
+	i := len(msgs)
+	for i > 0 && sortsAfter(msgs[i-1], msg) {
+		i--
+	}
+	msgs = append(msgs, domain.Message{})
+	copy(msgs[i+1:], msgs[i:])
+	msgs[i] = msg
+	return msgs
+}
+
+// sortsAfter reports whether a belongs after b in the thread.
+func sortsAfter(a, b domain.Message) bool {
+	if !a.Date.Equal(b.Date) {
+		return a.Date.After(b.Date)
+	}
+	return a.ID > b.ID
 }
 
 // applyOutgoingState routes optimistic-state transitions to the matching
