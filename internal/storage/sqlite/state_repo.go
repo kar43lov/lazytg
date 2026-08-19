@@ -12,9 +12,17 @@ import (
 // StateRepo persists the gotd updates.Manager state in SQLite. It implements
 // the updates.StateStorage interface so reconnects can fetch only the
 // difference since the last seen pts/qts/date/seq instead of re-downloading
-// the entire history. The accountID is the Telegram self-user id (which
-// matches accounts.id in our schema) so a single database can host multiple
-// accounts without clobbering each other's pts.
+// the entire history.
+//
+// Rows are keyed by the Telegram user id gotd passes in, which is NOT the
+// local accounts.id. This used to be the other way round — the column was
+// `account_id` with a foreign key to accounts(id) and a comment claiming the
+// two identifiers matched. They never do: accounts.id is a local rowid (1 for
+// a first login) while the user id is a nine-digit Telegram id, so every
+// write failed the foreign key, updates.Manager refused to start, and gap
+// recovery did not exist in production while the tests passed. See migration
+// 0009. Accounts are separated by data directory, so one database holds one
+// account's state and no scoping column is needed.
 //
 // The implementation is intentionally SQL-light: every method touches one
 // row and every write goes through a small UPSERT. updates.Manager is the
@@ -43,7 +51,7 @@ var errStateMissing = errors.New("state: row not found")
 // GetState returns the persisted user state and whether it existed.
 func (r *StateRepo) GetState(ctx context.Context, userID int64) (updates.State, bool, error) {
 	row := r.db.QueryRowContext(ctx, `
-        SELECT pts, qts, date, seq FROM state WHERE account_id = ?
+        SELECT pts, qts, date, seq FROM state WHERE user_id = ?
     `, userID)
 	var (
 		pts, qts, date, seq sql.NullInt64
@@ -66,9 +74,9 @@ func (r *StateRepo) GetState(ctx context.Context, userID int64) (updates.State, 
 // updated atomically afterwards.
 func (r *StateRepo) SetState(ctx context.Context, userID int64, state updates.State) error {
 	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO state (account_id, pts, qts, date, seq)
+        INSERT INTO state (user_id, pts, qts, date, seq)
         VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(account_id) DO UPDATE SET
+        ON CONFLICT(user_id) DO UPDATE SET
             pts  = excluded.pts,
             qts  = excluded.qts,
             date = excluded.date,
@@ -104,7 +112,7 @@ func (r *StateRepo) SetSeq(ctx context.Context, userID int64, seq int) error {
 // SetDateSeq updates date and seq atomically.
 func (r *StateRepo) SetDateSeq(ctx context.Context, userID int64, date, seq int) error {
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE state SET date = ?, seq = ? WHERE account_id = ?`,
+		`UPDATE state SET date = ?, seq = ? WHERE user_id = ?`,
 		date, seq, userID)
 	if err != nil {
 		return fmt.Errorf("set date+seq user=%d: %w", userID, err)
@@ -122,7 +130,7 @@ func (r *StateRepo) SetDateSeq(ctx context.Context, userID int64, date, seq int)
 // GetChannelPts returns the per-channel pts and whether the row existed.
 func (r *StateRepo) GetChannelPts(ctx context.Context, userID, channelID int64) (int, bool, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT pts FROM channel_state WHERE account_id = ? AND channel_id = ?`,
+		`SELECT pts FROM channel_state WHERE user_id = ? AND channel_id = ?`,
 		userID, channelID)
 	var pts int
 	if err := row.Scan(&pts); err != nil {
@@ -137,9 +145,9 @@ func (r *StateRepo) GetChannelPts(ctx context.Context, userID, channelID int64) 
 // SetChannelPts upserts the per-channel pts.
 func (r *StateRepo) SetChannelPts(ctx context.Context, userID, channelID int64, pts int) error {
 	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO channel_state (account_id, channel_id, pts)
+        INSERT INTO channel_state (user_id, channel_id, pts)
         VALUES (?, ?, ?)
-        ON CONFLICT(account_id, channel_id) DO UPDATE SET pts = excluded.pts
+        ON CONFLICT(user_id, channel_id) DO UPDATE SET pts = excluded.pts
     `, userID, channelID, pts)
 	if err != nil {
 		return fmt.Errorf("set channel_state user=%d channel=%d: %w", userID, channelID, err)
@@ -152,7 +160,7 @@ func (r *StateRepo) SetChannelPts(ctx context.Context, userID, channelID int64, 
 // already iterated are not rolled back.
 func (r *StateRepo) ForEachChannels(ctx context.Context, userID int64, f func(ctx context.Context, channelID int64, pts int) error) error {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT channel_id, pts FROM channel_state WHERE account_id = ?`, userID)
+		`SELECT channel_id, pts FROM channel_state WHERE user_id = ?`, userID)
 	if err != nil {
 		return fmt.Errorf("query channel_state user=%d: %w", userID, err)
 	}
@@ -182,13 +190,13 @@ func (r *StateRepo) updateField(ctx context.Context, userID int64, col string, v
 	var q string
 	switch col {
 	case "pts":
-		q = `UPDATE state SET pts = ? WHERE account_id = ?`
+		q = `UPDATE state SET pts = ? WHERE user_id = ?`
 	case "qts":
-		q = `UPDATE state SET qts = ? WHERE account_id = ?`
+		q = `UPDATE state SET qts = ? WHERE user_id = ?`
 	case "date":
-		q = `UPDATE state SET date = ? WHERE account_id = ?`
+		q = `UPDATE state SET date = ? WHERE user_id = ?`
 	case "seq":
-		q = `UPDATE state SET seq = ? WHERE account_id = ?`
+		q = `UPDATE state SET seq = ? WHERE user_id = ?`
 	default:
 		return fmt.Errorf("state: unsupported column %q", col)
 	}
