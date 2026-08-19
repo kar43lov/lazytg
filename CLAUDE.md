@@ -105,7 +105,7 @@ Roadmap (v0.2 / v0.3+ / v0.5+) — в [`README.md` → Roadmap](README.md#roadma
 
 `make build|test|lint|bench|tidy|clean` — см. [`docs/ARCHITECTURE.md` → Build modes](docs/ARCHITECTURE.md#build-modes). Бутстрап окружения и `lefthook install` — [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md#bootstrap). Локальный прогон релиза и `git-cliff` — [`docs/RELEASE_PROCESS.md`](docs/RELEASE_PROCESS.md), [`README.md` → Maintainer notes](README.md#maintainer-notes).
 
-🔴 `lefthook install` в этом клоне **не выполнен** — локальные гейты (gofmt, go vet, `go test -short`, secret-scan) не срабатывают, всё ловится только в CI.
+`lefthook install` в этом клоне **выполнен** (19.08.2026) — pre-commit гоняет gofmt, `go vet`, `go test -short` и secret-scan, commit-msg проверяет commitlint. Один коммит стоит ~11 секунд; локальный зелёный результат не заменяет CI (линтера и сборки релиза в хуках нет).
 
 ---
 
