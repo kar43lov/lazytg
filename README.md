@@ -113,8 +113,7 @@ Anything not on this list is out of scope until it lands here — see the non-go
 - `$EDITOR` sandbox env-filter (only `PATH`/`HOME`/`TERM`/`LANG`/`EDITOR` pass through).
 - Multi-account UI switcher (the `--account` flag already covers the mechanics).
 - Windows builds (a separate pile of TUI pain).
-- macOS notarization (needs a $99/yr Apple ID).
-- GoReleaser `brews:` → `homebrew_casks:` migration (deprecated in `goreleaser check` output; not a v0.1.0 blocker).
+- macOS notarization (needs a $99/yr Apple ID) — until then the cask strips the Gatekeeper quarantine attribute on install.
 
 **v0.3+**
 
@@ -139,7 +138,7 @@ Anything not on this list is out of scope until it lands here — see the non-go
 
 > **The first release is an alpha** ([v0.1.0-alpha.1](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.1)),
 > so signed archives, `.deb`, `.rpm` and `go install` work, while `brew` does not
-> yet: the formula is published from stable tags only. Below are the two paths
+> yet: the cask is published from stable tags only. Below are the two paths
 > that need nothing but a terminal — build it yourself, or run a binary someone
 > built for you; [docs/INSTALL.md](docs/INSTALL.md) covers the rest.
 
@@ -208,7 +207,7 @@ bundle per archive plus a signed `checksums.txt`). Verification recipes are in
 
 Alpha means what it says: this is the first build the pipeline has ever
 produced, and the client behind it has had one live session. Homebrew is not
-served from it — the formula goes to the tap on stable tags only.
+served from it — the cask goes to the tap on stable tags only.
 
 ### Encrypted database (deferred past v0.1)
 
@@ -344,9 +343,9 @@ export LAZYTG_API_HASH=...
 
 The release pipeline assumes a few external resources exist before the first stable tag is pushed:
 
-1. **Homebrew tap repository.** Create `kar43lov/homebrew-lazytg` on GitHub manually, with an empty `Formula/` directory. GoReleaser commits the generated `Formula/lazytg.rb` here on every stable release.
+1. **Homebrew tap repository.** Create `kar43lov/homebrew-lazytg` on GitHub manually; GoReleaser creates `Casks/` itself and commits the generated `Casks/lazytg.rb` there on every stable release. (The repo currently holds an empty `Formula/` from the pre-cask setup — vestigial.)
 2. **PAT for tap pushes.** Generate a Personal Access Token (fine-grained) with `contents: write` on the `kar43lov/homebrew-lazytg` repo. Add it to this repo's secrets as `HOMEBREW_TAP_GITHUB_TOKEN`. The token is **not needed** until the first stable tag — alpha/beta/rc skip the brew upload.
-3. **First publish.** The first `git tag v0.1.0 && git push --tags` (without `-alpha`/`-beta`/`-rc` suffix) pushes the formula automatically. From that point on `brew install kar43lov/lazytg/lazytg` works.
+3. **First publish.** The first `git tag v0.1.0 && git push --tags` (without `-alpha`/`-beta`/`-rc` suffix) pushes the cask automatically. From that point on `brew install kar43lov/lazytg/lazytg` works — on macOS: Homebrew on Linux does not install casks, so Linux stays on the archive, `.deb` or `.rpm`.
 
 ### SQLCipher (encrypted DB) build variant
 

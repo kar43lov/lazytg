@@ -16,7 +16,7 @@ credentials setup. Verifying release artifacts is documented separately in
 > **The only release so far is an alpha**, [v0.1.0-alpha.1](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.1).
 > Its artifacts are real and verifiable — signed archives, `.deb`, `.rpm`,
 > checksums — and `go install` resolves it. **Homebrew is the exception**: the
-> formula is pushed to the tap from stable tags only, so `brew install` has
+> cask is pushed to the tap from stable tags only, so `brew install` has
 > nothing to find until `v0.1.0` proper. Treat everything here as first-build
 > software: the pipeline that produced it had never run before that tag.
 
@@ -28,7 +28,7 @@ credentials setup. Verifying release artifacts is documented separately in
 | [`.deb`](#deb-debian-ubuntu-mint)          | apt-based distros, headless Linux            | **now** (alpha) |
 | [`.rpm`](#rpm-fedora-rhel-opensuse)        | dnf/zypper distros                           | **now** (alpha) |
 | [`go install`](#go-install)                | You already have a Go toolchain              | **now** (alpha) |
-| [Homebrew tap](#homebrew-macos-linux)      | Default for macOS users                      | first stable tag |
+| [Homebrew tap](#homebrew-macos)            | Default for macOS users                      | first stable tag |
 
 Once tagged, every release publishes the same set of artifacts and the choice
 becomes purely one of delivery preference.
@@ -88,13 +88,13 @@ commands.
 
 ---
 
-## Homebrew (macOS, Linux)
+## Homebrew (macOS)
 
-> Available once the first stable tag is published — the formula is not pushed
+> Available once the first stable tag is published — the cask is not pushed
 > for prereleases. See [Available today](#available-today).
 
 
-The Homebrew formula is auto-updated by GoReleaser on every **stable** tag
+The Homebrew cask is auto-updated by GoReleaser on every **stable** tag
 (`v1.2.3`, no suffix). Pre-release tags (`-alpha`, `-beta`, `-rc`) ship to
 GitHub Releases but **do not** update the tap.
 
@@ -103,8 +103,23 @@ brew install kar43lov/lazytg/lazytg
 brew upgrade lazytg               # later
 ```
 
-The tap repo is `kar43lov/homebrew-lazytg`. The formula installs a single
-`lazytg` binary under the active Homebrew prefix.
+The tap repo is `kar43lov/homebrew-lazytg`. The cask installs a single
+`lazytg` binary under the active Homebrew prefix and clears the macOS
+quarantine attribute on it — the binary is signed with cosign, which
+Gatekeeper does not recognise, so without that step first run is refused.
+
+**Know what you are trusting on this route.** Homebrew checks the SHA256
+recorded in the cask, and that cask is committed by the release pipeline
+itself — so the integrity guarantee is "the tap repo and the GitHub Release
+are intact", not a signature you verified. The cosign bundle is never checked
+here, and the quarantine strip removes Gatekeeper as the remaining backstop.
+If you want the signature verified, take the [manual
+archive](#manual-binary-archive) route and follow
+[docs/VERIFY.md](VERIFY.md) — that path is unchanged and checks both.
+
+**Linux is not covered by this route.** GoReleaser writes Linux URLs into the
+cask, but Homebrew on Linux refuses casks outright; use the `.deb`, `.rpm` or
+the archive above.
 
 ---
 
