@@ -16,6 +16,11 @@ import (
 // implementations slot in without churning the call sites.
 type LiveStore interface {
 	SaveMessage(ctx context.Context, m domain.Message) error
+	// EnsureChat creates the parent chats row when the peer is unknown and
+	// leaves an existing row untouched. Without it a message from a chat
+	// outside the synced dialog window fails its foreign key and is lost.
+	// The date orders the new row in the chat list; see the implementation.
+	EnsureChat(ctx context.Context, id int64, t domain.ChatType, lastMessageDate time.Time) error
 }
 
 // LiveService persists incoming MessageReceived events into the local
@@ -123,6 +128,18 @@ func (s *LiveService) drain(ctx context.Context, ch <-chan events.Event) error {
 // surprise.
 func (s *LiveService) persist(ctx context.Context, ev events.MessageReceived) {
 	start := s.now()
+	// The parent row first: messages.chat_id references chats(id), so a
+	// message from a peer dialog sync has not reached yet would otherwise be
+	// rejected and dropped. A failure here is logged and the save is still
+	// attempted — if the chat does exist, the message is fine, and if it does
+	// not, SaveMessage reports the foreign key error as before rather than
+	// hiding it behind this one.
+	if ev.ChatType != "" {
+		if err := s.store.EnsureChat(ctx, ev.ChatID, ev.ChatType, ev.Date); err != nil {
+			s.log.Warn("live: ensure chat failed",
+				"chat_id", ev.ChatID, "type", ev.ChatType, "err", err)
+		}
+	}
 	if err := s.store.SaveMessage(ctx, domain.Message{
 		ID:     ev.MessageID,
 		ChatID: ev.ChatID,

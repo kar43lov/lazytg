@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/kar43lov/lazytg/internal/core/domain"
 	"github.com/kar43lov/lazytg/internal/core/events"
 )
 
@@ -62,6 +63,14 @@ func (p *PollingFetcher) Latest(ctx context.Context, chat PolledChat, sinceID in
 			FromID:    m.FromID,
 			Date:      m.Date,
 			Media:     m.Media,
+			// The kind travels with the polled chat, so it costs nothing to
+			// pass on. Today every polled chat is one the mirror already
+			// knows — the fallback only visits the three most recently
+			// active — so nothing downstream needs it. It is set anyway
+			// because the alternative is a silent trap: widen polling beyond
+			// the synced window later, and messages would start failing the
+			// chats foreign key again with no clue why.
+			ChatType: domain.ChatType(chat.Type),
 		})
 	}
 	return out, newest, nil

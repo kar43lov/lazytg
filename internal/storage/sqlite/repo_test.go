@@ -428,3 +428,95 @@ func msgIDs(ms []domain.Message) []int64 {
 	}
 	return out
 }
+
+// TestEnsureChat_LetsAMessageFromAnUnknownChatLand covers the storage half of
+// the 19.08.2026 data loss: messages.chat_id references chats(id), so a
+// message from a peer dialog sync has not reached yet was rejected outright.
+// The first half of this test is the bug reproduction — it asserts the raw
+// SaveMessage still fails, so the day the schema changes, this test says so
+// instead of quietly testing nothing.
+func TestEnsureChat_LetsAMessageFromAnUnknownChatLand(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+
+	msg := domain.Message{ID: 18, ChatID: 275641346, Date: time.Now().UTC(), Text: "2134"}
+	if err := repo.SaveMessage(ctx, msg); err == nil {
+		t.Fatalf("SaveMessage into an unknown chat succeeded — the foreign key this test is about is gone")
+	}
+
+	if err := repo.EnsureChat(ctx, msg.ChatID, domain.ChatTypePrivate, msg.Date); err != nil {
+		t.Fatalf("EnsureChat: %v", err)
+	}
+	if err := repo.SaveMessage(ctx, msg); err != nil {
+		t.Fatalf("SaveMessage after EnsureChat: %v", err)
+	}
+}
+
+// TestEnsureChat_DoesNotClobberAKnownChat pins the "does nothing" half. The
+// title arrives from dialog sync and is the one thing the live path cannot
+// supply, so an EnsureChat landing after sync must leave it alone.
+func TestEnsureChat_DoesNotClobberAKnownChat(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+
+	want := domain.Chat{ID: 275641346, Type: domain.ChatTypePrivate, Title: "Павел Карлов", UnreadCount: 3}
+	if err := repo.SaveChat(ctx, want); err != nil {
+		t.Fatalf("SaveChat: %v", err)
+	}
+	if err := repo.EnsureChat(ctx, want.ID, domain.ChatTypeSupergroup, time.Now().UTC()); err != nil {
+		t.Fatalf("EnsureChat: %v", err)
+	}
+
+	chats, err := repo.GetChats(ctx)
+	if err != nil {
+		t.Fatalf("GetChats: %v", err)
+	}
+	if len(chats) != 1 {
+		t.Fatalf("chats = %d, want 1", len(chats))
+	}
+	if chats[0].Title != want.Title || chats[0].Type != want.Type || chats[0].UnreadCount != want.UnreadCount {
+		t.Fatalf("EnsureChat overwrote a known chat: %+v, want %+v", chats[0], want)
+	}
+}
+
+// TestEnsureChat_RefusesAnEmptyKind guards the NOT NULL column from being
+// filled with an empty string, which would render as an unidentifiable row.
+func TestEnsureChat_RefusesAnEmptyKind(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+	if err := repo.EnsureChat(ctx, 1, "", time.Now().UTC()); err == nil {
+		t.Fatalf("EnsureChat with an empty kind succeeded")
+	}
+}
+
+// TestEnsureChat_SortsANewChatToTheTop covers a defect the first version of
+// EnsureChat introduced: it left last_message_date NULL, and GetChats orders
+// by COALESCE(last_message_date, 0) DESC — so the chat that had just received
+// a message appeared below every chat that ever had one, which on a real
+// account means off the bottom of the pane.
+func TestEnsureChat_SortsANewChatToTheTop(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+
+	older := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	if err := repo.SaveChat(ctx, domain.Chat{
+		ID: 1, Type: domain.ChatTypePrivate, Title: "older", LastMessageDate: older,
+	}); err != nil {
+		t.Fatalf("SaveChat: %v", err)
+	}
+
+	fresh := time.Now().UTC().Truncate(time.Second)
+	if err := repo.EnsureChat(ctx, 275641346, domain.ChatTypePrivate, fresh); err != nil {
+		t.Fatalf("EnsureChat: %v", err)
+	}
+
+	chats, err := repo.GetChats(ctx)
+	if err != nil {
+		t.Fatalf("GetChats: %v", err)
+	}
+	if len(chats) != 2 {
+		t.Fatalf("chats = %d, want 2", len(chats))
+	}
+	if chats[0].ID != 275641346 {
+		t.Fatalf("chat list starts with %d, want the freshly discovered 275641346 — the new row sorted to the bottom", chats[0].ID)
+	}
+	if !chats[0].LastMessageDate.Equal(fresh) {
+		t.Fatalf("LastMessageDate = %v, want %v", chats[0].LastMessageDate, fresh)
+	}
+}

@@ -39,9 +39,17 @@ func NewChatItem(c domain.Chat, preview string) ChatItem {
 	// push every chat below it down and break the row arithmetic the mouse
 	// hit-test relies on.
 	preview = strings.Join(strings.Fields(preview), " ")
+	// A chat discovered by the live path has no title until dialog sync runs:
+	// an update carries the peer id and kind, not a name. Rendering the raw
+	// empty string produced a blank row that looked like a drawing bug, so the
+	// id stands in until the real title arrives.
+	name := c.Title
+	if name == "" {
+		name = fmt.Sprintf("chat %d", c.ID)
+	}
 	return ChatItem{
 		id:              c.ID,
-		name:            c.Title,
+		name:            name,
 		preview:         preview,
 		lastMessageDate: c.LastMessageDate,
 		unreadCount:     c.UnreadCount,

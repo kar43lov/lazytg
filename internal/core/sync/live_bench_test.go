@@ -48,6 +48,12 @@ type stampedStore struct {
 	out    *latencyStore
 }
 
+// EnsureChat satisfies coresync.LiveStore. The fakes carry no chats
+// table, so there is no parent row to create.
+func (s *stampedStore) EnsureChat(_ context.Context, _ int64, _ domain.ChatType, _ time.Time) error {
+	return nil
+}
+
 func (s *stampedStore) SaveMessage(_ context.Context, m domain.Message) error {
 	emit := s.stamps.take(m.ID)
 	s.out.mu.Lock()
