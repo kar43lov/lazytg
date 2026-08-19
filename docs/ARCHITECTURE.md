@@ -78,7 +78,7 @@ These choices come out of the v0.1.0 brainstorm + dialectic; the trade-offs are 
 
 | Concern             | Choice                                            | Rejected (and why)                                                                                                                  |
 |---------------------|---------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|
-| Language            | Go ≥ 1.25 (pinned in go.mod)                       | Python+Textual, Rust+ratatui — Go matches the `lazygit` mental model and gives a single binary cross-build with no CGo by default.   |
+| Language            | Go ≥ 1.26.6 (the `go` directive in go.mod)         | Python+Textual, Rust+ratatui — Go matches the `lazygit` mental model and gives a single binary cross-build with no CGo by default.   |
 | MTProto             | `github.com/gotd/td`                              | TDLib over CGo (kills pure-Go cross-build, doesn't help ban-risk); Bot API (insufficient, can't read user history).                 |
 | TUI                 | `charmbracelet/bubbletea` v2 + `lipgloss` + `bubbles` (stage 2) | `gocui`, `tview` — small ecosystems, GitLab is migrating away from `tview` to bubbletea; bubbletea has 10k+ apps in production.     |
 | SQLite              | `modernc.org/sqlite` (pure Go)                    | `mattn/go-sqlite3` — needs CGo, breaks easy cross-compilation. modernc gives ~75% of CGo performance and supports FTS5 + trigram.    |

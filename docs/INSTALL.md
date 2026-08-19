@@ -22,7 +22,7 @@ credentials setup. Verifying release artifacts is documented separately in
 
 | Method                                     | Best for                                     | Available |
 |--------------------------------------------|----------------------------------------------|-----------|
-| [Build from source](#build-from-source)    | Anyone with Go ≥ 1.25                        | **now**   |
+| [Build from source](#build-from-source)    | Anyone with Go ≥ 1.26.6                      | **now**   |
 | [A binary someone built for you](#a-binary-someone-built-for-you) | No Go toolchain, no clone | **now** |
 | [Manual binary archive](#manual-binary-archive) | Anywhere — checksum + signature         | **now** (alpha) |
 | [`.deb`](#deb-debian-ubuntu-mint)          | apt-based distros, headless Linux            | **now** (alpha) |
@@ -192,7 +192,7 @@ not produced by this repo's `release.yml`.
 > onward — an alpha, and the first build this pipeline ever produced.
 
 
-Requires Go ≥ 1.25 (the `go.mod` toolchain pin).
+Requires Go ≥ 1.26.6 (the `go` directive in `go.mod`). The version is not arbitrary: it is the first release without the standard-library vulnerabilities `govulncheck` reports as reachable from this code, two of them in `crypto/tls`.
 
 ```sh
 go install github.com/kar43lov/lazytg/cmd/lazytg@v0.1.0

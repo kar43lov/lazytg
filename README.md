@@ -130,7 +130,7 @@ Anything not on this list is out of scope until it lands here — see the non-go
 
 ## Requirements
 
-- Go ≥ 1.25 to build (`go.mod` toolchain pin).
+- Go ≥ 1.26.6 to build (the `go` directive in `go.mod`; older toolchains fetch it automatically under the default `GOTOOLCHAIN=auto`).
 - On Linux: a running D-Bus session with a Secret Service provider (gnome-keyring, KWallet, etc.) so the keyring can hold the passphrase for you. Headless boxes prompt for it at startup instead.
 - SQLite ≥ 3.34 is bundled by `modernc.org/sqlite` — no system SQLite required.
 - Telegram API credentials — every build needs a pair, and **no lazytg build ships one, releases included**. Register an application at <https://my.telegram.org/apps> (one form, one minute) and export `LAZYTG_API_ID` / `LAZYTG_API_HASH`. A key compiled into a public binary is a published key — `strings` prints it — and Telegram blocks published keys permanently for every user of that build at once, which is why releases deliberately carry none. If that form will not issue an application for your number, which is common from some regions, [docs/INSTALL.md](docs/INSTALL.md#when-mytelegramorg-will-not-issue-credentials) lists what actually works. `lazytg version` prints which of the three sources is in effect, so "is it me or the build?" is one command.
@@ -143,7 +143,7 @@ Anything not on this list is out of scope until it lands here — see the non-go
 > that need nothing but a terminal — build it yourself, or run a binary someone
 > built for you; [docs/INSTALL.md](docs/INSTALL.md) covers the rest.
 
-**Build it yourself** — needs Go ≥ 1.25 and takes about a minute:
+**Build it yourself** — needs Go ≥ 1.26.6 and takes about a minute:
 
 ```sh
 git clone https://github.com/kar43lov/lazytg.git && cd lazytg

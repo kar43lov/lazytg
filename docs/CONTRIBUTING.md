@@ -6,7 +6,7 @@ Thanks for considering a contribution. lazytg is in alpha — APIs, package layo
 
 ### Toolchain
 
-- Go ≥ 1.25 (pinned in `go.mod`; CI uses `go-version-file: go.mod`)
+- Go ≥ 1.26.6 (the `go` directive in `go.mod`; CI uses `go-version-file: go.mod`, which reads exactly that line)
 - [`golangci-lint`](https://golangci-lint.run/) — required for any PR
 - [`lefthook`](https://github.com/evilmartians/lefthook) — recommended for client-side pre-commit hooks (gofmt, go vet, go test -short)
 - [`goreleaser`](https://goreleaser.com/) — only needed if you want to test the release pipeline locally
