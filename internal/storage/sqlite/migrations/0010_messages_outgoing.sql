@@ -1,0 +1,25 @@
+-- 0010_messages_outgoing: remember which side sent a message.
+--
+-- Telegram omits from_id in a 1:1 dialog — the sender follows from the `out`
+-- flag and the peer, so the field carries no information and the wire format
+-- leaves it out. lazytg stored only from_id, so every private message landed
+-- with NULL and the thread pane, which reads from_id == 0 as "service
+-- message", labelled the whole conversation `system`.
+--
+-- Worse, it changed under the user: a live update sometimes arrives in the
+-- short form, where gotd fills from_id in for us, so a fresh message showed
+-- the sender's name — until the next open of the chat pulled the same message
+-- through messages.getHistory and overwrote the row with NULL. Seen live on
+-- 19.08.2026: four messages, three of them relabelled `system` behind the
+-- user's back.
+--
+-- Storing the direction fixes the label without a self-id lookup, and gives
+-- the unread counter the one fact it needs to not count the reader's own
+-- messages as unread.
+--
+-- Existing rows default to 0 (incoming). That is the safe way round: a
+-- mislabelled own message is cosmetic and self-corrects the next time the
+-- chat is opened, whereas defaulting to 1 would announce every archived
+-- message as the reader's own.
+
+ALTER TABLE messages ADD COLUMN outgoing INTEGER NOT NULL DEFAULT 0;

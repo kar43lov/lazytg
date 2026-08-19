@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	stdsync "sync"
+	"sync/atomic"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
 	"github.com/kar43lov/lazytg/internal/core/events"
@@ -23,7 +24,8 @@ type ReadStore interface {
 	ClearUnread(ctx context.Context, chatID int64) error
 }
 
-// ReadService marks a chat read when the user opens it.
+// ReadService tells Telegram what the user has read: the chat they open, and
+// anything arriving into it while it stays open.
 //
 // Until this existed, lazytg never told the server anything: opening a
 // conversation here left it unread on every other device and left the local
@@ -35,14 +37,21 @@ type ReadStore interface {
 // The service is deliberately quiet on the wire. It skips a chat whose newest
 // message it has already acknowledged in this session, so re-entering a
 // conversation costs nothing, and it skips a chat with no messages at all.
-// What remains is one request per conversation the user actually opens with
-// something new in it — which is exactly what a person reading their messages
-// produces.
+// Acknowledgements for an ongoing conversation coalesce to the newest one
+// pending, because marking message 40 read covers everything below it. What
+// remains is one request per conversation the user actually opens, plus one
+// per burst of messages they sit and read — which is exactly what a person
+// reading their messages produces.
 type ReadService struct {
 	marker ReadMarker
 	store  ReadStore
 	bus    *events.Bus
 	log    *slog.Logger
+
+	// openChat is the conversation the user is looking at, tracked from
+	// ChatOpened so a message arriving into it can be acknowledged as it
+	// lands rather than waiting for the next open.
+	openChat atomic.Int64
 
 	// The stdlib import is aliased because this package is itself named sync.
 	mu stdsync.Mutex
@@ -74,6 +83,16 @@ func NewReadService(marker ReadMarker, store ReadStore, bus *events.Bus, log *sl
 // request takes.
 const pendingReads = 8
 
+// readRequest is one acknowledgement waiting to be sent. maxID is the message
+// to report as read, or zero to mean "whatever the mirror says is newest" —
+// the form an open carries, since the user has just seen everything in the
+// chat. A message arriving into an open chat names its own id instead, which
+// keeps the acknowledgement correct even if the live save has not landed yet.
+type readRequest struct {
+	chatID int64
+	maxID  int64
+}
+
 // Start subscribes to the bus and returns a channel closed when both its
 // goroutines exit, mirroring LiveService so the cmd layer wires them the same
 // way.
@@ -84,6 +103,15 @@ const pendingReads = 8
 // eats buffer, and a ChatOpened landing in that window would be dropped — the
 // chat would silently stay unread, which is exactly the bug this service
 // exists to fix. The reader now never blocks; the worker does the waiting.
+//
+// The two kinds of acknowledgement get their own queues because they behave
+// differently under load. An open is a discrete user action and each one
+// matters, so those are queued. A message arriving into the open chat is a
+// stream, and only its newest entry matters — an acknowledgement of message
+// 40 covers 31 through 39 as well. Sharing one queue would let a busy
+// conversation fill all eight slots with acknowledgements that supersede each
+// other and push out the open of another chat, and would spend one request
+// per message on the way.
 func (s *ReadService) Start(ctx context.Context) <-chan struct{} {
 	done := make(chan struct{})
 	if s.bus == nil || s.marker == nil {
@@ -91,13 +119,15 @@ func (s *ReadService) Start(ctx context.Context) <-chan struct{} {
 		return done
 	}
 	ch := s.bus.Subscribe(ctx)
-	queue := make(chan int64, pendingReads)
+	opens := make(chan readRequest, pendingReads)
+	acks := make(chan readRequest, 1)
 
 	var wg stdsync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		defer close(queue)
+		defer close(opens)
+		defer close(acks)
 		for {
 			select {
 			case <-ctx.Done():
@@ -106,25 +136,42 @@ func (s *ReadService) Start(ctx context.Context) <-chan struct{} {
 				if !ok {
 					return
 				}
-				opened, ok := ev.(events.ChatOpened)
+				req, ok := s.requestFor(ev)
 				if !ok {
 					continue
 				}
+				if req.maxID != 0 {
+					replaceAck(acks, req)
+					continue
+				}
 				select {
-				case queue <- opened.ChatID:
+				case opens <- req:
 				default:
 					// The worker is behind. Dropping costs one read receipt
 					// that the next open of the chat will send anyway, and
 					// keeps this loop off the network's critical path.
-					s.log.Debug("read: acknowledgement queue full, skipping", "chat_id", opened.ChatID)
+					s.log.Debug("read: acknowledgement queue full, skipping", "chat_id", req.chatID)
 				}
 			}
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		for chatID := range queue {
-			s.markRead(ctx, chatID)
+		for opens != nil || acks != nil {
+			select {
+			case req, ok := <-opens:
+				if !ok {
+					opens = nil
+					continue
+				}
+				s.markRead(ctx, req)
+			case req, ok := <-acks:
+				if !ok {
+					acks = nil
+					continue
+				}
+				s.markRead(ctx, req)
+			}
 		}
 	}()
 
@@ -141,19 +188,23 @@ func (s *ReadService) Start(ctx context.Context) <-chan struct{} {
 // A failure to reach the server does not clear the local counter: showing a
 // chat as read while the server still holds it unread is the one outcome
 // worse than a stale badge, because the user has no way to tell.
-func (s *ReadService) markRead(ctx context.Context, chatID int64) {
+func (s *ReadService) markRead(ctx context.Context, req readRequest) {
+	chatID := req.chatID
 	if chatID == 0 || s.marker == nil {
 		return
 	}
-	msgs, err := s.store.GetMessages(ctx, chatID, 1, 0)
-	if err != nil {
-		s.log.Warn("read: newest message lookup failed", "chat_id", chatID, "err", err)
-		return
+	maxID := req.maxID
+	if maxID == 0 {
+		msgs, err := s.store.GetMessages(ctx, chatID, 1, 0)
+		if err != nil {
+			s.log.Warn("read: newest message lookup failed", "chat_id", chatID, "err", err)
+			return
+		}
+		if len(msgs) == 0 {
+			return
+		}
+		maxID = msgs[0].ID
 	}
-	if len(msgs) == 0 {
-		return
-	}
-	maxID := msgs[0].ID
 
 	s.mu.Lock()
 	already := s.acknowledged[chatID]
@@ -177,5 +228,52 @@ func (s *ReadService) markRead(ctx context.Context, chatID int64) {
 	}
 	if s.bus != nil {
 		s.bus.Publish(events.DialogUpdated{ChatID: chatID})
+	}
+}
+
+// requestFor turns a bus event into an acknowledgement, or reports that this
+// event asks for none.
+//
+// Two events do. Opening a chat acknowledges everything in it. A message
+// arriving into the chat already open acknowledges itself — without that, a
+// conversation the user is reading in real time stays unread on their phone
+// for as long as it lasts, because the open happened before the messages did.
+// The reader's own messages are skipped: Telegram has nothing to mark.
+func (s *ReadService) requestFor(ev events.Event) (readRequest, bool) {
+	switch typed := ev.(type) {
+	case events.ChatOpened:
+		s.openChat.Store(typed.ChatID)
+		return readRequest{chatID: typed.ChatID}, typed.ChatID != 0
+	case events.MessageReceived:
+		if typed.Outgoing || typed.ChatID == 0 || typed.ChatID != s.openChat.Load() {
+			return readRequest{}, false
+		}
+		return readRequest{chatID: typed.ChatID, maxID: typed.MessageID}, true
+	default:
+		return readRequest{}, false
+	}
+}
+
+// replaceAck puts req into a depth-one channel, displacing whatever is
+// already waiting there.
+//
+// Displacing is the point: acknowledgements supersede one another, so the
+// pending entry is stale the moment a newer message arrives, and holding it
+// would spend a request on a message the next one covers anyway. The drain is
+// best-effort in both directions — the worker may take the old entry between
+// the two operations, which simply means the send finds the slot empty.
+func replaceAck(acks chan readRequest, req readRequest) {
+	select {
+	case acks <- req:
+		return
+	default:
+	}
+	select {
+	case <-acks:
+	default:
+	}
+	select {
+	case acks <- req:
+	default:
 	}
 }

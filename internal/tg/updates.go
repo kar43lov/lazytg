@@ -167,18 +167,15 @@ func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass) {
 	if d.seen(key) {
 		return
 	}
-	var fromID int64
-	if from, ok := m.GetFromID(); ok {
-		fromID = peerIDToInt64(from)
-	}
 	d.bus.Publish(events.MessageReceived{
 		ChatID:    chatID,
 		MessageID: int64(m.ID),
 		Text:      m.Message,
-		FromID:    fromID,
+		FromID:    senderOf(m, chatID),
 		Date:      time.Unix(int64(m.Date), 0).UTC(),
 		Media:     MediaFromMessage(m),
 		ChatType:  chatTypeFromPeer(m.PeerID),
+		Outgoing:  m.Out,
 	})
 }
 

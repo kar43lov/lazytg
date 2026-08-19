@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
@@ -411,5 +412,119 @@ func TestSetSizeClampsTinyDimensions(t *testing.T) {
 	// View must not panic on tiny size.
 	if got := m.View(); got == "" {
 		t.Fatalf("View on tiny size should still produce header, got empty")
+	}
+}
+
+// TestSelectionFollowsTheChatAcrossAReorder is the list half of the second
+// live run. The list sorts by last-message date, so a new message promotes
+// its chat to the top and pushes everything below it down one row. The cursor
+// used to be kept by index, so it stayed on row 0 and silently came to point
+// at the promoted chat — a chat the user never selected, while the thread pane
+// still showed the old one. Observed live on 19.08.2026 as "the chat is open
+// but the thread is empty".
+func TestSelectionFollowsTheChatAcrossAReorder(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepo{chats: []domain.Chat{
+		makeChat(10, "First", false, 0, 0),
+		makeChat(20, "Second", false, -1*time.Hour, 0),
+	}}
+	m := sized(NewWithRepo(repo, nil))
+	m, _ = m.Update(runCmd(t, m.Init()).(chatsLoadedMsg))
+
+	m, _ = m.Update(keyChord(tea.KeyDown, 0))
+	if sel, _ := m.SelectedItem(); sel.ID() != 20 {
+		t.Fatalf("setup: selection id=%d, want 20", sel.ID())
+	}
+
+	// A message arrives in chat 30, which the mirror has not shown before: it
+	// sorts to the top and both existing rows shift down.
+	repo.chats = []domain.Chat{
+		makeChat(30, "Newcomer", false, time.Hour, 1),
+		makeChat(10, "First", false, 0, 0),
+		makeChat(20, "Second", false, -1*time.Hour, 0),
+	}
+	m, _ = m.Update(runCmd(t, m.Init()).(chatsLoadedMsg))
+
+	sel, ok := m.SelectedItem()
+	if !ok {
+		t.Fatalf("nothing selected after the reorder")
+	}
+	if sel.ID() != 20 {
+		t.Fatalf("selection moved to id=%d (%q) after the reorder, want the chat the user picked, id=20",
+			sel.ID(), sel.Name())
+	}
+}
+
+// TestSelectionFallsBackWhenItsChatIsGone covers the other direction: the
+// selected chat was deleted from another device, so there is no id to follow.
+// The cursor must land on the row that took its place rather than vanish.
+func TestSelectionFallsBackWhenItsChatIsGone(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepo{chats: []domain.Chat{
+		makeChat(10, "First", false, 0, 0),
+		makeChat(20, "Second", false, -1*time.Hour, 0),
+		makeChat(30, "Third", false, -2*time.Hour, 0),
+	}}
+	m := sized(NewWithRepo(repo, nil))
+	m, _ = m.Update(runCmd(t, m.Init()).(chatsLoadedMsg))
+	m, _ = m.Update(keyChord(tea.KeyDown, 0))
+
+	repo.chats = []domain.Chat{
+		makeChat(10, "First", false, 0, 0),
+		makeChat(30, "Third", false, -2*time.Hour, 0),
+	}
+	m, _ = m.Update(runCmd(t, m.Init()).(chatsLoadedMsg))
+
+	sel, ok := m.SelectedItem()
+	if !ok {
+		t.Fatalf("nothing selected after the deletion")
+	}
+	if sel.ID() != 30 {
+		t.Fatalf("selection = id=%d after its chat was deleted, want the row that took its place, id=30", sel.ID())
+	}
+}
+
+// TestSelectionIsLeftAloneWhileFiltering guards the id-following logic against
+// the list's two index spaces: Index and Select address the *filtered* list,
+// while applyLoaded only ever sees the full one. Restoring a position across a
+// reload while a filter is active would therefore aim at the wrong set — and
+// at a set SetItems has not rebuilt yet, since it re-filters asynchronously.
+func TestSelectionIsLeftAloneWhileFiltering(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepo{chats: []domain.Chat{
+		makeChat(10, "Alpha", false, 0, 0),
+		makeChat(20, "Beta", false, -1*time.Hour, 0),
+		makeChat(30, "Gamma", false, -2*time.Hour, 0),
+	}}
+	m := sized(NewWithRepo(repo, nil))
+	m, _ = m.Update(runCmd(t, m.Init()).(chatsLoadedMsg))
+
+	// Narrow the list to one row. SetFilterText/SetFilterState is the library's
+	// own way in — driving it through keystrokes would test bubbles' text input
+	// rather than this pane.
+	m.list.SetFilterText("Beta")
+	m.list.SetFilterState(list.FilterApplied)
+
+	if got := m.list.FilterState(); got == list.Unfiltered {
+		t.Fatalf("setup: filter is not active (state=%v)", got)
+	}
+	if sel, ok := m.SelectedItem(); !ok || sel.ID() != 20 {
+		t.Fatalf("setup: filtered selection id=%d ok=%v, want 20", sel.ID(), ok)
+	}
+
+	// A reload arrives while the filter is up. SetItems re-runs the filter
+	// through the command it returns, so the match set only exists once that
+	// command has been delivered — which is why applyLoaded cannot compute an
+	// index into it.
+	m, cmd := m.Update(runCmd(t, m.Init()).(chatsLoadedMsg))
+	if matches := runCmd(t, cmd); matches != nil {
+		m, _ = m.Update(matches)
+	}
+
+	if sel, ok := m.SelectedItem(); !ok || sel.ID() != 20 {
+		t.Fatalf("selection = id=%d ok=%v after a reload under a filter, want 20", sel.ID(), ok)
 	}
 }

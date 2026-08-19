@@ -25,6 +25,9 @@ type LiveStore interface {
 	// outside the synced dialog window fails its foreign key and is lost.
 	// The date orders the new row in the chat list; see the implementation.
 	EnsureChat(ctx context.Context, id int64, t domain.ChatType, lastMessageDate time.Time) (bool, error)
+	// IncrementUnread raises a chat's unread counter for a message that
+	// arrived while the user was reading something else.
+	IncrementUnread(ctx context.Context, chatID int64) error
 }
 
 // LiveService persists incoming MessageReceived events into the local
@@ -43,6 +46,11 @@ type LiveService struct {
 	log               *slog.Logger
 	now               func() time.Time
 	lastIngestLatency atomic.Int64
+	// openChat is the conversation the user is looking at, tracked from
+	// ChatOpened. Messages landing there must not raise the unread counter:
+	// they are being read as they arrive, and a badge on the chat you are
+	// reading is noise every other client knows to suppress.
+	openChat atomic.Int64
 }
 
 // NewLiveService wires a service. log may be nil — a no-op logger is used
@@ -113,6 +121,8 @@ func (s *LiveService) drain(ctx context.Context, ch <-chan events.Event) error {
 				s.persist(ctx, typed)
 			case events.MessagesDeleted:
 				s.forget(ctx, typed)
+			case events.ChatOpened:
+				s.openChat.Store(typed.ChatID)
 			}
 		}
 	}
@@ -176,20 +186,51 @@ func (s *LiveService) persist(ctx context.Context, ev events.MessageReceived) {
 		}
 	}
 	if err := s.store.SaveMessage(ctx, domain.Message{
-		ID:     ev.MessageID,
-		ChatID: ev.ChatID,
-		FromID: ev.FromID,
-		Date:   ev.Date,
-		Text:   ev.Text,
-		Media:  ev.Media,
+		ID:       ev.MessageID,
+		ChatID:   ev.ChatID,
+		FromID:   ev.FromID,
+		Date:     ev.Date,
+		Text:     ev.Text,
+		Media:    ev.Media,
+		Outgoing: ev.Outgoing,
 	}); err != nil {
 		s.log.Error("live: save message failed",
 			"chat_id", ev.ChatID, "message_id", ev.MessageID, "err", err)
 		return
 	}
+	s.countUnread(ctx, ev)
 	latency := s.now().Sub(start)
 	if latency < 0 {
 		latency = 0
 	}
 	s.lastIngestLatency.Store(latency.Milliseconds())
+}
+
+// countUnread raises the chat's badge for a message the user has not seen.
+//
+// Three things are excluded, and each of them would otherwise show a badge for
+// something already read: the user's own messages (sent from another device or
+// echoed back after lazytg sent them), messages in the chat currently open,
+// and — implicitly, by running after SaveMessage — anything whose save failed.
+//
+// The chats pane reloads off MessageReceived directly, so the new count is on
+// screen without a DialogUpdated of its own; publishing one here would land in
+// this service's own subscriber buffer, which is the fan-out amplification
+// persist's comment warns about.
+//
+// The increment is not idempotent, and deliberately relies on the dispatcher's
+// duplicate filter rather than checking storage: the same message delivered
+// twice would count twice. That filter is an in-memory LRU of 256 entries
+// covering both the live path and the polling fallback, so the only way past
+// it is a redelivery separated by more than 256 messages — after which the
+// count is corrected by the next dialog sync or by opening the chat. Making it
+// idempotent means having SaveMessage report whether the row was new, which is
+// a wider contract change than an over-count that heals itself is worth.
+func (s *LiveService) countUnread(ctx context.Context, ev events.MessageReceived) {
+	if ev.Outgoing || ev.ChatID == 0 || ev.ChatID == s.openChat.Load() {
+		return
+	}
+	if err := s.store.IncrementUnread(ctx, ev.ChatID); err != nil {
+		s.log.Warn("live: unread counter not raised", "chat_id", ev.ChatID, "err", err)
+	}
 }

@@ -101,17 +101,20 @@ func tableExists(ctx context.Context, db *sql.DB, name string) (bool, error) {
 	return found == name, nil
 }
 
-// TestMigration0009_UpgradesAnExistingDatabase covers the path the unit suite
-// never exercises: an installed database that already carries rows, rather
-// than a fresh file built by running every migration at once. Migration 0009
+// TestMigrations0009And0010_UpgradeAnExistingDatabase covers the path the unit
+// suite never exercises: an installed database that already carries rows,
+// rather than a fresh file built by running every migration at once. 0009
 // rebuilds `state` and `channel_state` to drop a foreign key that made them
-// unwritable, and a rebuild is exactly the kind of migration that loses data
-// when it is wrong.
+// unwritable — a rebuild is exactly the kind of migration that loses data when
+// it is wrong — and 0010 adds a column to a `messages` table that already has
+// rows in it.
 //
-// The fixture is the pre-0009 schema verbatim, seeded and stamped as applied
-// through version 8, so Open() has to perform the upgrade rather than create
-// the tables from scratch.
-func TestMigration0009_UpgradesAnExistingDatabase(t *testing.T) {
+// The fixture is the pre-0009 schema, seeded and stamped as applied through
+// version 8, so Open() has to perform the upgrade rather than create the
+// tables from scratch. It carries a messages table for the same reason: a
+// migration that only ever runs against the tables a test happens to create
+// is not tested against anything a user has.
+func TestMigrations0009And0010_UpgradeAnExistingDatabase(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	t.Cleanup(cancel)
 
@@ -132,10 +135,26 @@ func TestMigration0009_UpgradesAnExistingDatabase(t *testing.T) {
             pts INTEGER NOT NULL,
             PRIMARY KEY (account_id, channel_id)
         );
+        CREATE TABLE chats (
+            id INTEGER PRIMARY KEY, type TEXT NOT NULL, title TEXT, username TEXT,
+            last_message_date INTEGER, unread_count INTEGER NOT NULL DEFAULT 0,
+            pinned INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE messages (
+            id INTEGER NOT NULL,
+            chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+            from_id INTEGER, date INTEGER NOT NULL, text TEXT, reply_to INTEGER, raw_blob BLOB,
+            media_kind TEXT, media_id INTEGER, media_access_hash INTEGER,
+            media_file_reference BLOB, media_dc INTEGER, media_filename TEXT,
+            media_size INTEGER, media_mime_type TEXT, media_thumb_size TEXT,
+            PRIMARY KEY (chat_id, id)
+        );
         CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
         INSERT INTO accounts (id, phone, created_at) VALUES (1, '+10000000001', 0);
         INSERT INTO state (account_id, pts, qts, date, seq) VALUES (1, 111, 22, 333, 4);
         INSERT INTO channel_state (account_id, channel_id, pts) VALUES (1, 555, 66);
+        INSERT INTO chats (id, type, title, last_message_date) VALUES (275641346, 'private', 'Павел Карлов', 1787141544);
+        INSERT INTO messages (id, chat_id, from_id, date, text) VALUES (28, 275641346, NULL, 1787141544, 'йцу');
         INSERT INTO schema_migrations (version, applied_at)
             VALUES (1,0),(2,0),(3,0),(4,0),(5,0),(6,0),(7,0),(8,0);
     `); err != nil {
@@ -173,6 +192,22 @@ func TestMigration0009_UpgradesAnExistingDatabase(t *testing.T) {
 	state := sqlite.NewStateRepo(repo.DB())
 	if err := state.SetState(ctx, 8385473863, updates.State{Pts: 1, Qts: 2, Date: 3, Seq: 4}); err != nil {
 		t.Fatalf("SetState after upgrade: %v", err)
+	}
+
+	// 0010: the stored message survives the column addition and defaults to
+	// incoming. Defaulting the other way would announce every archived
+	// message as the reader's own.
+	var text string
+	var outgoing bool
+	if err := repo.DB().QueryRowContext(ctx,
+		`SELECT text, outgoing FROM messages WHERE chat_id = 275641346 AND id = 28`).Scan(&text, &outgoing); err != nil {
+		t.Fatalf("read migrated message row: %v", err)
+	}
+	if text != "йцу" {
+		t.Fatalf("migrated message text = %q, want %q", text, "йцу")
+	}
+	if outgoing {
+		t.Fatalf("pre-0010 message came back marked outgoing")
 	}
 
 	var violations int

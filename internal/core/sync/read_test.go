@@ -260,3 +260,77 @@ func floodBus(bus *events.Bus, n int) {
 		}
 	}
 }
+
+// TestReadService_AcknowledgesMessagesArrivingIntoTheOpenChat covers the half
+// of "mark chats read" that opening alone cannot: a conversation happening
+// live. The open acknowledges what was there at the time, and every message
+// after it stayed unread on the user's other devices for as long as the chat
+// stayed open — the badge on the phone kept climbing while they were reading
+// the messages in lazytg.
+//
+// The acknowledgement names the arriving message rather than looking the
+// newest one up, because the live save is a separate subscriber on the same
+// event: reading storage here races it and would report the previous message.
+func TestReadService_AcknowledgesMessagesArrivingIntoTheOpenChat(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	marker := &fakeMarker{}
+	store := &fakeReadStore{newest: []domain.Message{{ID: 30, ChatID: 7}}}
+	svc := NewReadService(marker, store, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+
+	bus.Publish(events.ChatOpened{ChatID: 7})
+	waitFor(t, "the open to be acknowledged", func() bool { return len(marker.snapshot()) == 1 })
+
+	bus.Publish(events.MessageReceived{ChatID: 7, MessageID: 31, Date: time.Now()})
+	waitFor(t, "the arriving message to be acknowledged", func() bool {
+		for _, c := range marker.snapshot() {
+			if c.chatID == 7 && c.maxID == 31 {
+				return true
+			}
+		}
+		return false
+	})
+
+	cancel()
+	<-done
+}
+
+// TestReadService_IgnoresMessagesOutsideTheOpenChat is the ban-risk half. Every
+// message on the account crosses this bus, and a read receipt for a chat the
+// user never looked at is both a lie to the sender and a request pattern no
+// human produces. The reader's own messages are excluded for the simpler
+// reason that Telegram has nothing to mark.
+func TestReadService_IgnoresMessagesOutsideTheOpenChat(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	marker := &fakeMarker{}
+	store := &fakeReadStore{newest: []domain.Message{{ID: 30, ChatID: 7}}}
+	svc := NewReadService(marker, store, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+
+	bus.Publish(events.ChatOpened{ChatID: 7})
+	waitFor(t, "the open to be acknowledged", func() bool { return len(marker.snapshot()) == 1 })
+
+	bus.Publish(events.MessageReceived{ChatID: 8, MessageID: 99, Date: time.Now()})
+	bus.Publish(events.MessageReceived{ChatID: 7, MessageID: 100, Date: time.Now(), Outgoing: true})
+	time.Sleep(50 * time.Millisecond)
+
+	for _, c := range marker.snapshot() {
+		if c.chatID == 8 {
+			t.Fatalf("acknowledged a chat that was never open: %+v", c)
+		}
+		if c.maxID == 100 {
+			t.Fatalf("acknowledged the reader's own message: %+v", c)
+		}
+	}
+
+	cancel()
+	<-done
+}

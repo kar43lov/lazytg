@@ -71,6 +71,7 @@ func (p *PollingFetcher) Latest(ctx context.Context, chat PolledChat, sinceID in
 			// the synced window later, and messages would start failing the
 			// chats foreign key again with no clue why.
 			ChatType: domain.ChatType(chat.Type),
+			Outgoing: m.Outgoing,
 		})
 	}
 	return out, newest, nil

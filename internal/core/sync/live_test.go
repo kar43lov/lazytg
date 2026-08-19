@@ -24,6 +24,26 @@ type recordingStore struct {
 	errVal        error
 	ensureErr     error
 	ensureCreated bool
+	unread        []int64
+	unreadErr     error
+}
+
+// IncrementUnread satisfies coresync.LiveStore and records which chats had
+// their badge raised, which is what the unread tests assert on.
+func (s *recordingStore) IncrementUnread(_ context.Context, chatID int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.unread = append(s.unread, chatID)
+	s.order = append(s.order, "unread")
+	return s.unreadErr
+}
+
+func (s *recordingStore) unreadSnapshot() []int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]int64, len(s.unread))
+	copy(out, s.unread)
+	return out
 }
 
 // deletedBatch records one DeleteMessages call.
@@ -490,4 +510,61 @@ func TestLiveService_RecordsLastIngestLatency(t *testing.T) {
 		case <-time.After(2 * time.Millisecond):
 		}
 	}
+}
+
+// TestLiveService_RaisesTheUnreadCounter is the badge half of the second live
+// run: a message arriving into a chat the user is not reading showed nothing
+// in the list. Dialog sync owned the counter and runs at startup, so the only
+// way to learn about a new message was to notice the chat had moved to the
+// top — or to restart.
+func TestLiveService_RaisesTheUnreadCounter(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	store := &recordingStore{}
+	svc := NewLiveService(store, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+
+	bus.Publish(events.MessageReceived{ChatID: 42, MessageID: 1, Text: "hi", Date: time.Now()})
+	waitFor(t, "the badge to be raised", func() bool {
+		return len(store.unreadSnapshot()) == 1
+	})
+	if got := store.unreadSnapshot()[0]; got != 42 {
+		t.Fatalf("raised the badge on chat %d, want 42", got)
+	}
+
+	cancel()
+	<-done
+}
+
+// TestLiveService_LeavesTheOpenChatAlone covers the two cases where a badge
+// would be wrong rather than missing: the chat the user is looking at, and
+// the user's own messages arriving from another device. Both would show an
+// unread count for something already read.
+func TestLiveService_LeavesTheOpenChatAlone(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	store := &recordingStore{}
+	svc := NewLiveService(store, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+
+	bus.Publish(events.ChatOpened{ChatID: 42})
+	bus.Publish(events.MessageReceived{ChatID: 42, MessageID: 1, Text: "in the open chat", Date: time.Now()})
+	bus.Publish(events.MessageReceived{ChatID: 43, MessageID: 2, Text: "mine", Date: time.Now(), Outgoing: true})
+	waitFor(t, "both messages to be stored", func() bool {
+		return len(store.snapshot()) == 2
+	})
+	time.Sleep(20 * time.Millisecond)
+
+	if raised := store.unreadSnapshot(); len(raised) != 0 {
+		t.Fatalf("raised the badge on %v, want none", raised)
+	}
+
+	cancel()
+	<-done
 }

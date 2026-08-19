@@ -34,6 +34,12 @@ type MessageReceived struct {
 	// insert fails. Empty when the producer could not determine the kind —
 	// consumers must treat that as "do not create a chat row".
 	ChatType domain.ChatType
+	// Outgoing marks a message the account itself sent — from another of the
+	// user's devices, or echoed back after lazytg sent it. Consumers need it
+	// for two things they cannot work out themselves: labelling the author in
+	// a 1:1 dialog, where Telegram sends no from_id, and leaving the unread
+	// counter alone for messages the reader wrote.
+	Outgoing bool
 }
 
 func (MessageReceived) eventMarker() {}

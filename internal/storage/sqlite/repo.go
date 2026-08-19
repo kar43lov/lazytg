@@ -388,6 +388,29 @@ func (r *Repo) ClearUnread(ctx context.Context, chatID int64) error {
 	return nil
 }
 
+// IncrementUnread raises a chat's unread counter by one for a message that
+// arrived while the user was not reading that chat.
+//
+// Dialog sync used to be the only writer, and it runs once at startup: a
+// message arriving into a closed chat therefore showed no badge at all until
+// the next launch. The counter is the only thing in the list that says "there
+// is something here you have not seen", so leaving it to a sync that may not
+// run for hours makes the list quietly wrong.
+//
+// A missing chat row is not an error. The message that triggered this is
+// stored through the same code path that creates the row, so a miss means the
+// two raced; the next sync carries the server's own count anyway.
+func (r *Repo) IncrementUnread(ctx context.Context, chatID int64) error {
+	if r.readOnly.Load() {
+		return ErrReadOnly
+	}
+	if _, err := r.db.ExecContext(ctx,
+		`UPDATE chats SET unread_count = unread_count + 1 WHERE id = ?`, chatID); err != nil {
+		return fmt.Errorf("increment unread for chat %d: %w", chatID, err)
+	}
+	return nil
+}
+
 // DB exposes the underlying *sql.DB. Used by tests and by code that needs to
 // run ad-hoc statements (e.g. the FTS index builder in stage 3). Callers are
 // expected not to close this handle.
@@ -697,9 +720,10 @@ const messageUpsertSQL = `
         INSERT INTO messages (
             id, chat_id, from_id, date, text, reply_to, raw_blob,
             media_kind, media_id, media_access_hash, media_file_reference,
-            media_dc, media_filename, media_size, media_mime_type, media_thumb_size
+            media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
+            outgoing
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chat_id, id) DO UPDATE SET
             from_id              = excluded.from_id,
             date                 = excluded.date,
@@ -714,7 +738,8 @@ const messageUpsertSQL = `
             media_filename       = excluded.media_filename,
             media_size           = excluded.media_size,
             media_mime_type      = excluded.media_mime_type,
-            media_thumb_size     = excluded.media_thumb_size
+            media_thumb_size     = excluded.media_thumb_size,
+            outgoing             = excluded.outgoing
     `
 
 // messageInsertArgs builds the positional argument slice for
@@ -762,6 +787,7 @@ func messageInsertArgs(m domain.Message) []any {
 		mediaSize,
 		mediaMime,
 		mediaThSz,
+		m.Outgoing,
 	}
 }
 
@@ -841,7 +867,8 @@ func (r *Repo) GetMessages(ctx context.Context, chatID int64, limit, offset int)
 const messageSelectColumns = `
         SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                media_kind, media_id, media_access_hash, media_file_reference,
-               media_dc, media_filename, media_size, media_mime_type, media_thumb_size
+               media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
+               outgoing
     `
 
 // scanMessages drains rows into a slice of domain.Message, parsing the
@@ -870,6 +897,7 @@ func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 			&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &raw,
 			&mediaKind, &mediaID, &mediaAH, &mediaRef,
 			&mediaDC, &mediaName, &mediaSize, &mediaMime, &mediaThSz,
+			&m.Outgoing,
 		); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}

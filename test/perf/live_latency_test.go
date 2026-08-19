@@ -63,6 +63,8 @@ func (s *inMemoryStore) DeleteMessages(_ context.Context, _ int64, ids []int64) 
 	return int64(len(ids)), nil
 }
 
+func (s *inMemoryStore) IncrementUnread(_ context.Context, _ int64) error { return nil }
+
 func (s *inMemoryStore) EnsureChat(_ context.Context, _ int64, _ domain.ChatType, _ time.Time) (bool, error) {
 	return false, nil
 }

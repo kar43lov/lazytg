@@ -52,6 +52,8 @@ type stampedStore struct {
 // table, so there is no parent row to create.
 // DeleteMessages satisfies coresync.LiveStore. The benchmark never
 // deletes, so this records nothing.
+func (s *stampedStore) IncrementUnread(_ context.Context, _ int64) error { return nil }
+
 func (s *stampedStore) DeleteMessages(_ context.Context, _ int64, ids []int64) (int64, error) {
 	return int64(len(ids)), nil
 }

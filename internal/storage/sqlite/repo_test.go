@@ -688,3 +688,61 @@ func countMessages(t *testing.T, ctx context.Context, repo *sqlite.Repo, chatID 
 	}
 	return n
 }
+
+// TestRepo_RoundTrip_MessageDirection covers migration 0010's column end to
+// end. It is worth its own test rather than a field on an existing fixture:
+// the direction is the only thing distinguishing the reader's own messages in
+// a 1:1 chat, where Telegram sends no sender at all, so a value that failed to
+// bind would relabel every private conversation as service messages — exactly
+// the defect 0010 exists to fix, silently reintroduced one layer down.
+func TestRepo_RoundTrip_MessageDirection(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := repo.SaveChat(ctx, domain.Chat{
+		ID: 275641346, Type: domain.ChatTypePrivate, Title: "Павел Карлов", LastMessageDate: now,
+	}); err != nil {
+		t.Fatalf("save chat: %v", err)
+	}
+	if err := repo.SaveMessages(ctx, []domain.Message{
+		{ID: 1, ChatID: 275641346, Date: now, Text: "theirs", Outgoing: false},
+		{ID: 2, ChatID: 275641346, Date: now, Text: "mine", Outgoing: true},
+	}); err != nil {
+		t.Fatalf("save messages: %v", err)
+	}
+
+	got, err := repo.GetMessages(ctx, 275641346, 10, 0)
+	if err != nil {
+		t.Fatalf("get messages: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("read %d messages, want 2", len(got))
+	}
+	byID := map[int64]domain.Message{}
+	for _, m := range got {
+		byID[m.ID] = m
+	}
+	if byID[1].Outgoing {
+		t.Errorf("incoming message came back outgoing")
+	}
+	if !byID[2].Outgoing {
+		t.Errorf("outgoing message came back incoming")
+	}
+
+	// The upsert path has its own column list; a message re-fetched from the
+	// server must not lose the direction the live path recorded.
+	if err := repo.SaveMessage(ctx, domain.Message{
+		ID: 2, ChatID: 275641346, Date: now, Text: "mine, edited", Outgoing: true,
+	}); err != nil {
+		t.Fatalf("re-save message: %v", err)
+	}
+	got, err = repo.GetMessages(ctx, 275641346, 10, 0)
+	if err != nil {
+		t.Fatalf("get messages after upsert: %v", err)
+	}
+	for _, m := range got {
+		if m.ID == 2 && !m.Outgoing {
+			t.Errorf("upsert dropped the direction")
+		}
+	}
+}
