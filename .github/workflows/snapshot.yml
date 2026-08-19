@@ -29,12 +29,32 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Printed so a failure here is diagnosable from the log alone. This job
+      # started dying mid-build with no output at all — no goreleaser error,
+      # just a step that ends — which is what a killed process group looks
+      # like, and there was nothing recorded to tell memory from disk.
+      - name: Runner resources before the build
+        run: |
+          nproc
+          free -h
+          df -h /
+
       - name: Run GoReleaser (snapshot)
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: '~> v2'
-          args: release --snapshot --clean --skip=publish,sign
+          # --parallelism 2 rather than the default (one per core): four
+          # concurrent links of a ~23 MB binary is where this job started
+          # failing, right after the dependency graph grew.
+          args: release --snapshot --clean --skip=publish,sign --parallelism 2
+
+      - name: Why the build stopped
+        if: always()
+        run: |
+          free -h
+          df -h /
+          sudo dmesg | grep -iE "killed process|out of memory|oom" | tail -20 || echo "no OOM records"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
