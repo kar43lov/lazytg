@@ -41,7 +41,7 @@ Think `lazygit` ergonomics, but for Telegram conversations: keyboard-driven, sin
 
 ## Status
 
-**Alpha — release-candidate.** All four stages of the [v0.1.0 roadmap](docs/plans/lazytg-v0.1.0.md) have shipped (foundation, TUI, search/files/security, release pipeline). `runTUI` now opens the MTProto session before building the UI and syncs the dialog list, so the TUI reads live Telegram data; every failure path (no session, no network, revoked authorisation, connect timeout) degrades to the cached-only view rather than refusing to start. Not yet exercised against a live account by a maintainer — see `docs/MANUAL_SMOKE.md` and CHANGELOG `Known gaps` for what remains.
+**Alpha — release-candidate.** All four stages of the [v0.1.0 roadmap](docs/plans/lazytg-v0.1.0.md) have shipped (foundation, TUI, search/files/security, release pipeline). `runTUI` now opens the MTProto session before building the UI and syncs the dialog list, so the TUI reads live Telegram data; every failure path (no session, no network, revoked authorisation, connect timeout) degrades to the cached-only view rather than refusing to start. Two live runs against a real account have happened (18-19.08.2026): the basic path, and a connection cut with every interface down. Both found defects no test had — see CHANGELOG `Known gaps` for what is still open and `docs/MANUAL_SMOKE.md` for the checklist those runs corrected.
 
 Current capabilities:
 
@@ -52,6 +52,7 @@ Current capabilities:
 - `lazytg debug-bundle` — produces a redacted tar.gz with version, config, log tail, db stats, goroutine dump (`docs/SECURITY.md` + `bundle_grep_test.go`).
 - `lazytg reindex --all|--chat <id>` — runs the FTS5 backfill for a chat or every chat with progress on stderr.
 - 2-pane Bubble Tea TUI: chats + thread, focus cycling, optimistic send, $EDITOR delegation, live updates, reconnect orchestration.
+- Two-way sync with your other devices: opening a chat marks it read on Telegram, and messages or chats deleted elsewhere disappear here too — including from the search index.
 - Dialog sync on start (`messages.getDialogs`, paced and capped at 5 pages / 500 chats by design) plus history backfill when a chat is opened.
 - Local search (FTS5 trigram) with operators `from:@user`, `in:#chat`, `before:`/`after:`, `has:file`, `"phrase"`, `-exclusion` (`docs/SEARCH.md`).
 - Search overlay (`/`), command palette (Ctrl+Space), file download (Ctrl+D), file upload (Ctrl+U).
