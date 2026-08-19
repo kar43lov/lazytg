@@ -11,6 +11,7 @@ import (
 	"github.com/gotd/td/telegram/updates"
 	"github.com/gotd/td/tg"
 
+	"github.com/kar43lov/lazytg/internal/core/domain"
 	"github.com/kar43lov/lazytg/internal/core/events"
 )
 
@@ -169,6 +170,7 @@ func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass) {
 		FromID:    fromID,
 		Date:      time.Unix(int64(m.Date), 0).UTC(),
 		Media:     MediaFromMessage(m),
+		ChatType:  chatTypeFromPeer(m.PeerID),
 	})
 }
 
@@ -191,6 +193,25 @@ func (d *UpdatesDispatcher) seen(key dedupKey) bool {
 		}
 	}
 	return false
+}
+
+// chatTypeFromPeer maps a Telegram peer container to the chat kind stored in
+// chats.type. Returns an empty kind for an unknown variant, which callers read
+// as "do not create a chat row for this".
+func chatTypeFromPeer(p tg.PeerClass) domain.ChatType {
+	switch p.(type) {
+	case *tg.PeerUser:
+		return domain.ChatTypePrivate
+	case *tg.PeerChat:
+		return domain.ChatTypeGroup
+	case *tg.PeerChannel:
+		// Supergroup and broadcast channel are the same peer container here;
+		// dialog sync corrects the distinction when it next runs. Guessing
+		// supergroup keeps a live-discovered chat in the list the user reads
+		// rather than filing it under broadcasts.
+		return domain.ChatTypeSupergroup
+	}
+	return ""
 }
 
 // chatIDFromPeer returns the local chat id for a Telegram peer. Returns 0

@@ -377,6 +377,64 @@ func (r *Repo) DeleteAccount(ctx context.Context, phone string) error {
 	return nil
 }
 
+// EnsureChat creates a bare chats row for a peer the mirror has not seen
+// before, and does nothing when the row already exists — in particular it
+// never overwrites a title, so a chat discovered live keeps whatever dialog
+// sync later fills in.
+//
+// It exists because messages.chat_id references chats(id): a message from a
+// chat outside the synced dialog window had no parent row, the insert failed
+// with FOREIGN KEY constraint failed (787), and the message was dropped on
+// the floor. Live-observed, 19.08.2026: a first message from a brand-new
+// contact was lost, and the chat itself stayed invisible until a restart ran
+// dialog sync.
+//
+// The title is left NULL deliberately. An update carries the peer kind but
+// not always a name, and inventing one here would win the ON CONFLICT race
+// against the real title. Consumers render a placeholder until sync fills it.
+//
+// lastMessageDate is not optional in practice: GetChats orders by
+// COALESCE(last_message_date, 0) DESC, so a row created without one sorts
+// below every chat that has ever received a message — the chat that just
+// pinged you would appear at the very bottom of the list. The caller passes
+// the date of the message that prompted the row.
+func (r *Repo) EnsureChat(ctx context.Context, id int64, t domain.ChatType, lastMessageDate time.Time) error {
+	if r.readOnly.Load() {
+		return ErrReadOnly
+	}
+	if id == 0 || t == "" {
+		return fmt.Errorf("ensure chat: id and type are required (id=%d type=%q)", id, t)
+	}
+	// Read before write. This runs on the live path, once per incoming
+	// message, and almost every one of them belongs to a chat that already
+	// exists — but an INSERT takes the write lock whether or not it ends up
+	// inserting anything. lazytg already writes from four places at once
+	// (live drain, backfill, dialog sync, FTS reindex) and pays for that in
+	// contention; doubling the write-lock acquisitions on the busiest path to
+	// discover "nothing to do" is the wrong trade. The SELECT is a WAL read
+	// and blocks nobody.
+	//
+	// The check is not a lock: two callers can both find the row missing and
+	// both insert. ON CONFLICT DO NOTHING makes the loser a no-op, which is
+	// the same outcome as before.
+	var exists int
+	switch err := r.db.QueryRowContext(ctx, `SELECT 1 FROM chats WHERE id = ?`, id).Scan(&exists); {
+	case err == nil:
+		return nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("ensure chat %d: lookup: %w", id, err)
+	}
+	_, err := r.db.ExecContext(ctx, `
+        INSERT INTO chats (id, type, last_message_date, unread_count, pinned)
+        VALUES (?, ?, ?, 0, 0)
+        ON CONFLICT(id) DO NOTHING
+    `, id, string(t), nullableUnix(lastMessageDate))
+	if err != nil {
+		return fmt.Errorf("ensure chat %d: %w", id, err)
+	}
+	return nil
+}
+
 // SaveChat upserts a chat row using SQLite's ON CONFLICT REPLACE semantics.
 func (r *Repo) SaveChat(ctx context.Context, c domain.Chat) error {
 	if r.readOnly.Load() {

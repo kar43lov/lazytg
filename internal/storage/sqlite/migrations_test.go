@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gotd/td/telegram/updates"
+
 	"github.com/kar43lov/lazytg/internal/storage/sqlite"
 )
 
@@ -97,4 +99,87 @@ func tableExists(ctx context.Context, db *sql.DB, name string) (bool, error) {
 		return false, err
 	}
 	return found == name, nil
+}
+
+// TestMigration0009_UpgradesAnExistingDatabase covers the path the unit suite
+// never exercises: an installed database that already carries rows, rather
+// than a fresh file built by running every migration at once. Migration 0009
+// rebuilds `state` and `channel_state` to drop a foreign key that made them
+// unwritable, and a rebuild is exactly the kind of migration that loses data
+// when it is wrong.
+//
+// The fixture is the pre-0009 schema verbatim, seeded and stamped as applied
+// through version 8, so Open() has to perform the upgrade rather than create
+// the tables from scratch.
+func TestMigration0009_UpgradesAnExistingDatabase(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	t.Cleanup(cancel)
+
+	path := filepath.Join(t.TempDir(), "v8.db")
+	seed, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open seed db: %v", err)
+	}
+	if _, err := seed.ExecContext(ctx, `
+        CREATE TABLE accounts (id INTEGER PRIMARY KEY, phone TEXT UNIQUE NOT NULL, alias TEXT, created_at INTEGER NOT NULL);
+        CREATE TABLE state (
+            account_id INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+            pts INTEGER, qts INTEGER, date INTEGER, seq INTEGER
+        );
+        CREATE TABLE channel_state (
+            account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+            channel_id INTEGER NOT NULL,
+            pts INTEGER NOT NULL,
+            PRIMARY KEY (account_id, channel_id)
+        );
+        CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
+        INSERT INTO accounts (id, phone, created_at) VALUES (1, '+10000000001', 0);
+        INSERT INTO state (account_id, pts, qts, date, seq) VALUES (1, 111, 22, 333, 4);
+        INSERT INTO channel_state (account_id, channel_id, pts) VALUES (1, 555, 66);
+        INSERT INTO schema_migrations (version, applied_at)
+            VALUES (1,0),(2,0),(3,0),(4,0),(5,0),(6,0),(7,0),(8,0);
+    `); err != nil {
+		t.Fatalf("seed pre-0009 schema: %v", err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("close seed db: %v", err)
+	}
+
+	repo, err := sqlite.Open(ctx, path)
+	if err != nil {
+		t.Fatalf("open an existing database: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+
+	var pts, qts, date, seq int
+	if err := repo.DB().QueryRowContext(ctx,
+		`SELECT pts, qts, date, seq FROM state WHERE user_id = 1`).Scan(&pts, &qts, &date, &seq); err != nil {
+		t.Fatalf("read migrated state row: %v", err)
+	}
+	if pts != 111 || qts != 22 || date != 333 || seq != 4 {
+		t.Fatalf("migrated state = (%d,%d,%d,%d), want (111,22,333,4)", pts, qts, date, seq)
+	}
+
+	var channelPts int
+	if err := repo.DB().QueryRowContext(ctx,
+		`SELECT pts FROM channel_state WHERE user_id = 1 AND channel_id = 555`).Scan(&channelPts); err != nil {
+		t.Fatalf("read migrated channel_state row: %v", err)
+	}
+	if channelPts != 66 {
+		t.Fatalf("migrated channel pts = %d, want 66", channelPts)
+	}
+
+	// The point of the migration: a Telegram user id no accounts row matches.
+	state := sqlite.NewStateRepo(repo.DB())
+	if err := state.SetState(ctx, 8385473863, updates.State{Pts: 1, Qts: 2, Date: 3, Seq: 4}); err != nil {
+		t.Fatalf("SetState after upgrade: %v", err)
+	}
+
+	var violations int
+	if err := repo.DB().QueryRowContext(ctx, `SELECT count(*) FROM pragma_foreign_key_check`).Scan(&violations); err != nil {
+		t.Fatalf("foreign_key_check: %v", err)
+	}
+	if violations != 0 {
+		t.Fatalf("foreign_key_check reported %d violations after the upgrade", violations)
+	}
 }

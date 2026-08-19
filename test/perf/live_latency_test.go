@@ -55,6 +55,12 @@ func (s *inMemoryStore) recordEmit(messageID int64, at time.Time) {
 	s.mu.Unlock()
 }
 
+// EnsureChat satisfies coresync.LiveStore. The fakes carry no chats
+// table, so there is no parent row to create.
+func (s *inMemoryStore) EnsureChat(_ context.Context, _ int64, _ domain.ChatType, _ time.Time) error {
+	return nil
+}
+
 func (s *inMemoryStore) SaveMessage(_ context.Context, m domain.Message) error {
 	now := s.clock()
 	s.mu.Lock()

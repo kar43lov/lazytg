@@ -20,6 +20,46 @@ func openStateRepo(t *testing.T, accountID int64) (*sqlite.StateRepo, *sqlite.Re
 	return sqlite.NewStateRepo(repo.DB()), repo, ctx
 }
 
+// TestStateRepo_AcceptsATelegramUserID is the case production actually runs
+// and the whole suite used to miss. Every other test here seeds an accounts
+// row whose id equals the user id it then passes in, which is only ever true
+// by coincidence: gotd hands over the Telegram self-user id (nine digits)
+// while accounts.id is a local rowid — 1 on a first login.
+//
+// While the state table carried a foreign key to accounts(id), that mismatch
+// made SetState fail with "FOREIGN KEY constraint failed (787)" on every real
+// account, updates.Manager refused to start, and the client ran without gap
+// recovery while reporting nothing worse than a warning. So this test seeds a
+// realistic account and writes state under an id that deliberately does not
+// match it.
+func TestStateRepo_AcceptsATelegramUserID(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+	if err := repo.SaveAccount(ctx, domain.Account{ID: 1, Phone: "+10000000001"}); err != nil {
+		t.Fatalf("save account: %v", err)
+	}
+	state := sqlite.NewStateRepo(repo.DB())
+
+	const telegramUserID = int64(8385473863)
+	want := updates.State{Pts: 120, Qts: 3, Date: 1787127268, Seq: 9}
+	if err := state.SetState(ctx, telegramUserID, want); err != nil {
+		t.Fatalf("SetState with a Telegram user id: %v", err)
+	}
+	if err := state.SetChannelPts(ctx, telegramUserID, 1234567, 42); err != nil {
+		t.Fatalf("SetChannelPts with a Telegram user id: %v", err)
+	}
+
+	got, found, err := state.GetState(ctx, telegramUserID)
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if !found {
+		t.Fatalf("state written under the Telegram user id is not readable back")
+	}
+	if got != want {
+		t.Fatalf("state roundtrip = %+v, want %+v", got, want)
+	}
+}
+
 func TestStateRepo_GetState_AbsentReturnsFalse(t *testing.T) {
 	state, _, ctx := openStateRepo(t, 42)
 	got, found, err := state.GetState(ctx, 42)

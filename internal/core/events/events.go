@@ -28,6 +28,12 @@ type MessageReceived struct {
 	FromID    int64
 	Date      time.Time
 	Media     *domain.MediaInfo
+	// ChatType is the peer kind the message arrived from. It exists so a
+	// message from a chat the mirror has never seen can still be stored:
+	// messages.chat_id references chats(id), and without a parent row the
+	// insert fails. Empty when the producer could not determine the kind —
+	// consumers must treat that as "do not create a chat row".
+	ChatType domain.ChatType
 }
 
 func (MessageReceived) eventMarker() {}

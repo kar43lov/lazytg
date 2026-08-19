@@ -15,16 +15,53 @@ import (
 // recordingStore captures every SaveMessage call so tests can assert on
 // the exact sequence of writes the LiveService produced.
 type recordingStore struct {
-	mu     sync.Mutex
-	calls  []domain.Message
-	errOn  int
-	errVal error
+	mu        sync.Mutex
+	calls     []domain.Message
+	ensured   []ensuredChat
+	order     []string
+	errOn     int
+	errVal    error
+	ensureErr error
+}
+
+// ensuredChat records one EnsureChat call so a test can assert the parent
+// row was created before the message that needs it.
+type ensuredChat struct {
+	id   int64
+	kind domain.ChatType
+	at   time.Time
+}
+
+// EnsureChat satisfies coresync.LiveStore and records the call. The fake
+// carries no chats table; what matters is that the service asks.
+func (s *recordingStore) EnsureChat(_ context.Context, id int64, t domain.ChatType, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensured = append(s.ensured, ensuredChat{id: id, kind: t, at: at})
+	s.order = append(s.order, "ensure")
+	return s.ensureErr
+}
+
+// orderSnapshot returns the interleaved sequence of storage calls, so a test
+// can assert that the parent row is created before the row that needs it.
+func (s *recordingStore) orderSnapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.order...)
+}
+
+// ensuredSnapshot returns a copy of the recorded EnsureChat calls.
+func (s *recordingStore) ensuredSnapshot() []ensuredChat {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]ensuredChat(nil), s.ensured...)
 }
 
 func (s *recordingStore) SaveMessage(_ context.Context, m domain.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, m)
+	s.order = append(s.order, "save")
 	if s.errOn > 0 && len(s.calls) == s.errOn {
 		return s.errVal
 	}
@@ -76,6 +113,108 @@ func TestLiveService_PersistsMessageReceived(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatalf("Start drain did not exit after cancel")
 	}
+}
+
+// TestLiveService_CreatesTheParentChatBeforeSaving covers the live-observed
+// data loss of 19.08.2026: a first message from a contact the mirror had
+// never seen was rejected by messages.chat_id's foreign key and dropped, and
+// the chat stayed invisible in the list until a restart ran dialog sync.
+//
+// The service must ask for the parent row before the message, and it must do
+// so with the peer kind the event carries — a chats row has a NOT NULL type.
+func TestLiveService_CreatesTheParentChatBeforeSaving(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	store := &recordingStore{}
+	svc := NewLiveService(store, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+
+	bus.Publish(events.MessageReceived{
+		ChatID: 275641346, MessageID: 18, Text: "2134",
+		Date: time.Date(2026, 8, 19, 11, 14, 28, 0, time.UTC), ChatType: domain.ChatTypePrivate,
+	})
+
+	deadline := time.After(time.Second)
+	for {
+		ensured := store.ensuredSnapshot()
+		if len(ensured) == 1 {
+			if ensured[0].id != 275641346 || ensured[0].kind != domain.ChatTypePrivate {
+				t.Fatalf("EnsureChat called with %+v, want the event's chat and kind", ensured[0])
+			}
+			// The date orders the row in the chat list: without it the chat
+			// that just pinged the user sorts below every chat that ever
+			// received a message.
+			if !ensured[0].at.Equal(time.Date(2026, 8, 19, 11, 14, 28, 0, time.UTC)) {
+				t.Fatalf("EnsureChat date = %v, want the message date", ensured[0].at)
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("EnsureChat was never called; a message from an unknown chat would be dropped")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	// The name of this test is a claim about order, so it is asserted rather
+	// than implied: a swapped persist() would still create the row, and the
+	// message it was created for would still be lost. Waiting for both calls
+	// first — the loop above returns as soon as EnsureChat lands, which can
+	// be before SaveMessage has run at all.
+	orderDeadline := time.After(time.Second)
+	var order []string
+	for {
+		order = store.orderSnapshot()
+		if len(order) >= 2 {
+			break
+		}
+		select {
+		case <-orderDeadline:
+			t.Fatalf("storage calls = %v, want both a chat row and a message", order)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	if order[0] != "ensure" || order[1] != "save" {
+		t.Fatalf("storage call order = %v, want the chat row created before the message", order)
+	}
+
+	cancel()
+	<-done
+}
+
+// TestLiveService_SkipsEnsureChatWithoutAKind pins the other half: an event
+// whose producer could not determine the peer kind must not invent one. A
+// chats row with an empty type would be worse than no row — it renders as an
+// unidentifiable entry and overwrites nothing that dialog sync could fix.
+func TestLiveService_SkipsEnsureChatWithoutAKind(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	store := &recordingStore{}
+	svc := NewLiveService(store, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+
+	bus.Publish(events.MessageReceived{ChatID: 5, MessageID: 1, Text: "x", Date: time.Now()})
+
+	deadline := time.After(time.Second)
+	for len(store.snapshot()) != 1 {
+		select {
+		case <-deadline:
+			t.Fatalf("message was never saved")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	if ensured := store.ensuredSnapshot(); len(ensured) != 0 {
+		t.Fatalf("EnsureChat called %d time(s) for an event with no chat kind: %+v", len(ensured), ensured)
+	}
+
+	cancel()
+	<-done
 }
 
 func TestLiveService_IgnoresUnrelatedEvents(t *testing.T) {
