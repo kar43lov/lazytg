@@ -16,11 +16,15 @@ import (
 // implementations slot in without churning the call sites.
 type LiveStore interface {
 	SaveMessage(ctx context.Context, m domain.Message) error
+	// DeleteMessages removes messages Telegram reported as deleted. A zero
+	// chat id means the update named no chat, which is how deletions in
+	// private chats and basic groups arrive.
+	DeleteMessages(ctx context.Context, chatID int64, ids []int64) (int64, error)
 	// EnsureChat creates the parent chats row when the peer is unknown and
 	// leaves an existing row untouched. Without it a message from a chat
 	// outside the synced dialog window fails its foreign key and is lost.
 	// The date orders the new row in the chat list; see the implementation.
-	EnsureChat(ctx context.Context, id int64, t domain.ChatType, lastMessageDate time.Time) error
+	EnsureChat(ctx context.Context, id int64, t domain.ChatType, lastMessageDate time.Time) (bool, error)
 }
 
 // LiveService persists incoming MessageReceived events into the local
@@ -104,12 +108,35 @@ func (s *LiveService) drain(ctx context.Context, ch <-chan events.Event) error {
 			if !ok {
 				return ctx.Err()
 			}
-			msg, ok := ev.(events.MessageReceived)
-			if !ok {
-				continue
+			switch typed := ev.(type) {
+			case events.MessageReceived:
+				s.persist(ctx, typed)
+			case events.MessagesDeleted:
+				s.forget(ctx, typed)
 			}
-			s.persist(ctx, msg)
 		}
+	}
+}
+
+// forget removes messages another device deleted. The mirror is the only
+// copy the user has once the server has dropped them, so this is the one
+// path that can make a deletion stick — and equally the one that could lose
+// data it should not, which is why the store filters channel ids out of the
+// no-chat case rather than deleting by bare id.
+//
+// A count is logged only when it differs from what was asked for: deleting
+// messages that were never mirrored is the ordinary case (they were outside
+// the fetched history), not a problem worth a line each time.
+func (s *LiveService) forget(ctx context.Context, ev events.MessagesDeleted) {
+	removed, err := s.store.DeleteMessages(ctx, ev.ChatID, ev.MessageIDs)
+	if err != nil {
+		s.log.Error("live: delete messages failed",
+			"chat_id", ev.ChatID, "ids", len(ev.MessageIDs), "err", err)
+		return
+	}
+	if removed != int64(len(ev.MessageIDs)) {
+		s.log.Debug("live: deleted fewer messages than reported",
+			"chat_id", ev.ChatID, "reported", len(ev.MessageIDs), "removed", removed)
 	}
 }
 
@@ -135,9 +162,17 @@ func (s *LiveService) persist(ctx context.Context, ev events.MessageReceived) {
 	// not, SaveMessage reports the foreign key error as before rather than
 	// hiding it behind this one.
 	if ev.ChatType != "" {
-		if err := s.store.EnsureChat(ctx, ev.ChatID, ev.ChatType, ev.Date); err != nil {
+		created, err := s.store.EnsureChat(ctx, ev.ChatID, ev.ChatType, ev.Date)
+		switch {
+		case err != nil:
 			s.log.Warn("live: ensure chat failed",
 				"chat_id", ev.ChatID, "type", ev.ChatType, "err", err)
+		case created && s.bus != nil:
+			// A row the live path invented shows as "chat <id>" with no
+			// unread count until the server describes it. Nothing else asks
+			// for that: dialog sync runs at startup, so without this the
+			// placeholder survives until the next launch.
+			s.bus.Publish(events.ChatDiscovered{ChatID: ev.ChatID})
 		}
 	}
 	if err := s.store.SaveMessage(ctx, domain.Message{

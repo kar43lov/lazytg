@@ -38,6 +38,43 @@ type MessageReceived struct {
 
 func (MessageReceived) eventMarker() {}
 
+// MessagesDeleted is emitted when Telegram reports messages removed. It is
+// how a deletion made from another device reaches the local mirror: without
+// it the rows live on forever, because dialog sync only ever upserts.
+//
+// ChatID is zero for private chats and basic groups. Telegram's
+// updateDeleteMessages carries message ids alone, and those ids are unique
+// across that whole id space for one account — which is also why a consumer
+// must not apply them to a channel: a channel numbers its messages from one,
+// so id 42 exists in both spaces and means different things.
+type MessagesDeleted struct {
+	ChatID     int64
+	MessageIDs []int64
+}
+
+func (MessagesDeleted) eventMarker() {}
+
+// ChatOpened is emitted by the UI when the user opens a conversation. It
+// exists so the read-receipt path has a trigger without the UI reaching for
+// MTProto itself, and so the "mark as read" decision lives in one place
+// rather than in every call site that can open a chat.
+type ChatOpened struct {
+	ChatID int64
+}
+
+func (ChatOpened) eventMarker() {}
+
+// ChatDiscovered is emitted when a message arrives from a chat the mirror had
+// never seen, and the live path had to create the row itself. Such a row has
+// no title and no unread count — an update carries the peer id and kind, not
+// a name — so it exists to ask for a dialog re-sync, which is the only thing
+// that can fill the rest in.
+type ChatDiscovered struct {
+	ChatID int64
+}
+
+func (ChatDiscovered) eventMarker() {}
+
 // DialogUpdated is emitted when the chat-list ordering or metadata changes (new last message,
 // rename, pin/unpin, unread counter change).
 type DialogUpdated struct {

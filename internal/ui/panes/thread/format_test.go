@@ -468,7 +468,7 @@ func TestSetDirectory_NamesRenderedMessages(t *testing.T) {
 			{ID: 2, ChatID: peer, FromID: 8385473863, Date: fixedDate(), Text: "from me"},
 		},
 	})
-	m = m.SetDirectory(map[int64]string{peer: "Иван Егошин"}, true)
+	m = m.SetDirectory(map[int64]string{peer: "Иван Егошин"}, domain.ChatTypePrivate)
 
 	view := stripANSI(m.View())
 	if !strings.Contains(view, "Иван Егошин") {

@@ -53,6 +53,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 	case events.MessageReceived:
 		return m.applyIncoming(typed)
+	case events.MessagesDeleted:
+		return m.applyDeleted(typed)
 	case events.OutgoingMessageStateChanged:
 		return m.applyOutgoingState(typed)
 	case tea.KeyPressMsg:
@@ -225,6 +227,55 @@ func (m Model) applyIncoming(ev events.MessageReceived) (Model, tea.Cmd) {
 		Text:   ev.Text,
 		Media:  ev.Media,
 	})
+	m.recomputeOldestID()
+	m.viewport.SetContent(m.renderAll())
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
+	return m, nil
+}
+
+// applyDeleted removes messages Telegram reported as deleted from the open
+// thread, so a deletion made on another device disappears here too instead of
+// lingering until the chat is reopened.
+//
+// A zero ChatID means the update named no chat, which is how Telegram reports
+// deletions in private chats and basic groups: the ids identify the messages
+// across that entire id space. A channel numbers its own messages from one, so
+// the same id exists there and means something else — applying the update to
+// an open channel would delete an unrelated message from view. Hence the kind
+// check rather than a plain id match.
+//
+// The kind must be positively known, not merely "not a channel": it is empty
+// until SetDirectory runs, and treating unknown as private would let a
+// peerless deletion erase a live row from a channel during that window.
+func (m Model) applyDeleted(ev events.MessagesDeleted) (Model, tea.Cmd) {
+	switch {
+	case ev.ChatID != 0 && ev.ChatID != m.chatID:
+		return m, nil
+	case ev.ChatID == 0 && m.chatKind != domain.ChatTypePrivate && m.chatKind != domain.ChatTypeGroup:
+		return m, nil
+	case len(ev.MessageIDs) == 0 || len(m.messages) == 0:
+		return m, nil
+	}
+
+	doomed := make(map[int64]struct{}, len(ev.MessageIDs))
+	for _, id := range ev.MessageIDs {
+		doomed[id] = struct{}{}
+	}
+	kept := make([]domain.Message, 0, len(m.messages))
+	for _, msg := range m.messages {
+		if _, gone := doomed[msg.ID]; gone {
+			continue
+		}
+		kept = append(kept, msg)
+	}
+	if len(kept) == len(m.messages) {
+		return m, nil
+	}
+
+	wasAtBottom := m.viewport.AtBottom()
+	m.messages = kept
 	m.recomputeOldestID()
 	m.viewport.SetContent(m.renderAll())
 	if wasAtBottom {

@@ -57,8 +57,14 @@ func (s *inMemoryStore) recordEmit(messageID int64, at time.Time) {
 
 // EnsureChat satisfies coresync.LiveStore. The fakes carry no chats
 // table, so there is no parent row to create.
-func (s *inMemoryStore) EnsureChat(_ context.Context, _ int64, _ domain.ChatType, _ time.Time) error {
-	return nil
+// DeleteMessages satisfies coresync.LiveStore. The benchmark never
+// deletes, so this records nothing.
+func (s *inMemoryStore) DeleteMessages(_ context.Context, _ int64, ids []int64) (int64, error) {
+	return int64(len(ids)), nil
+}
+
+func (s *inMemoryStore) EnsureChat(_ context.Context, _ int64, _ domain.ChatType, _ time.Time) (bool, error) {
+	return false, nil
 }
 
 func (s *inMemoryStore) SaveMessage(_ context.Context, m domain.Message) error {

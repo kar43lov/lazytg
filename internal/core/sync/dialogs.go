@@ -63,6 +63,9 @@ type DialogsProvider interface {
 // *sqlite.Repo.
 type ChatStore interface {
 	SaveChat(ctx context.Context, c domain.Chat) error
+	// DeleteChatsExcept prunes chats the server no longer lists. Only ever
+	// called with a complete dialog list — see Sync.
+	DeleteChatsExcept(ctx context.Context, keep []int64) (int64, error)
 }
 
 // PeerStore persists MTProto access metadata — a subset of *sqlite.PeerRepo.
@@ -139,6 +142,10 @@ func NewDialogsService(provider DialogsProvider, chats ChatStore, peers PeerStor
 func (s *DialogsService) Sync(ctx context.Context) (int, error) {
 	var cursor DialogCursor
 	stored := 0
+	// Every chat id the server listed, and whether the walk saw the list to
+	// its end. Both are needed to prune deleted chats safely; see below.
+	seen := make([]int64, 0, s.batchSize)
+	complete := false
 
 	for page := 0; page < s.maxPages; page++ {
 		if err := ctx.Err(); err != nil {
@@ -150,9 +157,18 @@ func (s *DialogsService) Sync(ctx context.Context) (int, error) {
 			return stored, fmt.Errorf("dialogs: fetch page %d: %w", page, err)
 		}
 		if len(p.Chats) == 0 {
+			// An empty first page could mean an account with no dialogs, or a
+			// server that answered badly. The two are indistinguishable from
+			// here and only one of them makes deleting the whole mirror
+			// correct, so the walk ends without claiming completeness.
 			break
 		}
 
+		for _, c := range p.Chats {
+			// Recorded before persisting: a chat that failed to save still
+			// exists on the server and must not be pruned as deleted.
+			seen = append(seen, c.ID)
+		}
 		stored += s.persist(ctx, p)
 
 		if !p.HasMore || p.Next.IsZero() {
@@ -166,6 +182,7 @@ func (s *DialogsService) Sync(ctx context.Context) (int, error) {
 					"page", page, "chats_in_page", len(p.Chats))
 			} else {
 				s.log.Debug("dialogs: reached the end of the list", "page", page)
+				complete = true
 			}
 			break
 		}
@@ -186,8 +203,35 @@ func (s *DialogsService) Sync(ctx context.Context) (int, error) {
 		}
 	}
 
+	s.prune(ctx, seen, complete)
 	s.log.Info("dialogs: sync finished", "chats", stored)
 	return stored, nil
+}
+
+// prune removes chats the server stopped listing — the only way a chat
+// deleted from another device ever leaves the mirror, since the walk above
+// upserts and nothing else touches the table. Messages follow through the
+// cascade on messages.chat_id.
+//
+// 🔴 It runs only when the walk reached the end of the dialog list on its own.
+// The walk stops after maxPages by design (a ban-risk decision, not a
+// limitation), and for an account past that cap "absent from the pages I
+// fetched" is the normal state of most chats — pruning there would delete the
+// larger part of the mirror on every sync. The same reasoning rules out
+// pruning after a fetch error or a truncated list: each leaves the walk with
+// a partial view that looks exactly like a shrunken account.
+func (s *DialogsService) prune(ctx context.Context, seen []int64, complete bool) {
+	if !complete || len(seen) == 0 {
+		return
+	}
+	removed, err := s.chats.DeleteChatsExcept(ctx, seen)
+	if err != nil {
+		s.log.Warn("dialogs: pruning chats deleted elsewhere failed", "err", err)
+		return
+	}
+	if removed > 0 {
+		s.log.Info("dialogs: removed chats deleted elsewhere", "chats", removed)
+	}
 }
 
 // persist writes one page and returns how many chats landed in storage.

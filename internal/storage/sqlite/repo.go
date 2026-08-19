@@ -289,6 +289,105 @@ func (r *Repo) ProbeWrite(ctx context.Context) error {
 	return nil
 }
 
+// DeleteMessages removes messages a deletion update reported. Returns how
+// many rows went away, which is what the caller logs — a delete that matched
+// nothing is the interesting case, not the successful one.
+//
+// chatID zero means the update did not name a chat, which is how Telegram
+// reports deletions in private chats and basic groups: the ids alone identify
+// the messages across that whole id space. Channels number their messages
+// independently, so the same id exists there and means something else — hence
+// the type filter rather than a plain "delete by id".
+//
+// The FTS index needs no attention here: migration 0005 keeps it in step
+// through a DELETE trigger on messages.
+func (r *Repo) DeleteMessages(ctx context.Context, chatID int64, ids []int64) (int64, error) {
+	if r.readOnly.Load() {
+		return 0, ErrReadOnly
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 0, len(ids)+1)
+
+	var query string
+	if chatID != 0 {
+		query = "DELETE FROM messages WHERE chat_id = ? AND id IN (" + placeholders + ")"
+		args = append(args, chatID)
+	} else {
+		query = "DELETE FROM messages WHERE id IN (" + placeholders + ") AND chat_id IN (" +
+			"SELECT id FROM chats WHERE type IN ('private', 'group'))"
+	}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+
+	res, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("delete messages (chat=%d, n=%d): %w", chatID, len(ids), err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("delete messages: rows affected: %w", err)
+	}
+	return affected, nil
+}
+
+// DeleteChatsExcept removes every chat whose id is not in keep, and returns
+// how many went. Messages follow through the ON DELETE CASCADE on
+// messages.chat_id, and the FTS index follows them through its trigger.
+//
+// This is how a chat deleted from another device finally disappears: dialog
+// sync only upserts, so before this the row survived every sync forever.
+//
+// 🔴 The caller must only invoke this after seeing the server's dialog list in
+// full. The sync stops after five pages by design, and treating "not in the
+// pages I fetched" as "deleted" would wipe most of the mirror for anyone with
+// more than 500 chats. An empty keep set is refused for the same reason: one
+// empty page from a hiccuping server would otherwise erase everything.
+func (r *Repo) DeleteChatsExcept(ctx context.Context, keep []int64) (int64, error) {
+	if r.readOnly.Load() {
+		return 0, ErrReadOnly
+	}
+	if len(keep) == 0 {
+		return 0, errors.New("delete chats: refusing to prune against an empty chat list")
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(keep)), ",")
+	args := make([]any, 0, len(keep))
+	for _, id := range keep {
+		args = append(args, id)
+	}
+	// The concatenated part is a run of `?` built from len(keep) — every id
+	// travels as a bound argument. Same shape as DeleteMessages above.
+	//nolint:gosec // placeholders are generated; the ids themselves are bound
+	query := "DELETE FROM chats WHERE id NOT IN (" + placeholders + ")"
+	res, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("delete chats not in a %d-chat list: %w", len(keep), err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("delete chats: rows affected: %w", err)
+	}
+	return affected, nil
+}
+
+// ClearUnread zeroes a chat's unread counter after the user has read it. The
+// counter is otherwise only ever written by dialog sync, so without this the
+// badge survives reading the chat until the next sync — and on the server the
+// messages stay unread regardless, which is what ReadService reports.
+func (r *Repo) ClearUnread(ctx context.Context, chatID int64) error {
+	if r.readOnly.Load() {
+		return ErrReadOnly
+	}
+	if _, err := r.db.ExecContext(ctx,
+		`UPDATE chats SET unread_count = 0 WHERE id = ?`, chatID); err != nil {
+		return fmt.Errorf("clear unread for chat %d: %w", chatID, err)
+	}
+	return nil
+}
+
 // DB exposes the underlying *sql.DB. Used by tests and by code that needs to
 // run ad-hoc statements (e.g. the FTS index builder in stage 3). Callers are
 // expected not to close this handle.
@@ -398,12 +497,15 @@ func (r *Repo) DeleteAccount(ctx context.Context, phone string) error {
 // below every chat that has ever received a message — the chat that just
 // pinged you would appear at the very bottom of the list. The caller passes
 // the date of the message that prompted the row.
-func (r *Repo) EnsureChat(ctx context.Context, id int64, t domain.ChatType, lastMessageDate time.Time) error {
+// The bool reports whether this call created the row. The caller uses it to
+// ask for a dialog re-sync: a chat born on the live path has no title and no
+// unread count, and only the server can supply them.
+func (r *Repo) EnsureChat(ctx context.Context, id int64, t domain.ChatType, lastMessageDate time.Time) (bool, error) {
 	if r.readOnly.Load() {
-		return ErrReadOnly
+		return false, ErrReadOnly
 	}
 	if id == 0 || t == "" {
-		return fmt.Errorf("ensure chat: id and type are required (id=%d type=%q)", id, t)
+		return false, fmt.Errorf("ensure chat: id and type are required (id=%d type=%q)", id, t)
 	}
 	// Read before write. This runs on the live path, once per incoming
 	// message, and almost every one of them belongs to a chat that already
@@ -420,19 +522,23 @@ func (r *Repo) EnsureChat(ctx context.Context, id int64, t domain.ChatType, last
 	var exists int
 	switch err := r.db.QueryRowContext(ctx, `SELECT 1 FROM chats WHERE id = ?`, id).Scan(&exists); {
 	case err == nil:
-		return nil
+		return false, nil
 	case !errors.Is(err, sql.ErrNoRows):
-		return fmt.Errorf("ensure chat %d: lookup: %w", id, err)
+		return false, fmt.Errorf("ensure chat %d: lookup: %w", id, err)
 	}
-	_, err := r.db.ExecContext(ctx, `
+	res, err := r.db.ExecContext(ctx, `
         INSERT INTO chats (id, type, last_message_date, unread_count, pinned)
         VALUES (?, ?, ?, 0, 0)
         ON CONFLICT(id) DO NOTHING
     `, id, string(t), nullableUnix(lastMessageDate))
 	if err != nil {
-		return fmt.Errorf("ensure chat %d: %w", id, err)
+		return false, fmt.Errorf("ensure chat %d: %w", id, err)
 	}
-	return nil
+	created, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("ensure chat %d: rows affected: %w", id, err)
+	}
+	return created > 0, nil
 }
 
 // SaveChat upserts a chat row using SQLite's ON CONFLICT REPLACE semantics.

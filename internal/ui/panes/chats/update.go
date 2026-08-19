@@ -33,7 +33,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 	case reloadDebouncedMsg:
 		return m.applyDebouncedReload(typed.generation)
-	case events.DialogUpdated, events.MessageReceived:
+	case events.DialogUpdated, events.MessageReceived, events.MessagesDeleted:
 		return m.scheduleReload()
 	case tea.KeyPressMsg:
 		if isEnter(typed) && !m.IsFilterActive() {

@@ -240,12 +240,19 @@ func (a App) broadcastToPanes(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, tea.Batch(cmds...)
 }
 
-// requestHistory asks for a chat's history to be pulled from Telegram.
+// onChatOpened is the single funnel every path that opens a chat passes
+// through — row pick, palette pick, search jump. It does two things: announce
+// the open on the bus, and ask for the chat's history.
 //
-// Called from every path that opens a chat — row pick, palette pick, search
-// jump — because the thread pane reads the local mirror only, and a chat that
-// just arrived from the dialog sync holds no messages: without this it opens
-// empty and stays empty.
+// The announcement drives read receipts. It is published here rather than at
+// the three call sites so a fourth way to open a chat cannot quietly stop
+// marking chats read; and it is published before the backfill guard below,
+// because a cache-only launch still opens chats — there is simply no
+// ReadService listening in that case.
+//
+// The history request exists because the thread pane reads the local mirror
+// only, and a chat that just arrived from the dialog sync holds no messages:
+// without this it opens empty and stays empty.
 //
 // The call runs off the update loop because BackfillService.Enqueue blocks when
 // its queue is full, and blocking here would freeze the Bubble Tea loop — the
@@ -263,8 +270,14 @@ func (a App) broadcastToPanes(msg tea.Msg) (tea.Model, tea.Cmd) {
 // "already fetched" set. Live updates arrive without gap recovery, so anything
 // that landed while the process was elsewhere is missing from the mirror; the
 // repeat fetch on open is what closes that hole.
-func (a App) requestHistory(chatID int64) {
-	if a.backfiller == nil || chatID == 0 {
+func (a App) onChatOpened(chatID int64) {
+	if chatID == 0 {
+		return
+	}
+	if a.bus != nil {
+		a.bus.Publish(events.ChatOpened{ChatID: chatID})
+	}
+	if a.backfiller == nil {
 		return
 	}
 	backfiller := a.backfiller
@@ -297,7 +310,7 @@ func (a App) handleChatSelected(msg chats.ChatSelectedMsg) (tea.Model, tea.Cmd) 
 	a.jumpGen++
 	a.pendingScroll = nil
 
-	a.requestHistory(msg.ChatID)
+	a.onChatOpened(msg.ChatID)
 
 	var cmds []tea.Cmd
 
@@ -521,7 +534,7 @@ func (a App) handleSearchJump(msg uisearch.JumpMsg) (tea.Model, tea.Cmd) {
 	// once the messagesLoadedMsg lands, but that target now belongs to
 	// a superseded jump.
 	a.pendingScroll = nil
-	a.requestHistory(chatID)
+	a.onChatOpened(chatID)
 
 	if title, ok := a.chatTitle(chatID); ok {
 		a.status.ChatTitle = title
@@ -766,7 +779,7 @@ func (a App) handlePaletteSelected(msg palette.SelectedMsg) (tea.Model, tea.Cmd)
 	// (stale window load) and the legacy fallback's pendingScroll.
 	a.jumpGen++
 	a.pendingScroll = nil
-	a.requestHistory(chatID)
+	a.onChatOpened(chatID)
 
 	updatedThread, cmd := a.thread.OpenChat(chatID)
 	a.thread = updatedThread
@@ -926,16 +939,16 @@ func (a App) handleChatCycled(msg chatCycledMsg) (tea.Model, tea.Cmd) {
 func (a App) applyDirectory(chatID int64) App {
 	items := a.chats.Items()
 	names := make(map[int64]string, len(items))
-	private := false
+	var kind domain.ChatType
 	for _, it := range items {
 		if name := it.Name(); name != "" {
 			names[it.ID()] = name
 		}
 		if it.ID() == chatID {
-			private = it.Type() == domain.ChatTypePrivate
+			kind = it.Type()
 		}
 	}
-	a.thread = a.thread.SetDirectory(names, private)
+	a.thread = a.thread.SetDirectory(names, kind)
 	return a
 }
 

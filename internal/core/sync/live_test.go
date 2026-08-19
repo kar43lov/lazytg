@@ -15,13 +15,21 @@ import (
 // recordingStore captures every SaveMessage call so tests can assert on
 // the exact sequence of writes the LiveService produced.
 type recordingStore struct {
-	mu        sync.Mutex
-	calls     []domain.Message
-	ensured   []ensuredChat
-	order     []string
-	errOn     int
-	errVal    error
-	ensureErr error
+	mu            sync.Mutex
+	calls         []domain.Message
+	ensured       []ensuredChat
+	deleted       []deletedBatch
+	order         []string
+	errOn         int
+	errVal        error
+	ensureErr     error
+	ensureCreated bool
+}
+
+// deletedBatch records one DeleteMessages call.
+type deletedBatch struct {
+	chatID int64
+	ids    []int64
 }
 
 // ensuredChat records one EnsureChat call so a test can assert the parent
@@ -34,12 +42,28 @@ type ensuredChat struct {
 
 // EnsureChat satisfies coresync.LiveStore and records the call. The fake
 // carries no chats table; what matters is that the service asks.
-func (s *recordingStore) EnsureChat(_ context.Context, id int64, t domain.ChatType, at time.Time) error {
+func (s *recordingStore) EnsureChat(_ context.Context, id int64, t domain.ChatType, at time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ensured = append(s.ensured, ensuredChat{id: id, kind: t, at: at})
 	s.order = append(s.order, "ensure")
-	return s.ensureErr
+	return s.ensureCreated, s.ensureErr
+}
+
+// DeleteMessages satisfies coresync.LiveStore and records the call.
+func (s *recordingStore) DeleteMessages(_ context.Context, chatID int64, ids []int64) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deleted = append(s.deleted, deletedBatch{chatID: chatID, ids: append([]int64(nil), ids...)})
+	s.order = append(s.order, "delete")
+	return int64(len(ids)), nil
+}
+
+// deletedSnapshot returns a copy of the recorded DeleteMessages calls.
+func (s *recordingStore) deletedSnapshot() []deletedBatch {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]deletedBatch(nil), s.deleted...)
 }
 
 // orderSnapshot returns the interleaved sequence of storage calls, so a test
@@ -211,6 +235,113 @@ func TestLiveService_SkipsEnsureChatWithoutAKind(t *testing.T) {
 	}
 	if ensured := store.ensuredSnapshot(); len(ensured) != 0 {
 		t.Fatalf("EnsureChat called %d time(s) for an event with no chat kind: %+v", len(ensured), ensured)
+	}
+
+	cancel()
+	<-done
+}
+
+// TestLiveService_ForgetsDeletedMessages covers the path that makes a
+// deletion made on another device stick locally. The mirror is the only copy
+// left once the server has dropped the messages, so nothing else can remove
+// them: dialog sync upserts and the live path only ever adds.
+// TestLiveService_AnnouncesADiscoveredChat covers the other half of creating
+// a chat row from an update: the row has an id and a kind and nothing else,
+// so somebody has to ask the server what this conversation is called. Dialog
+// sync runs at startup only, which is why the placeholder used to survive
+// until the next launch.
+func TestLiveService_AnnouncesADiscoveredChat(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	store := &recordingStore{ensureCreated: true}
+	svc := NewLiveService(store, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+
+	watcher := bus.Subscribe(ctx)
+	bus.Publish(events.MessageReceived{
+		ChatID: 275641346, MessageID: 1, Date: time.Now(), ChatType: domain.ChatTypePrivate,
+	})
+
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case ev := <-watcher:
+			if discovered, ok := ev.(events.ChatDiscovered); ok {
+				if discovered.ChatID != 275641346 {
+					t.Fatalf("ChatDiscovered carried chat %d, want 275641346", discovered.ChatID)
+				}
+				cancel()
+				<-done
+				return
+			}
+		case <-deadline:
+			t.Fatalf("no ChatDiscovered published; a chat created live would keep its placeholder name")
+		}
+	}
+}
+
+// TestLiveService_StaysQuietForAKnownChat is the counterpart: an ordinary
+// message must not ask for a dialog refresh, or every message in the client
+// would cost one.
+func TestLiveService_StaysQuietForAKnownChat(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	store := &recordingStore{ensureCreated: false}
+	svc := NewLiveService(store, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+
+	watcher := bus.Subscribe(ctx)
+	bus.Publish(events.MessageReceived{
+		ChatID: 1, MessageID: 1, Date: time.Now(), ChatType: domain.ChatTypePrivate,
+	})
+
+	deadline := time.After(200 * time.Millisecond)
+	for {
+		select {
+		case ev := <-watcher:
+			if _, ok := ev.(events.ChatDiscovered); ok {
+				t.Fatalf("a message in a known chat announced a discovery")
+			}
+		case <-deadline:
+			cancel()
+			<-done
+			return
+		}
+	}
+}
+
+func TestLiveService_ForgetsDeletedMessages(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	store := &recordingStore{}
+	svc := NewLiveService(store, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+
+	bus.Publish(events.MessagesDeleted{ChatID: 0, MessageIDs: []int64{18, 19}})
+
+	deadline := time.After(time.Second)
+	for {
+		batches := store.deletedSnapshot()
+		if len(batches) == 1 {
+			if batches[0].chatID != 0 || len(batches[0].ids) != 2 {
+				t.Fatalf("DeleteMessages called with %+v, want the event's chat and ids", batches[0])
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("DeleteMessages was never called; deletions would never reach the mirror")
+		case <-time.After(5 * time.Millisecond):
+		}
 	}
 
 	cancel()

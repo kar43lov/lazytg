@@ -151,12 +151,19 @@ type App struct {
 	// MTProto-aware services. Populated by AttachClient. Nil-checked at
 	// every consumer (cmd/tui.go falls back to a stubbed sender / history
 	// when no client is attached, which is what the e2e tests rely on).
-	Client      *tgclient.Client
-	Sender      *coresync.SendService
-	History     *coresync.HistoryService
-	Backfill    *coresync.BackfillService
-	Updates     *tgclient.UpdatesDispatcher
-	Reconnect   *coresync.ReconnectManager
+	Client    *tgclient.Client
+	Sender    *coresync.SendService
+	History   *coresync.HistoryService
+	Backfill  *coresync.BackfillService
+	Updates   *tgclient.UpdatesDispatcher
+	Reconnect *coresync.ReconnectManager
+	// Read acknowledges opened chats to Telegram. Nil until a session is
+	// attached, so a cache-only launch simply never marks anything read.
+	Read *coresync.ReadService
+	// Rediscover refreshes the chat list when the live path invents a chat,
+	// which is the only way such a chat ever gets a title. Built by the cmd
+	// layer, which is the first place Dialogs exists.
+	Rediscover  *coresync.Rediscoverer
 	DownloadSvc *files.DownloadService
 	UploadSvc   *files.UploadService
 
@@ -415,6 +422,9 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 	a.HistoryFetcher = historyFetcher
 
 	a.History = coresync.NewHistoryService(historyFetcher, peerLookupAdapter{peers: a.Peers}, a.Repo, a.Bus, a.Log)
+	a.Read = coresync.NewReadService(
+		tgclient.NewReader(client.API(), peerResolverAdapter{peers: a.Peers}),
+		a.Repo, a.Bus, a.Log)
 	// Log rather than swallow: a nil Backfill means chats open with whatever
 	// history is already cached and never fetch more, which is indistinguishable
 	// from a network problem unless the construction failure is stated.

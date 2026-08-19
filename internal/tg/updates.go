@@ -134,6 +134,14 @@ func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass) {
 		d.publishMessage(upd.Message)
 	case *tg.UpdateNewChannelMessage:
 		d.publishMessage(upd.Message)
+	case *tg.UpdateDeleteMessages:
+		// No peer in this variant, by design on Telegram's side: message ids
+		// are unique across all private chats and basic groups for one
+		// account, so the ids alone say what to remove. Consumers must not
+		// apply them to a channel, which numbers its own messages.
+		d.publishDeleted(0, upd.Messages)
+	case *tg.UpdateDeleteChannelMessages:
+		d.publishDeleted(upd.ChannelID, upd.Messages)
 	case *tg.UpdateEditMessage, *tg.UpdateEditChannelMessage:
 		d.log.Debug("update: edit ignored in v0.1", "type", u.TypeName())
 	default:
@@ -172,6 +180,21 @@ func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass) {
 		Media:     MediaFromMessage(m),
 		ChatType:  chatTypeFromPeer(m.PeerID),
 	})
+}
+
+// publishDeleted converts a deletion update into a bus event. Deletions are
+// not deduplicated against the message LRU: that cache exists to stop the
+// same arrival being rendered twice, while a repeated delete is harmless —
+// the second one removes nothing.
+func (d *UpdatesDispatcher) publishDeleted(channelID int64, ids []int) {
+	if len(ids) == 0 {
+		return
+	}
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, int64(id))
+	}
+	d.bus.Publish(events.MessagesDeleted{ChatID: channelID, MessageIDs: out})
 }
 
 // seen reports whether key is already in the LRU and records it otherwise.
