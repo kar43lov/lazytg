@@ -109,10 +109,16 @@
 
 ### 13. Polling fallback
 
-Запустить `lazytg --polling --debug` и убедиться по логу, что fallback поднялся
+Запустить `lazytg --polling` и убедиться по логу, что fallback поднялся
 (`tui: history polling engaged`), а сообщения не дублируются в треде: polling
 работает вместе с push-обновлениями и обязан пропускать всё, что live-путь уже
 сохранил.
+
+🔴 **Логи смотреть в файле, а не через `--debug`.** Флаг дублирует их в stderr,
+а TUI рисует в alt-screen — строки лога лягут поверх интерфейса и разнесут
+картинку ровно тогда, когда за ней надо следить. Вторым терминалом:
+`tail -f "$HOME/Library/Application Support/lazytg/lazytg.log"` (на Linux —
+`$XDG_STATE_HOME/lazytg/lazytg.log`).
 
 - [ ] В логе есть `tui: history polling engaged`
 - [ ] Входящее сообщение появляется в треде ровно один раз

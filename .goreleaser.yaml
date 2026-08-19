@@ -92,23 +92,39 @@ nfpms:
       - src: README.md
         dst: /usr/share/doc/lazytg/README.md
 
-brews:
+# Casks, not formulas: `brews` is being phased out upstream, and the tap is
+# still empty (publishing is gated on a stable tag and there has not been one),
+# so migrating now costs nothing. Had a formula ever shipped, this would
+# additionally need a tap_migrations.json to move existing users over.
+#
+# The trade-off worth knowing: GoReleaser writes on_linux URLs into the cask,
+# but Homebrew on Linux refuses casks outright, so `brew install` becomes
+# macOS-only in practice. Linux users take the archive, .deb or .rpm instead —
+# all of which the same release already publishes.
+homebrew_casks:
   - name: lazytg
+    binaries:
+      - lazytg
     ids:
       - default
     repository:
       owner: kar43lov
       name: homebrew-lazytg
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
+    directory: Casks
     homepage: https://github.com/kar43lov/lazytg
     description: Local-first Telegram TUI client with FTS5 search
     license: MIT
     skip_upload: '{{ if .Prerelease }}true{{ end }}'
-    install: |
-      bin.install "lazytg"
-    test: |
-      system "#{bin}/lazytg", "version"
+    # The binary is signed with cosign, which Gatekeeper knows nothing about —
+    # without this, every install produces "cannot be opened because the
+    # developer cannot be verified" on first run.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/lazytg"]
+          end
     caveats: |
       Telegram automatically puts unofficial clients under observation.
       Use lazytg with a test account first. See:

@@ -10,22 +10,21 @@
 
 ## Подготовка (один раз перед первым release)
 
-> **Статус на 18.08.2026** (проверено командами, а не по памяти):
+> **Статус на 19.08.2026** (проверено командами, а не по памяти):
 >
 > | Шаг | Состояние |
 > |---|---|
-> | Репозиторий `kar43lov/homebrew-lazytg` | ✅ создан, публичный, `Formula/` и README на месте |
-> | Secret `HOMEBREW_TAP_GITHUB_TOKEN` | ❌ не задан (`gh secret list` пуст) — нужен PAT с `contents: write` на tap |
+> | Репозиторий `kar43lov/homebrew-lazytg` | ✅ создан, публичный; лежит пустой `Formula/` от прежней схемы — cask поедет в `Casks/`, который создаст первый stable-тег |
+> | Secret `HOMEBREW_TAP_GITHUB_TOKEN` | ✅ задан 18.08.2026, проверен через API (`push: true`) |
 > | Secrets `LAZYTG_RELEASE_API_ID` / `_HASH` | ⛔ намеренно не задаём, см. шаг 4 |
-> | Теги и релизы | ❌ `git tag` пуст, `gh release list` пуст |
+> | Теги и релизы | ✅ `v0.1.0-alpha.1` (prerelease) от 18.08.2026 — единственный |
 >
-> Пока тега нет, `README.md` и `docs/INSTALL.md` предлагают ровно два рабочих
-> пути — сборка из исходников и бинарник, собранный кем-то вручную; всё
-> остальное отдаёт 404. Таблицу обновлять вместе с реальным состоянием, иначе
-> доки снова начнут обещать несуществующее.
+> Из tap'а поставить пока нельзя и не должно: cask публикуется только со
+> stable-тега. Таблицу обновлять вместе с реальным состоянием, иначе доки
+> снова начнут обещать несуществующее.
 
 
-1. Создать репо `kar43lov/homebrew-lazytg` на GitHub (пустой, с одним каталогом `Formula/`).
+1. Создать репо `kar43lov/homebrew-lazytg` на GitHub (пустой — каталог `Casks/` goreleaser создаст сам на первом stable-теге).
 2. Сгенерировать Personal Access Token с scope `contents:write` на этот репо. Можно классический PAT или fine-grained.
 3. Добавить токен в org/repo secrets текущего репозитория `kar43lov/lazytg` под именем `HOMEBREW_TAP_GITHUB_TOKEN`. Это используется goreleaser-action.
 4. **Telegram API credentials в repo secrets — намеренно НЕ задаём.** Решение принято 18.08.2026: релизы выходят без вшитых кредов, пользователь подставляет свои.
@@ -113,7 +112,7 @@
    - Соберёт артефакты (pure-Go × 4 платформы — linux/darwin × amd64/arm64; SQLCipher отложен past v0.1)
    - Подпишет через cosign keyless OIDC (sigstore bundle per-archive + checksums.txt)
    - Создаст GitHub Release с `prerelease=true`
-   - **НЕ** обновит brew formula (skip_upload по `.Prerelease` template)
+   - **НЕ** обновит brew cask (skip_upload по `.Prerelease` template)
    - **НЕ** опубликует .deb/.rpm в публичные репозитории (только как assets в Release)
 
    _Альтернативно — если тег создан через `gh workflow run prerelease.yml`, release.yml **не триггерится автоматически** (GitHub блокирует recursive workflow dispatch для тегов, запушенных GITHUB_TOKEN). Запустить вручную:_
@@ -172,7 +171,7 @@
 
 3. CI запустит release.yml. На этот раз `release.prerelease: auto` определит, что суффикса нет → `prerelease=false`:
    - GitHub Release создаётся как stable (не prerelease)
-   - **brew formula обновляется** в `kar43lov/homebrew-lazytg/Formula/lazytg.rb`
+   - **brew cask обновляется** в `kar43lov/homebrew-lazytg/Casks/lazytg.rb`
    - **.deb / .rpm** доступны в Release assets (publishing в публичные APT/DNF репозитории — отложено на v0.2)
 
 4. Проверить:
@@ -216,7 +215,7 @@ GitHub Releases можно пометить как deprecated, но **удаля
 | Симптом | Диагностика | Решение |
 |---------|-------------|---------|
 | `goreleaser` падает на cosign sign | Проверить что `id-token: write` permission в release.yml | Добавить `permissions: id-token: write, contents: write` в job |
-| Brew formula не обновилась | Проверить `HOMEBREW_TAP_GITHUB_TOKEN` secret + scope `contents:write` на `kar43lov/homebrew-lazytg` | Перегенерировать PAT, обновить secret |
+| Brew cask не обновился | Проверить `HOMEBREW_TAP_GITHUB_TOKEN` secret + scope `contents:write` на `kar43lov/homebrew-lazytg` | Перегенерировать PAT, обновить secret |
 | `nfpms` не генерирует .deb | Проверить что `builds: [lazytg]` (только pure-Go ID) | В `.goreleaser.yaml` секция `nfpms[].ids` должна содержать `lazytg` |
 | Тег от prerelease.yml не запустил release.yml | GitHub блокирует recursive workflow dispatch для тегов от GITHUB_TOKEN | `gh workflow run release.yml --ref <tag>` (workflow_dispatch добавлен) |
 | GitHub Release создан, но без assets | goreleaser завершился до upload — смотреть логи job | Перезапустить workflow вручную через `gh workflow run release.yml --ref <tag>` |

@@ -6,7 +6,7 @@ Thanks for considering a contribution. lazytg is in alpha — APIs, package layo
 
 ### Toolchain
 
-- Go ≥ 1.25 (pinned in `go.mod`; CI uses `go-version-file: go.mod`)
+- Go ≥ 1.26.6 (the `go` directive in `go.mod`; CI uses `go-version-file: go.mod`, which reads exactly that line)
 - [`golangci-lint`](https://golangci-lint.run/) — required for any PR
 - [`lefthook`](https://github.com/evilmartians/lefthook) — recommended for client-side pre-commit hooks (gofmt, go vet, go test -short)
 - [`goreleaser`](https://goreleaser.com/) — only needed if you want to test the release pipeline locally
@@ -141,14 +141,14 @@ Before requesting review, please confirm:
 
 Releases are produced by GoReleaser via `.github/workflows/release.yml`, which fires on any `v*` tag pushed to the repository. The pipeline distinguishes pre-release tags from stable releases:
 
-| Tag shape                | GitHub Release | Brew formula update | `.deb` / `.rpm` assets | Use it for                                    |
+| Tag shape                | GitHub Release | Brew cask update    | `.deb` / `.rpm` assets | Use it for                                    |
 |--------------------------|----------------|---------------------|------------------------|-----------------------------------------------|
 | `v0.1.0-alpha.N`         | prerelease     | **skipped**         | attached as assets     | Internal smoke; not for outside testers       |
 | `v0.1.0-beta.N`          | prerelease     | **skipped**         | attached as assets     | External beta testers (≥ 3, see `docs/BETA_CHECKLIST.md`) |
 | `v0.1.0-rc.N`            | prerelease     | **skipped**         | attached as assets     | Final candidate before stable                 |
 | `v0.1.0` (no suffix)     | stable         | **published**       | attached as assets     | Public release                                |
 
-Detection is automatic — `release.prerelease: auto` in `.goreleaser.yaml` derives the prerelease flag from the SemVer suffix, and `brews[].skip_upload: '{{ if .Prerelease }}true{{ end }}'` short-circuits the homebrew tap update for any non-stable tag. To check whether a given run touched brew, scan the GoReleaser log for `homebrew tap formula` (stable) or `skipping homebrew publish` (prerelease).
+Detection is automatic — `release.prerelease: auto` in `.goreleaser.yaml` derives the prerelease flag from the SemVer suffix, and `homebrew_casks[].skip_upload: '{{ if .Prerelease }}true{{ end }}'` short-circuits the homebrew tap update for any non-stable tag. To check whether a given run touched brew, find the `homebrew cask` pipe in the GoReleaser log and read what it did there — on a stable tag it publishes to the tap, on a prerelease it reports the upload skipped.
 
 ### Cutting a pre-release tag
 

@@ -16,7 +16,7 @@ permissions:
   id-token: write
 
 # Serialize releases to avoid two simultaneous tag-publishes racing on the
-# Homebrew tap (Formula/lazytg.rb) and on Rekor signature registration.
+# Homebrew tap (Casks/lazytg.rb) and on Rekor signature registration.
 # cancel-in-progress: false — never abort a release mid-publish, queue instead.
 # `github.ref_name` strips the `refs/tags/` prefix that `on: push: tags` uses,
 # so push and workflow_dispatch on the same tag share the same group.
@@ -124,13 +124,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # HOMEBREW_TAP_GITHUB_TOKEN may be unset on first release; goreleaser only
-          # evaluates brews[].repository.token at upload time. For prerelease tags
+          # evaluates homebrew_casks[].repository.token at upload time. For prerelease tags
           # `skip_upload: true` short-circuits the upload entirely, so an empty value
           # is acceptable. For stable tags this MUST be a PAT with contents:write
           # on kar43lov/homebrew-lazytg (see docs/CONTRIBUTING.md → Release pipeline).
           # Prerelease detection (alpha/beta/rc tag suffix) is handled inside
           # .goreleaser.yaml via `release.prerelease: auto` and
-          # `brews[].skip_upload: '{{ if .Prerelease }}true{{ end }}'`.
+          # `homebrew_casks[].skip_upload: '{{ if .Prerelease }}true{{ end }}'`.
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
           # Left unset on purpose: releases ship without credentials of their
           # own, so the binaries ask the user for LAZYTG_API_ID/LAZYTG_API_HASH.
