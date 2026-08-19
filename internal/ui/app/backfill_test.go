@@ -104,7 +104,7 @@ func TestRequestHistory_IgnoresZeroChatID(t *testing.T) {
 
 	backfiller := newRecordingBackfiller()
 	a := sizedApp(t, Deps{Keymap: keymap.Default(), Backfiller: backfiller})
-	a.requestHistory(0)
+	a.onChatOpened(0)
 
 	select {
 	case id := <-backfiller.signal:

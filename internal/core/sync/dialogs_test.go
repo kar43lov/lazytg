@@ -37,9 +37,28 @@ func (f *fakeDialogsProvider) FetchDialogs(_ context.Context, _ int, cursor Dial
 }
 
 type fakeChatStore struct {
-	mu     sync.Mutex
-	saved  []domain.Chat
-	failOn map[int64]error
+	mu       sync.Mutex
+	saved    []domain.Chat
+	failOn   map[int64]error
+	pruned   [][]int64
+	pruneErr error
+}
+
+// DeleteChatsExcept records the keep-set every prune was called with, so a
+// test can assert both that a complete walk prunes and that a capped one
+// does not.
+func (f *fakeChatStore) DeleteChatsExcept(_ context.Context, keep []int64) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pruned = append(f.pruned, append([]int64(nil), keep...))
+	return 0, f.pruneErr
+}
+
+// prunedSnapshot returns the recorded prune calls.
+func (f *fakeChatStore) prunedSnapshot() [][]int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([][]int64(nil), f.pruned...)
 }
 
 func (f *fakeChatStore) SaveChat(_ context.Context, c domain.Chat) error {
@@ -382,5 +401,73 @@ func TestDialogCursor_IsZero(t *testing.T) {
 	}
 	if (DialogCursor{ID: 1}).IsZero() {
 		t.Fatalf("populated cursor must not be zero")
+	}
+}
+
+// TestDialogsSync_PrunesChatsDeletedElsewhere covers the only path by which a
+// chat deleted from another device leaves the mirror. The walk upserts, so
+// without this the row survives every sync forever — observed live on
+// 19.08.2026, where a chat deleted in Telegram Desktop stayed in the list
+// while the sync itself reported one chat fewer.
+func TestDialogsSync_PrunesChatsDeletedElsewhere(t *testing.T) {
+	chats := &fakeChatStore{}
+	svc, err := NewDialogsService(
+		&fakeDialogsProvider{pages: []DialogPage{{
+			Chats: []domain.Chat{
+				{ID: 1, Type: domain.ChatTypePrivate, Title: "kept"},
+				{ID: 2, Type: domain.ChatTypePrivate, Title: "also kept"},
+			},
+			HasMore: false,
+		}}},
+		chats, &fakePeerStore{}, nil, nil, DialogsConfig{},
+	)
+	if err != nil {
+		t.Fatalf("NewDialogsService: %v", err)
+	}
+
+	if _, err := svc.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	pruned := chats.prunedSnapshot()
+	if len(pruned) != 1 {
+		t.Fatalf("prune calls = %d, want 1 after a complete walk", len(pruned))
+	}
+	if len(pruned[0]) != 2 {
+		t.Fatalf("keep set = %v, want both chats the server listed", pruned[0])
+	}
+}
+
+// TestDialogsSync_DoesNotPruneAfterAPartialWalk is the guard that matters far
+// more than the feature. The walk stops after maxPages by design — a
+// ban-risk decision — and for an account past that cap most chats are simply
+// beyond the pages fetched. Pruning there would delete the larger part of the
+// mirror on every sync.
+func TestDialogsSync_DoesNotPruneAfterAPartialWalk(t *testing.T) {
+	chats := &fakeChatStore{}
+	// Cursors advance, so the walk is stopped by the page cap rather than by
+	// the "cursor did not advance" guard — the cap is what this is about.
+	pages := make([]DialogPage, 0, 3)
+	for i := 1; i <= 3; i++ {
+		pages = append(pages, DialogPage{
+			Chats:   []domain.Chat{{ID: int64(i), Type: domain.ChatTypePrivate, Title: "one of many"}},
+			Next:    DialogCursor{Date: 1000 + i, ID: i},
+			HasMore: true,
+		})
+	}
+	svc, err := NewDialogsService(
+		&fakeDialogsProvider{pages: pages},
+		chats, &fakePeerStore{}, nil, nil,
+		DialogsConfig{MaxPages: 2, PageDelay: time.Millisecond},
+	)
+	if err != nil {
+		t.Fatalf("NewDialogsService: %v", err)
+	}
+
+	if _, err := svc.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if pruned := chats.prunedSnapshot(); len(pruned) != 0 {
+		t.Fatalf("a capped walk pruned %d time(s) — every chat past the cap would be deleted", len(pruned))
 	}
 }

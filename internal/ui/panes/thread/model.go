@@ -85,6 +85,7 @@ type Model struct {
 	// "the reader"; both are refreshed by SetDirectory when a chat is opened.
 	authorNames map[int64]string
 	private     bool
+	chatKind    domain.ChatType
 	messages    []domain.Message
 	outgoing    []OutgoingMessage
 	// pendingServerIDs maps localID → serverID for sent optimistic
@@ -322,9 +323,14 @@ func (m Model) SetSize(width, height int) Model {
 // keyed by sender id (the app takes them from the loaded chat list) and whether
 // the open chat is a 1:1 dialog. Called on every chat switch — the names map is
 // shared by reference and must not be mutated afterwards.
-func (m Model) SetDirectory(names map[int64]string, private bool) Model {
+func (m Model) SetDirectory(names map[int64]string, kind domain.ChatType) Model {
 	m.authorNames = names
-	m.private = private
+	m.chatKind = kind
+	// Author rendering only cares whether this is a one-to-one dialog; the
+	// full kind is kept because deletion updates for private chats and basic
+	// groups arrive without a chat id and must not be applied to a channel,
+	// which numbers its messages independently.
+	m.private = kind == domain.ChatTypePrivate
 	m.viewport.SetContent(m.renderAll())
 	return m
 }

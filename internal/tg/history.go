@@ -104,19 +104,41 @@ func convertMessage(m *tg.Message, chatID int64) domain.Message {
 			}
 		}
 	}
-	var fromID int64
-	if from, ok := m.GetFromID(); ok {
-		fromID = peerIDToInt64(from)
-	}
 	return domain.Message{
-		ID:      int64(m.ID),
-		ChatID:  chatID,
-		FromID:  fromID,
-		Date:    time.Unix(int64(m.Date), 0).UTC(),
-		Text:    m.Message,
-		ReplyTo: replyTo,
-		Media:   MediaFromMessage(m),
+		ID:       int64(m.ID),
+		ChatID:   chatID,
+		FromID:   senderOf(m, chatID),
+		Date:     time.Unix(int64(m.Date), 0).UTC(),
+		Text:     m.Message,
+		ReplyTo:  replyTo,
+		Media:    MediaFromMessage(m),
+		Outgoing: m.Out,
 	}
+}
+
+// senderOf names the sender of m, filling in what the wire format leaves out.
+//
+// Telegram sends from_id only when it adds something: in a group or a channel
+// it says which member wrote, but in a 1:1 dialog the sender follows from the
+// out flag and the peer, so the field is simply absent. Reading it blindly
+// yields 0 — which the thread pane renders as "system" and the mirror then
+// stored, so a private conversation displayed as a wall of service messages.
+// The bug was invisible until a chat was re-opened: a live update sometimes
+// arrives in the short form, where gotd fills from_id in, and the next
+// messages.getHistory overwrote that row with NULL (seen live 19.08.2026).
+//
+// An outgoing message keeps id 0 deliberately. Naming the reader needs a
+// self-id lookup this layer would have to plumb through every constructor,
+// and it buys nothing: domain.Message.Outgoing already says whose message it
+// is, and that is what the pane labels from.
+func senderOf(m *tg.Message, chatID int64) int64 {
+	if from, ok := m.GetFromID(); ok {
+		return peerIDToInt64(from)
+	}
+	if _, private := m.PeerID.(*tg.PeerUser); private && !m.Out {
+		return chatID
+	}
+	return 0
 }
 
 func peerIDToInt64(p tg.PeerClass) int64 {

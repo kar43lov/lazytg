@@ -45,7 +45,7 @@ All packages below ship in the v0.1 branch (Stages 1–3 complete). Stage labels
 | `cmd/lazytg`                     | 1–3   | Cobra entry point: `tui` (default), `login`, `logout`, `accounts`, `version`, `debug-bundle`, `reindex`. `attach.go` opens the MTProto session **before** the UI is built and starts the dialog sync; every failure path degrades to the cached-only view. | everything                              | —                                        |
 | `internal/app`                   | 2     | Manual DI wiring: `Build` for non-MTProto services, `AttachClient` for gotd-aware ones, `RunBackground` for long-lived goroutines, `CheckPermissions` re-export for CLI subcommands. | `internal/{tg,core,storage,ui}` | —                                        |
 | `internal/tg`                    | 1–3   | MTProto-speaking layer: `client`, `auth`, `session`, `send`, `history`, `dialogs` (`messages.getDialogs` + peer decoding + paging cursor), `updates`, `polling`, `floodwait`, `files` (Downloader/Uploader/FilesAdapter/MediaFromMessage). | `internal/core`, `gotd/td`              | `internal/ui`                            |
-| `internal/core/events`           | 1     | Typed in-process event bus (publish/subscribe with fan-out under mutex, drop-on-overflow).                                          | stdlib only                             | —                                        |
+| `internal/core/events`           | 1     | Typed in-process event bus (publish/subscribe with fan-out under mutex, drop-on-overflow — see the note below).                     | stdlib only                             | —                                        |
 | `internal/core/domain`           | 1     | Plain Go types: `Account`, `Chat`, `Message`, `MediaInfo`.                                                                          | stdlib only                             | —                                        |
 | `internal/core/config`           | 1     | XDG path resolution, secret store abstraction (`KeyringStore`, `AgeFileStore`).                                                     | stdlib, `zalando/go-keyring`, `filippo.io/age` | —                                  |
 | `internal/core/obs`              | 1–3   | `slog` factory + redacting handler + lumberjack rotation; debug-bundle producer (`Bundle.Create`); DB-size monitor.                 | stdlib, `lumberjack`                    | —                                        |
@@ -53,12 +53,33 @@ All packages below ship in the v0.1 branch (Stages 1–3 complete). Stage labels
 | `internal/core/search`           | 3     | FTS5 indexer (`Indexer.Backfill`), reindex service (`RunAll`/`Run`), lazy trigger, query parser + builder, search service.          | `internal/{core/events,core/domain,storage}` | `gotd/td`, `charmbracelet/bubbletea` |
 | `internal/core/files`            | 3     | Download / upload orchestration: `FileStore`, `DedupCache`, `DownloadService`, `UploadService`, throttled progress emitters.        | `internal/{core/events,core/domain}`    | `gotd/td`, `charmbracelet/bubbletea`     |
 | `internal/core/security`         | 3     | Permissions audit (`CheckAtStartup` / `EnforceFatal`), `SendGuard` (TokenBucket wrapper at 10 msg/s).                              | `internal/core/sync`                    | `gotd/td`, `charmbracelet/bubbletea`     |
-| `internal/storage/sqlite`        | 1–3   | Repository implementation: migrations 0001–0009, FTS5 trigram index, frecency, dedup tables, outgoing/peers/state repos.            | `internal/core/domain`                  | `internal/ui`, `internal/tg`             |
+| `internal/storage/sqlite`        | 1–3   | Repository implementation: migrations 0001–0010, FTS5 trigram index, frecency, dedup tables, outgoing/peers/state repos.            | `internal/core/domain`                  | `internal/ui`, `internal/tg`             |
 | `internal/ui/app`                | 2     | Bubble Tea root model, focus orchestration, modal overlay routing, mouse hit-testing (`layout.go` owns the geometry that resizing and clicks share).                                                                | `internal/core` (interfaces), `internal/ui/*` | `gotd/td`                          |
 | `internal/ui/{chats,thread}`     | 2     | Stage 2 panes (chats list, thread reader).                                                                                          | `internal/core` (interfaces)            | `gotd/td`                                |
 | `internal/ui/{search,attach}`    | 3     | Stage 3 overlays (search results + jump, attach file picker).                                                                       | `internal/core` (interfaces)            | `gotd/td`                                |
 | `internal/ui/palette`            | 3     | Command palette L1 (chat switcher with frecency + Unicode-fold).                                                                    | `internal/core` (interfaces)            | `gotd/td`                                |
 | `internal/ui/{input,statusbar,keymap,overlay}` | 2 | Input editor (textarea + emacs bindings + history), status bar, configurable keymap, help overlay.                       | `internal/core` (interfaces)            | `gotd/td`                                |
+
+### The bus drops, so subscribers must not block
+
+`events.Bus.Publish` fans out with a non-blocking send and a `default:` arm: a
+subscriber whose 64-slot buffer is full simply does not receive the event, and
+nothing anywhere reports that it happened. That is the right trade for a UI bus
+— one slow pane must not stall the update dispatcher — but it puts a rule on
+every subscriber:
+
+**Do the slow work somewhere other than the drain loop.** A service that makes
+an MTProto call, or runs a dialog walk that paces itself between pages, stops
+reading for the whole duration; ordinary message traffic fills its buffer, and
+the next event it actually cared about falls off the end. `ReadService` and
+`Rediscoverer` are both structured as a reader goroutine that only enqueues and
+a worker goroutine that does the waiting, with a small buffered channel between
+them — the reader never blocks, and a full queue costs one skipped acknowledgement
+rather than a lost event of another kind.
+
+A test for this must pace its event stream. A tight publish loop outruns any
+consumer, so it fails against correct code and proves nothing; see
+`TestReadService_SurvivesTrafficDuringASlowAcknowledgement`.
 
 ## Dependency-direction enforcement (depguard)
 

@@ -33,7 +33,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 	case reloadDebouncedMsg:
 		return m.applyDebouncedReload(typed.generation)
-	case events.DialogUpdated, events.MessageReceived:
+	case events.DialogUpdated, events.MessageReceived, events.MessagesDeleted:
 		return m.scheduleReload()
 	case tea.KeyPressMsg:
 		if isEnter(typed) && !m.IsFilterActive() {
@@ -46,17 +46,47 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-// applyLoaded replaces the master slice and pushes the new items into
-// the bubbles list. Selection is preserved by index — bubbles/list does
-// not expose a "select by id" helper and re-aligning by id here would
-// add complexity for a UX nicety we don't need yet.
+// applyLoaded replaces the master slice and pushes the new items into the
+// bubbles list, keeping the cursor on the chat it was on.
+//
+// Preserving it by index — which is what bubbles/list does on its own, and
+// what this did until the second live run — silently moves the cursor
+// whenever the list reorders. The list is sorted by last-message date, so an
+// incoming message promotes its chat to the top and every row below shifts
+// down: the highlight stays on row 0 and now points at a different
+// conversation than the one the user put it on. Seen live on 19.08.2026, and
+// it reads as a bug in the thread pane rather than the list — the highlighted
+// chat is not the one whose messages are shown.
+//
+// A cursor whose chat is gone (deleted elsewhere) falls back to the index,
+// which lands on the row that took its place.
+//
+// While the '/' filter is active the cursor is left alone: list.Select indexes
+// the *filtered* list, not the one passed here, and SetItems re-runs the
+// filter asynchronously through the command it returns — so any index computed
+// from `items` would point into the wrong set, and would do so before the set
+// it should point into exists.
 func (m Model) applyLoaded(items []ChatItem) (Model, tea.Cmd) {
+	var wantID int64
+	if sel, ok := m.SelectedItem(); ok && m.list.FilterState() == list.Unfiltered {
+		wantID = sel.ID()
+	}
+
 	m.chats = items
 	asListItems := make([]list.Item, len(items))
 	for i, it := range items {
 		asListItems[i] = it
 	}
 	cmd := m.list.SetItems(asListItems)
+
+	if wantID != 0 {
+		for i, it := range items {
+			if it.ID() == wantID {
+				m.list.Select(i)
+				break
+			}
+		}
+	}
 	return m, cmd
 }
 

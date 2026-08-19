@@ -117,3 +117,99 @@ func TestInsertByDate_LeavesOlderHistoryAlone(t *testing.T) {
 		}
 	}
 }
+
+// TestApplyDeleted_RemovesFromTheOpenThread covers a deletion made on another
+// device reaching the pane the user is looking at, rather than lingering
+// until the chat is reopened.
+func TestApplyDeleted_RemovesFromTheOpenThread(t *testing.T) {
+	t.Parallel()
+
+	const chatID int64 = 275641346
+	m := sized(New())
+	m = m.SwitchTo(chatID)
+	m = m.SetDirectory(nil, domain.ChatTypePrivate)
+
+	base := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	for i := int64(1); i <= 3; i++ {
+		m, _ = m.applyIncoming(events.MessageReceived{
+			ChatID: chatID, MessageID: i, Date: base.Add(time.Duration(i) * time.Minute),
+		})
+	}
+
+	// No chat id: how Telegram reports deletions in private chats.
+	m, _ = m.applyDeleted(events.MessagesDeleted{MessageIDs: []int64{2}})
+
+	got := m.Messages()
+	if len(got) != 2 || got[0].ID != 1 || got[1].ID != 3 {
+		t.Fatalf("messages after the deletion = %v, want ids [1 3]", got)
+	}
+}
+
+// TestApplyDeleted_SparesAChannelFromAPrivateDeletion is the guard that makes
+// the kind check load-bearing. Message ids are unique across private chats
+// and basic groups, but a channel numbers its own messages from one — so id 2
+// exists in both spaces and means different things.
+func TestApplyDeleted_SparesAChannelFromAPrivateDeletion(t *testing.T) {
+	t.Parallel()
+
+	const chatID int64 = 555
+	m := sized(New())
+	m = m.SwitchTo(chatID)
+	m = m.SetDirectory(nil, domain.ChatTypeChannel)
+
+	base := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	for i := int64(1); i <= 3; i++ {
+		m, _ = m.applyIncoming(events.MessageReceived{
+			ChatID: chatID, MessageID: i, Date: base.Add(time.Duration(i) * time.Minute),
+		})
+	}
+
+	m, _ = m.applyDeleted(events.MessagesDeleted{MessageIDs: []int64{2}})
+
+	if got := m.Messages(); len(got) != 3 {
+		t.Fatalf("a channel lost a message to a private-space deletion: %v", got)
+	}
+}
+
+// TestApplyDeleted_IgnoresOtherChats keeps a deletion in one conversation from
+// disturbing the one on screen.
+func TestApplyDeleted_IgnoresOtherChats(t *testing.T) {
+	t.Parallel()
+
+	const chatID int64 = 1
+	m := sized(New())
+	m = m.SwitchTo(chatID)
+	m = m.SetDirectory(nil, domain.ChatTypeSupergroup)
+
+	m, _ = m.applyIncoming(events.MessageReceived{
+		ChatID: chatID, MessageID: 5, Date: time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC),
+	})
+	m, _ = m.applyDeleted(events.MessagesDeleted{ChatID: 2, MessageIDs: []int64{5}})
+
+	if got := m.Messages(); len(got) != 1 {
+		t.Fatalf("a deletion in another chat emptied this one: %v", got)
+	}
+}
+
+// TestApplyDeleted_WaitsForAKnownChatKind covers the window between switching
+// to a chat and learning what kind it is. SetDirectory is what fills that in,
+// and it arrives with the chat list — until then the kind is empty, and
+// reading empty as "not a channel" would let a peerless deletion delete a
+// live row out of a channel by id collision.
+func TestApplyDeleted_WaitsForAKnownChatKind(t *testing.T) {
+	t.Parallel()
+
+	const chatID int64 = 777
+	m := sized(New())
+	m = m.SwitchTo(chatID)
+	// No SetDirectory: the kind is still unknown.
+
+	m, _ = m.applyIncoming(events.MessageReceived{
+		ChatID: chatID, MessageID: 2, Date: time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC),
+	})
+	m, _ = m.applyDeleted(events.MessagesDeleted{MessageIDs: []int64{2}})
+
+	if got := m.Messages(); len(got) != 1 {
+		t.Fatalf("a message was deleted before the chat kind was known: %v", got)
+	}
+}

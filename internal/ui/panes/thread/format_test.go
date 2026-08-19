@@ -436,6 +436,11 @@ func TestResolveAuthor(t *testing.T) {
 		want    string
 	}{
 		{"service message", domain.Message{FromID: 0}, peer, true, "system"},
+		// The 1:1 pair below is what the second live run exposed: Telegram
+		// sends no from_id in a private dialog, so both directions arrive
+		// with 0 and every line rendered as "system".
+		{"incoming private message with no from_id", domain.Message{FromID: peer}, peer, true, "Иван Егошин"},
+		{"own private message carries direction, not an id", domain.Message{FromID: 0, Outgoing: true}, peer, true, "you"},
 		{"known peer by name", domain.Message{FromID: peer}, peer, true, "Иван Егошин"},
 		{"own message in a private chat", domain.Message{FromID: 8385473863}, peer, true, "you"},
 		{"unknown sender in a group", domain.Message{FromID: 555}, -100123, false, "user-555"},
@@ -468,7 +473,7 @@ func TestSetDirectory_NamesRenderedMessages(t *testing.T) {
 			{ID: 2, ChatID: peer, FromID: 8385473863, Date: fixedDate(), Text: "from me"},
 		},
 	})
-	m = m.SetDirectory(map[int64]string{peer: "Иван Егошин"}, true)
+	m = m.SetDirectory(map[int64]string{peer: "Иван Егошин"}, domain.ChatTypePrivate)
 
 	view := stripANSI(m.View())
 	if !strings.Contains(view, "Иван Егошин") {

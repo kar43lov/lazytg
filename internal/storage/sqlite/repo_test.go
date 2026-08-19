@@ -443,8 +443,12 @@ func TestEnsureChat_LetsAMessageFromAnUnknownChatLand(t *testing.T) {
 		t.Fatalf("SaveMessage into an unknown chat succeeded — the foreign key this test is about is gone")
 	}
 
-	if err := repo.EnsureChat(ctx, msg.ChatID, domain.ChatTypePrivate, msg.Date); err != nil {
+	created, err := repo.EnsureChat(ctx, msg.ChatID, domain.ChatTypePrivate, msg.Date)
+	if err != nil {
 		t.Fatalf("EnsureChat: %v", err)
+	}
+	if !created {
+		t.Fatalf("EnsureChat reported no row created for a chat that did not exist")
 	}
 	if err := repo.SaveMessage(ctx, msg); err != nil {
 		t.Fatalf("SaveMessage after EnsureChat: %v", err)
@@ -461,8 +465,12 @@ func TestEnsureChat_DoesNotClobberAKnownChat(t *testing.T) {
 	if err := repo.SaveChat(ctx, want); err != nil {
 		t.Fatalf("SaveChat: %v", err)
 	}
-	if err := repo.EnsureChat(ctx, want.ID, domain.ChatTypeSupergroup, time.Now().UTC()); err != nil {
+	created, err := repo.EnsureChat(ctx, want.ID, domain.ChatTypeSupergroup, time.Now().UTC())
+	if err != nil {
 		t.Fatalf("EnsureChat: %v", err)
+	}
+	if created {
+		t.Fatalf("EnsureChat claimed to create a row for a chat that already existed")
 	}
 
 	chats, err := repo.GetChats(ctx)
@@ -481,7 +489,7 @@ func TestEnsureChat_DoesNotClobberAKnownChat(t *testing.T) {
 // filled with an empty string, which would render as an unidentifiable row.
 func TestEnsureChat_RefusesAnEmptyKind(t *testing.T) {
 	repo, ctx := openTestRepo(t)
-	if err := repo.EnsureChat(ctx, 1, "", time.Now().UTC()); err == nil {
+	if _, err := repo.EnsureChat(ctx, 1, "", time.Now().UTC()); err == nil {
 		t.Fatalf("EnsureChat with an empty kind succeeded")
 	}
 }
@@ -502,7 +510,7 @@ func TestEnsureChat_SortsANewChatToTheTop(t *testing.T) {
 	}
 
 	fresh := time.Now().UTC().Truncate(time.Second)
-	if err := repo.EnsureChat(ctx, 275641346, domain.ChatTypePrivate, fresh); err != nil {
+	if _, err := repo.EnsureChat(ctx, 275641346, domain.ChatTypePrivate, fresh); err != nil {
 		t.Fatalf("EnsureChat: %v", err)
 	}
 
@@ -518,5 +526,223 @@ func TestEnsureChat_SortsANewChatToTheTop(t *testing.T) {
 	}
 	if !chats[0].LastMessageDate.Equal(fresh) {
 		t.Fatalf("LastMessageDate = %v, want %v", chats[0].LastMessageDate, fresh)
+	}
+}
+
+// TestDeleteMessages_ScopedToOneChat covers the channel case, where the
+// deletion update names its channel and only that chat may lose rows.
+func TestDeleteMessages_ScopedToOneChat(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+
+	seedChat(t, ctx, repo, 100, domain.ChatTypeSupergroup)
+	seedChat(t, ctx, repo, 200, domain.ChatTypeSupergroup)
+	seedMessage(t, ctx, repo, 100, 7)
+	seedMessage(t, ctx, repo, 200, 7)
+
+	removed, err := repo.DeleteMessages(ctx, 100, []int64{7})
+	if err != nil {
+		t.Fatalf("DeleteMessages: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("removed = %d, want 1", removed)
+	}
+	if got := countMessages(t, ctx, repo, 100); got != 0 {
+		t.Fatalf("chat 100 still holds %d messages", got)
+	}
+	if got := countMessages(t, ctx, repo, 200); got != 1 {
+		t.Fatalf("chat 200 lost a message with the same id: %d left, want 1", got)
+	}
+}
+
+// TestDeleteMessages_WithoutAChatSparesChannels is the case that makes the
+// type filter load-bearing. Telegram reports deletions in private chats and
+// basic groups with ids alone, and those ids are unique only across that
+// space — a channel numbers its own messages from one, so the same id exists
+// there and belongs to somebody else's message.
+func TestDeleteMessages_WithoutAChatSparesChannels(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+
+	seedChat(t, ctx, repo, 100, domain.ChatTypePrivate)
+	seedChat(t, ctx, repo, 200, domain.ChatTypeGroup)
+	seedChat(t, ctx, repo, 300, domain.ChatTypeChannel)
+	seedChat(t, ctx, repo, 400, domain.ChatTypeSupergroup)
+	for _, chat := range []int64{100, 200, 300, 400} {
+		seedMessage(t, ctx, repo, chat, 42)
+	}
+
+	removed, err := repo.DeleteMessages(ctx, 0, []int64{42})
+	if err != nil {
+		t.Fatalf("DeleteMessages: %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("removed = %d, want 2 (the private chat and the basic group)", removed)
+	}
+	for _, chat := range []int64{100, 200} {
+		if got := countMessages(t, ctx, repo, chat); got != 0 {
+			t.Fatalf("chat %d kept %d messages, want 0", chat, got)
+		}
+	}
+	for _, chat := range []int64{300, 400} {
+		if got := countMessages(t, ctx, repo, chat); got != 1 {
+			t.Fatalf("channel %d lost a message to a private-space deletion", chat)
+		}
+	}
+}
+
+// TestDeleteChatsExcept_RemovesChatsAndTheirMessages covers the chat deleted
+// from another device: dialog sync only upserts, so this is the only path
+// that can ever remove the row. Messages must follow it out through the
+// cascade, or the mirror keeps orphaned history forever.
+func TestDeleteChatsExcept_RemovesChatsAndTheirMessages(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+
+	seedChat(t, ctx, repo, 100, domain.ChatTypePrivate)
+	seedChat(t, ctx, repo, 200, domain.ChatTypePrivate)
+	seedMessage(t, ctx, repo, 100, 1)
+	seedMessage(t, ctx, repo, 200, 1)
+
+	removed, err := repo.DeleteChatsExcept(ctx, []int64{100})
+	if err != nil {
+		t.Fatalf("DeleteChatsExcept: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("removed = %d, want 1", removed)
+	}
+
+	chats, err := repo.GetChats(ctx)
+	if err != nil {
+		t.Fatalf("GetChats: %v", err)
+	}
+	if len(chats) != 1 || chats[0].ID != 100 {
+		t.Fatalf("chats after prune = %+v, want only 100", chats)
+	}
+	if got := countMessages(t, ctx, repo, 200); got != 0 {
+		t.Fatalf("deleted chat left %d messages behind — the cascade did not fire", got)
+	}
+	if got := countMessages(t, ctx, repo, 100); got != 1 {
+		t.Fatalf("surviving chat lost its messages: %d left", got)
+	}
+}
+
+// TestDeleteChatsExcept_RefusesAnEmptyKeepSet guards the whole mirror against
+// one bad answer from the server: an empty dialog page must never be read as
+// "the user has no chats any more".
+func TestDeleteChatsExcept_RefusesAnEmptyKeepSet(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+	seedChat(t, ctx, repo, 100, domain.ChatTypePrivate)
+
+	if _, err := repo.DeleteChatsExcept(ctx, nil); err == nil {
+		t.Fatalf("pruning against an empty list succeeded")
+	}
+	chats, err := repo.GetChats(ctx)
+	if err != nil {
+		t.Fatalf("GetChats: %v", err)
+	}
+	if len(chats) != 1 {
+		t.Fatalf("chats = %d, want the mirror untouched", len(chats))
+	}
+}
+
+// TestClearUnread_ZeroesTheBadge covers the counter the read path resets.
+func TestClearUnread_ZeroesTheBadge(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+	if err := repo.SaveChat(ctx, domain.Chat{
+		ID: 100, Type: domain.ChatTypePrivate, Title: "unread", UnreadCount: 7,
+	}); err != nil {
+		t.Fatalf("SaveChat: %v", err)
+	}
+	if err := repo.ClearUnread(ctx, 100); err != nil {
+		t.Fatalf("ClearUnread: %v", err)
+	}
+	chats, err := repo.GetChats(ctx)
+	if err != nil {
+		t.Fatalf("GetChats: %v", err)
+	}
+	if chats[0].UnreadCount != 0 {
+		t.Fatalf("unread = %d, want 0", chats[0].UnreadCount)
+	}
+}
+
+func seedChat(t *testing.T, ctx context.Context, repo *sqlite.Repo, id int64, kind domain.ChatType) {
+	t.Helper()
+	if err := repo.SaveChat(ctx, domain.Chat{ID: id, Type: kind, Title: "seed"}); err != nil {
+		t.Fatalf("seed chat %d: %v", id, err)
+	}
+}
+
+func seedMessage(t *testing.T, ctx context.Context, repo *sqlite.Repo, chatID, id int64) {
+	t.Helper()
+	if err := repo.SaveMessage(ctx, domain.Message{
+		ID: id, ChatID: chatID, Date: time.Now().UTC(), Text: "seed",
+	}); err != nil {
+		t.Fatalf("seed message %d/%d: %v", chatID, id, err)
+	}
+}
+
+func countMessages(t *testing.T, ctx context.Context, repo *sqlite.Repo, chatID int64) int {
+	t.Helper()
+	var n int
+	if err := repo.DB().QueryRowContext(ctx,
+		`SELECT count(*) FROM messages WHERE chat_id = ?`, chatID).Scan(&n); err != nil {
+		t.Fatalf("count messages for %d: %v", chatID, err)
+	}
+	return n
+}
+
+// TestRepo_RoundTrip_MessageDirection covers migration 0010's column end to
+// end. It is worth its own test rather than a field on an existing fixture:
+// the direction is the only thing distinguishing the reader's own messages in
+// a 1:1 chat, where Telegram sends no sender at all, so a value that failed to
+// bind would relabel every private conversation as service messages — exactly
+// the defect 0010 exists to fix, silently reintroduced one layer down.
+func TestRepo_RoundTrip_MessageDirection(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := repo.SaveChat(ctx, domain.Chat{
+		ID: 275641346, Type: domain.ChatTypePrivate, Title: "Павел Карлов", LastMessageDate: now,
+	}); err != nil {
+		t.Fatalf("save chat: %v", err)
+	}
+	if err := repo.SaveMessages(ctx, []domain.Message{
+		{ID: 1, ChatID: 275641346, Date: now, Text: "theirs", Outgoing: false},
+		{ID: 2, ChatID: 275641346, Date: now, Text: "mine", Outgoing: true},
+	}); err != nil {
+		t.Fatalf("save messages: %v", err)
+	}
+
+	got, err := repo.GetMessages(ctx, 275641346, 10, 0)
+	if err != nil {
+		t.Fatalf("get messages: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("read %d messages, want 2", len(got))
+	}
+	byID := map[int64]domain.Message{}
+	for _, m := range got {
+		byID[m.ID] = m
+	}
+	if byID[1].Outgoing {
+		t.Errorf("incoming message came back outgoing")
+	}
+	if !byID[2].Outgoing {
+		t.Errorf("outgoing message came back incoming")
+	}
+
+	// The upsert path has its own column list; a message re-fetched from the
+	// server must not lose the direction the live path recorded.
+	if err := repo.SaveMessage(ctx, domain.Message{
+		ID: 2, ChatID: 275641346, Date: now, Text: "mine, edited", Outgoing: true,
+	}); err != nil {
+		t.Fatalf("re-save message: %v", err)
+	}
+	got, err = repo.GetMessages(ctx, 275641346, 10, 0)
+	if err != nil {
+		t.Fatalf("get messages after upsert: %v", err)
+	}
+	for _, m := range got {
+		if m.ID == 2 && !m.Outgoing {
+			t.Errorf("upsert dropped the direction")
+		}
 	}
 }

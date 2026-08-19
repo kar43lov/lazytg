@@ -11,6 +11,7 @@ import (
 	"github.com/gotd/td/telegram/updates"
 
 	"github.com/kar43lov/lazytg/internal/app"
+	coresync "github.com/kar43lov/lazytg/internal/core/sync"
 	tgclient "github.com/kar43lov/lazytg/internal/tg"
 	"github.com/kar43lov/lazytg/internal/ui/input"
 	"github.com/kar43lov/lazytg/internal/ui/panes/thread"
@@ -102,6 +103,7 @@ func attachTelegram(ctx context.Context, rt *app.App, log *slog.Logger) (stop fu
 
 	log.Info("tui: telegram session attached", "account", phone)
 	startReconnect(ctx, rt, log)
+	startRead(ctx, rt, log)
 	startPolling(ctx, rt, log)
 	startSync(ctx, rt, log)
 	return supervisor.Stop
@@ -143,6 +145,18 @@ func startReconnect(ctx context.Context, rt *app.App, log *slog.Logger) {
 	}()
 }
 
+// startRead runs the service that tells Telegram which chats the user has
+// read. Without it a conversation opened here stays unread on every other
+// device — and an account that reads without ever acknowledging is a pattern
+// no ordinary client produces.
+func startRead(ctx context.Context, rt *app.App, log *slog.Logger) {
+	if rt.Read == nil {
+		return
+	}
+	_ = rt.Read.Start(ctx)
+	log.Debug("tui: read receipts engaged")
+}
+
 // startPolling engages the history-polling fallback, which exists only when
 // --polling was passed. Until this call the flag was a no-op: it reached
 // app.Config and stopped there, so a user who set it because live updates
@@ -176,6 +190,10 @@ func startSync(ctx context.Context, rt *app.App, log *slog.Logger) {
 		log.Warn("tui: dialogs service unavailable — chat list will stay as cached")
 		return
 	}
+	// Built here rather than in AttachClient because it needs Dialogs, and
+	// this is the first place that exists.
+	rt.Rediscover = coresync.NewRediscoverer(rt.Dialogs, rt.Bus, log, 0, dialogSyncTimeout)
+	_ = rt.Rediscover.Start(ctx)
 	go func() {
 		syncCtx, cancel := context.WithTimeout(ctx, dialogSyncTimeout)
 		defer cancel()

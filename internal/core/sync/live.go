@@ -16,11 +16,18 @@ import (
 // implementations slot in without churning the call sites.
 type LiveStore interface {
 	SaveMessage(ctx context.Context, m domain.Message) error
+	// DeleteMessages removes messages Telegram reported as deleted. A zero
+	// chat id means the update named no chat, which is how deletions in
+	// private chats and basic groups arrive.
+	DeleteMessages(ctx context.Context, chatID int64, ids []int64) (int64, error)
 	// EnsureChat creates the parent chats row when the peer is unknown and
 	// leaves an existing row untouched. Without it a message from a chat
 	// outside the synced dialog window fails its foreign key and is lost.
 	// The date orders the new row in the chat list; see the implementation.
-	EnsureChat(ctx context.Context, id int64, t domain.ChatType, lastMessageDate time.Time) error
+	EnsureChat(ctx context.Context, id int64, t domain.ChatType, lastMessageDate time.Time) (bool, error)
+	// IncrementUnread raises a chat's unread counter for a message that
+	// arrived while the user was reading something else.
+	IncrementUnread(ctx context.Context, chatID int64) error
 }
 
 // LiveService persists incoming MessageReceived events into the local
@@ -39,6 +46,11 @@ type LiveService struct {
 	log               *slog.Logger
 	now               func() time.Time
 	lastIngestLatency atomic.Int64
+	// openChat is the conversation the user is looking at, tracked from
+	// ChatOpened. Messages landing there must not raise the unread counter:
+	// they are being read as they arrive, and a badge on the chat you are
+	// reading is noise every other client knows to suppress.
+	openChat atomic.Int64
 }
 
 // NewLiveService wires a service. log may be nil — a no-op logger is used
@@ -104,12 +116,37 @@ func (s *LiveService) drain(ctx context.Context, ch <-chan events.Event) error {
 			if !ok {
 				return ctx.Err()
 			}
-			msg, ok := ev.(events.MessageReceived)
-			if !ok {
-				continue
+			switch typed := ev.(type) {
+			case events.MessageReceived:
+				s.persist(ctx, typed)
+			case events.MessagesDeleted:
+				s.forget(ctx, typed)
+			case events.ChatOpened:
+				s.openChat.Store(typed.ChatID)
 			}
-			s.persist(ctx, msg)
 		}
+	}
+}
+
+// forget removes messages another device deleted. The mirror is the only
+// copy the user has once the server has dropped them, so this is the one
+// path that can make a deletion stick — and equally the one that could lose
+// data it should not, which is why the store filters channel ids out of the
+// no-chat case rather than deleting by bare id.
+//
+// A count is logged only when it differs from what was asked for: deleting
+// messages that were never mirrored is the ordinary case (they were outside
+// the fetched history), not a problem worth a line each time.
+func (s *LiveService) forget(ctx context.Context, ev events.MessagesDeleted) {
+	removed, err := s.store.DeleteMessages(ctx, ev.ChatID, ev.MessageIDs)
+	if err != nil {
+		s.log.Error("live: delete messages failed",
+			"chat_id", ev.ChatID, "ids", len(ev.MessageIDs), "err", err)
+		return
+	}
+	if removed != int64(len(ev.MessageIDs)) {
+		s.log.Debug("live: deleted fewer messages than reported",
+			"chat_id", ev.ChatID, "reported", len(ev.MessageIDs), "removed", removed)
 	}
 }
 
@@ -135,26 +172,65 @@ func (s *LiveService) persist(ctx context.Context, ev events.MessageReceived) {
 	// not, SaveMessage reports the foreign key error as before rather than
 	// hiding it behind this one.
 	if ev.ChatType != "" {
-		if err := s.store.EnsureChat(ctx, ev.ChatID, ev.ChatType, ev.Date); err != nil {
+		created, err := s.store.EnsureChat(ctx, ev.ChatID, ev.ChatType, ev.Date)
+		switch {
+		case err != nil:
 			s.log.Warn("live: ensure chat failed",
 				"chat_id", ev.ChatID, "type", ev.ChatType, "err", err)
+		case created && s.bus != nil:
+			// A row the live path invented shows as "chat <id>" with no
+			// unread count until the server describes it. Nothing else asks
+			// for that: dialog sync runs at startup, so without this the
+			// placeholder survives until the next launch.
+			s.bus.Publish(events.ChatDiscovered{ChatID: ev.ChatID})
 		}
 	}
 	if err := s.store.SaveMessage(ctx, domain.Message{
-		ID:     ev.MessageID,
-		ChatID: ev.ChatID,
-		FromID: ev.FromID,
-		Date:   ev.Date,
-		Text:   ev.Text,
-		Media:  ev.Media,
+		ID:       ev.MessageID,
+		ChatID:   ev.ChatID,
+		FromID:   ev.FromID,
+		Date:     ev.Date,
+		Text:     ev.Text,
+		Media:    ev.Media,
+		Outgoing: ev.Outgoing,
 	}); err != nil {
 		s.log.Error("live: save message failed",
 			"chat_id", ev.ChatID, "message_id", ev.MessageID, "err", err)
 		return
 	}
+	s.countUnread(ctx, ev)
 	latency := s.now().Sub(start)
 	if latency < 0 {
 		latency = 0
 	}
 	s.lastIngestLatency.Store(latency.Milliseconds())
+}
+
+// countUnread raises the chat's badge for a message the user has not seen.
+//
+// Three things are excluded, and each of them would otherwise show a badge for
+// something already read: the user's own messages (sent from another device or
+// echoed back after lazytg sent them), messages in the chat currently open,
+// and — implicitly, by running after SaveMessage — anything whose save failed.
+//
+// The chats pane reloads off MessageReceived directly, so the new count is on
+// screen without a DialogUpdated of its own; publishing one here would land in
+// this service's own subscriber buffer, which is the fan-out amplification
+// persist's comment warns about.
+//
+// The increment is not idempotent, and deliberately relies on the dispatcher's
+// duplicate filter rather than checking storage: the same message delivered
+// twice would count twice. That filter is an in-memory LRU of 256 entries
+// covering both the live path and the polling fallback, so the only way past
+// it is a redelivery separated by more than 256 messages — after which the
+// count is corrected by the next dialog sync or by opening the chat. Making it
+// idempotent means having SaveMessage report whether the row was new, which is
+// a wider contract change than an over-count that heals itself is worth.
+func (s *LiveService) countUnread(ctx context.Context, ev events.MessageReceived) {
+	if ev.Outgoing || ev.ChatID == 0 || ev.ChatID == s.openChat.Load() {
+		return
+	}
+	if err := s.store.IncrementUnread(ctx, ev.ChatID); err != nil {
+		s.log.Warn("live: unread counter not raised", "chat_id", ev.ChatID, "err", err)
+	}
 }

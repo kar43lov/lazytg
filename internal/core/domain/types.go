@@ -98,6 +98,12 @@ type Message struct {
 	ReplyTo int64
 	RawBlob []byte
 	Media   *MediaInfo
+	// Outgoing marks a message the account itself sent. It is stored rather
+	// than derived because Telegram omits from_id in a 1:1 dialog — the
+	// sender is implied by this flag and the peer — and without it the
+	// thread pane cannot tell the reader's own messages from the other
+	// party's. See migration 0010.
+	Outgoing bool
 }
 
 // MediaKind discriminates the variant of a Telegram media object so the

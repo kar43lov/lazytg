@@ -175,17 +175,24 @@ func authorLabel(fromID int64) string {
 //
 // A raw "user-8385473863" is what the thread used to print for every line,
 // including the reader's own messages — unreadable, and the id is not something
-// a human can map back to a person. Three sources, in order:
+// a human can map back to a person. Four sources, in order:
 //
-//  1. names — titles from the chat list, which covers the other party of a
+//  1. the stored direction: a message the account sent is the reader's, and in
+//     a 1:1 dialog that is the only thing distinguishing it — Telegram sends no
+//     from_id there at all.
+//  2. names — titles from the chat list, which covers the other party of a
 //     private chat and any group/channel that has its own dialog row.
-//  2. the private-chat rule: in a 1:1 dialog every message is either from the
+//  3. the private-chat rule: in a 1:1 dialog every message is either from the
 //     peer (from_id == chat id) or from the account itself, so a sender that is
-//     not the peer is the reader. No RPC and no self-id plumbing needed.
-//  3. the numeric fallback, for group members with no dialog of their own —
+//     not the peer is the reader. It still earns its place: rows written before
+//     migration 0010 have no direction recorded.
+//  4. the numeric fallback, for group members with no dialog of their own —
 //     a proper member directory needs peer names in storage, which v0.1 does
 //     not keep.
 func resolveAuthor(msg domain.Message, chatID int64, private bool, names map[int64]string) string {
+	if msg.Outgoing {
+		return selfAuthorLabel
+	}
 	if msg.FromID == 0 {
 		return "system"
 	}
