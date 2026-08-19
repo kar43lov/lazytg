@@ -194,10 +194,10 @@ func (r *Repo) SetReadOnly(v bool) { r.readOnly.Store(v) }
 // DegradationDetector translates a non-nil error into
 // StorageStateChanged{read-only}.
 //
-// Note what BEGIN IMMEDIATE does and does not prove. It acquires the write
-// lock, so failures at connection and lock level surface here. It dirties no
-// page, so conditions that only appear when a page is written — a read-only
-// database above all — do not. Which of SQLITE_FULL and the write-time
+// Note what the probe does and does not prove. BEGIN IMMEDIATE acquires the
+// write lock, so failures at connection and lock level surface here; the
+// DELETE below then dirties a page, which is what surfaces a read-only
+// database (see the last paragraph). Which of SQLITE_FULL and the write-time
 // SQLITE_IOERR variants reach this probe has not been established; do not
 // assume from this code that they do.
 //
@@ -228,10 +228,12 @@ func (r *Repo) SetReadOnly(v bool) { r.readOnly.Store(v) }
 // does reach the probe is still reported, because none of them mask to BUSY or
 // LOCKED (TestIsContention_ClassifiesResultCodes). Tolerating contention
 // narrows nothing that was previously detected.
-//   - a read-only database file. BEGIN IMMEDIATE takes the write lock but
-//     dirties no page, so SQLite has no reason to raise SQLITE_READONLY. This
-//     predates the contention handling and is pinned as a known gap by
-//     TestProbeWrite_KnownGap_ReadOnlyDatabaseUndetected.
+//
+// A read-only database file used to slip through here for the same reason:
+// BEGIN IMMEDIATE takes the write lock but dirties no page, so SQLite had no
+// reason to raise SQLITE_READONLY and the probe called a file healthy while
+// every ordinary write failed with code 8. The DELETE below closes that —
+// see TestProbeWrite_DetectsAReadOnlyDatabase.
 func (r *Repo) ProbeWrite(ctx context.Context) error {
 	conn, err := r.db.Conn(ctx)
 	if err != nil {
@@ -250,9 +252,40 @@ func (r *Repo) ProbeWrite(ctx context.Context) error {
 		}
 		return fmt.Errorf("probe begin immediate: %w", err)
 	}
+	// From here the transaction is open and must be closed on every path out.
+	// modernc's ResetSession returns nil without touching an in-flight
+	// transaction (sqlite@v1.56.0/conn.go), so a connection handed back to the
+	// pool mid-transaction keeps the write lock — and the next writer to be
+	// given it waits out the busy_timeout and fails, for as long as the
+	// process lives. The rollback therefore runs on a context that cannot be
+	// cancelled: the probe's own ctx is the app's, and cancelling it during a
+	// probe is exactly when this would otherwise leak.
+	txOpen := true
+	defer func() {
+		if txOpen {
+			_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+		}
+	}()
+	// The transaction has to touch a page for this to be a write probe at all.
+	// `WHERE 0` is constant-false, so the statement can never delete a row,
+	// but it still opens a write cursor — which is the moment SQLite raises
+	// SQLITE_READONLY on a file it cannot write.
+	//
+	// The contention check here is not symmetrical with the one above: we
+	// already hold the write lock, so SQLITE_BUSY is unreachable at this
+	// point. It stays for SQLITE_LOCKED, which table-level locking can still
+	// produce, and because treating either as an outage is the mistake this
+	// probe was fixed for once already.
+	if _, err := conn.ExecContext(ctx, "DELETE FROM chats WHERE 0"); err != nil {
+		if isContention(err) {
+			return nil
+		}
+		return fmt.Errorf("probe write: %w", err)
+	}
 	if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
 		return fmt.Errorf("probe rollback: %w", err)
 	}
+	txOpen = false
 	return nil
 }
 

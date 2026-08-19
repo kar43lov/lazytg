@@ -158,28 +158,18 @@ func TestProbeWrite_ReportsNonContentionFailure(t *testing.T) {
 	}
 }
 
-// TestProbeWrite_KnownGap_ReadOnlyDatabaseUndetected documents a pre-existing
-// limitation rather than a desired behaviour, so that the next person to read
-// ProbeWrite does not assume coverage that does not exist.
+// TestProbeWrite_DetectsAReadOnlyDatabase covers the condition
+// DegradationDetector exists for: a database file the process can read but not
+// write. For a long time it did not — the probe ran `BEGIN IMMEDIATE;
+// ROLLBACK`, which takes the write lock without dirtying a page, so SQLite
+// never raised SQLITE_READONLY and the detector kept the repo in rw mode while
+// every actual write failed with "attempt to write a readonly database".
 //
-// ProbeWrite runs `BEGIN IMMEDIATE; ROLLBACK`, which takes the write lock but
-// never writes a page — so SQLite has no reason to raise SQLITE_READONLY, and
-// the probe reports a read-only database as healthy. DegradationDetector
-// therefore never enters read-only mode for the very condition it exists to
-// detect: ordinary writes fail with "attempt to write a readonly database"
-// while the probe keeps saying the storage is fine.
-//
-// This predates the contention change (verified against the previous revision:
-// the probe returned nil there too) and is not fixed here, because the fix
-// belongs with the detector rather than inside a test. Any statement that
-// actually dirties a page inside the probe transaction surfaces the condition
-// — `DELETE FROM chats WHERE 0`, for instance, was measured to return
-// SQLITE_READONLY (8) while touching no rows.
-//
-// The assertion is deliberately inverted: it passes while the gap exists and
-// fails once the probe learns to detect it, which is the signal to delete this
-// test and assert the real behaviour instead.
-func TestProbeWrite_KnownGap_ReadOnlyDatabaseUndetected(t *testing.T) {
+// The fixture is the honest one: a real file reopened with mode=ro, checked
+// first to still reject an ordinary write, so a driver change that stops
+// reproducing read-only databases fails loudly here instead of quietly
+// turning this into a test of nothing.
+func TestProbeWrite_DetectsAReadOnlyDatabase(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	t.Cleanup(cancel)
 
@@ -207,9 +197,92 @@ func TestProbeWrite_KnownGap_ReadOnlyDatabaseUndetected(t *testing.T) {
 		t.Fatalf("SaveChat on a mode=ro database succeeded — the fixture no longer reproduces a read-only database")
 	}
 
-	if probeErr := ro.ProbeWrite(ctx); probeErr != nil {
-		t.Errorf("ProbeWrite now detects a read-only database (%v) — the known gap is closed; delete this test and assert detection instead", probeErr)
-	} else {
-		t.Logf("known gap holds: writes fail with %q while ProbeWrite reports the storage writable", writeErr)
+	probeErr := ro.ProbeWrite(ctx)
+	if probeErr == nil {
+		t.Fatalf("ProbeWrite reported a read-only database as writable; ordinary writes fail with %v", writeErr)
+	}
+	// Asserting the condition, not merely that something failed: a probe that
+	// errored for an unrelated reason (a connection it could not open, say)
+	// would otherwise pass this test while the fix it covers was gone.
+	if !strings.Contains(probeErr.Error(), "readonly") {
+		t.Fatalf("ProbeWrite failed with %v, want the read-only condition", probeErr)
+	}
+	if strings.Contains(probeErr.Error(), "SQLITE_BUSY") {
+		t.Errorf("read-only database misreported as contention: %v", probeErr)
+	}
+	t.Logf("ProbeWrite rejected the read-only database with %v", probeErr)
+}
+
+// TestProbeWrite_RepeatsCleanlyOnAReadOnlyDatabase covers the connection the
+// probe borrows rather than the verdict it returns. The DELETE fails, the
+// transaction still has to be closed, and modernc's ResetSession hands a
+// connection back to the pool without closing one — so a probe that returns
+// with its transaction still open parks the write lock on a pooled connection
+// and every later writer waits out the busy_timeout and fails. From outside
+// that shows up as the second probe reporting "cannot start a transaction
+// within a transaction" instead of the read-only condition, which is exactly
+// what this test asserts against.
+func TestProbeWrite_RepeatsCleanlyOnAReadOnlyDatabase(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	t.Cleanup(cancel)
+
+	path := filepath.Join(t.TempDir(), "readonly-repeat.db")
+	rw, err := sqlite.Open(ctx, path)
+	if err != nil {
+		t.Fatalf("open read-write: %v", err)
+	}
+	if err := rw.Close(); err != nil {
+		t.Fatalf("close read-write: %v", err)
+	}
+
+	ro, err := sqlite.Open(ctx, "file:"+path+"?mode=ro")
+	if err != nil {
+		t.Fatalf("reopen read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = ro.Close() })
+
+	for i := 0; i < 3; i++ {
+		err := ro.ProbeWrite(ctx)
+		if err == nil {
+			t.Fatalf("probe %d on a read-only database = nil, want an error", i+1)
+		}
+		if !strings.Contains(err.Error(), "readonly") {
+			t.Fatalf("probe %d = %v, want the read-only condition rather than a wedged connection", i+1, err)
+		}
+	}
+}
+
+// TestProbeWrite_LeavesNoRowsBehind pins the other half of that fix: the probe
+// now runs a DELETE, and a DELETE inside a probe must never be able to remove
+// data. What it pins is `WHERE 0` — nothing else in the suite fails if the
+// predicate is dropped. It does not pin the ROLLBACK: with `WHERE 0` in place
+// no row goes anywhere regardless of how the transaction ends, so a COMMIT
+// here would pass. The rollback is covered by
+// TestProbeWrite_RepeatsCleanlyOnAReadOnlyDatabase instead.
+func TestProbeWrite_LeavesNoRowsBehind(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+
+	for id := int64(1); id <= 3; id++ {
+		if err := repo.SaveChat(ctx, domain.Chat{
+			ID:    id,
+			Type:  domain.ChatTypePrivate,
+			Title: "survivor",
+		}); err != nil {
+			t.Fatalf("seed chat %d: %v", id, err)
+		}
+	}
+
+	for i := 0; i < 3; i++ {
+		if err := repo.ProbeWrite(ctx); err != nil {
+			t.Fatalf("ProbeWrite on a healthy database = %v, want nil", err)
+		}
+	}
+
+	var count int
+	if err := repo.DB().QueryRowContext(ctx, "SELECT count(*) FROM chats").Scan(&count); err != nil {
+		t.Fatalf("count chats: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("chats after three probes = %d, want 3 — the probe deleted rows", count)
 	}
 }
