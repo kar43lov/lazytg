@@ -8,7 +8,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.4
 	filippo.io/age v1.3.1
 	github.com/BurntSushi/toml v1.6.0
-	github.com/charmbracelet/x/ansi v0.11.7
+	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/google/uuid v1.6.0
 	github.com/gotd/td v0.161.0
 	github.com/sahilm/fuzzy v0.1.3
