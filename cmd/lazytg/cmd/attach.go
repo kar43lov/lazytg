@@ -11,6 +11,7 @@ import (
 	"github.com/gotd/td/telegram/updates"
 
 	"github.com/kar43lov/lazytg/internal/app"
+	"github.com/kar43lov/lazytg/internal/core/events"
 	coresync "github.com/kar43lov/lazytg/internal/core/sync"
 	tgclient "github.com/kar43lov/lazytg/internal/tg"
 	"github.com/kar43lov/lazytg/internal/ui/input"
@@ -190,6 +191,25 @@ func startSync(ctx context.Context, rt *app.App, log *slog.Logger) {
 		log.Warn("tui: dialogs service unavailable — chat list will stay as cached")
 		return
 	}
+	// Folders are read once and published. They change rarely enough that a
+	// refresh loop would be steady traffic for nothing, on an account
+	// already watched for running an unofficial client — and a folder edited
+	// on the phone shows up here on the next launch, which is the same
+	// bargain the 500-dialog cap makes.
+	if rt.Folders != nil && rt.Bus != nil {
+		go func() {
+			folderCtx, cancel := context.WithTimeout(ctx, dialogSyncTimeout)
+			defer cancel()
+			folders, err := rt.Folders.Fetch(folderCtx)
+			if err != nil {
+				log.Warn("tui: chat folders unavailable — the list will have no tabs", "err", err)
+				return
+			}
+			log.Info("tui: chat folders loaded", "folders", len(folders))
+			rt.Bus.Publish(events.FoldersLoaded{Folders: folders})
+		}()
+	}
+
 	// Built here rather than in AttachClient because it needs Dialogs, and
 	// this is the first place that exists.
 	rt.Rediscover = coresync.NewRediscoverer(rt.Dialogs, rt.Bus, log, 0, dialogSyncTimeout)

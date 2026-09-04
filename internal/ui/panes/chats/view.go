@@ -20,8 +20,16 @@ func (m Model) View() string {
 		header = "Chats (focused)"
 	}
 	body := m.list.View()
-	if body == "" {
-		return header
+	rows := []string{header}
+	// The tab strip appears only when the account has folders: one that has
+	// none should look exactly as it did before folders existed, rather than
+	// gaining a row that says "All" and nothing else.
+	if strip := m.folderStrip(m.Width); strip != "" {
+		rows = append(rows, strip)
 	}
-	return strings.Join([]string{header, body}, "\n")
+	if body == "" {
+		return strings.Join(rows, "\n")
+	}
+	rows = append(rows, body)
+	return strings.Join(rows, "\n")
 }

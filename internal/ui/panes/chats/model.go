@@ -20,6 +20,8 @@ import (
 
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/kar43lov/lazytg/internal/core/domain"
 )
 
 // debounceWindow is how long Update waits after the *last* DialogUpdated
@@ -66,6 +68,12 @@ type Model struct {
 	// list.Model). Mouse hit-testing needs it; see mouse.go.
 	itemRows int
 
+	// folders are the chat folders read from Telegram, and folderIdx is
+	// the tab in force: -1 for the unfiltered list, otherwise an index
+	// into folders. See folders.go.
+	folders   []domain.Folder
+	folderIdx int
+
 	// reloadGeneration is incremented every time a DialogUpdated arrives.
 	// reloadDebouncedMsg with a stale generation is dropped so only the
 	// most recent tick performs the repo read.
@@ -97,10 +105,11 @@ func newModel(repo Repository, log *slog.Logger) Model {
 	l.SetShowPagination(false)  // few-dozen-chats lists fit in one page
 	l.SetFilteringEnabled(true) // keep the built-in '/' filter
 	return Model{
-		list:     l,
-		repo:     repo,
-		log:      log,
-		itemRows: delegate.Height() + delegate.Spacing(),
+		list:      l,
+		repo:      repo,
+		log:       log,
+		itemRows:  delegate.Height() + delegate.Spacing(),
+		folderIdx: folderAll,
 	}
 }
 
@@ -148,8 +157,14 @@ func (m Model) SetSize(width, height int) Model {
 	if w < minListWidth {
 		w = minListWidth
 	}
-	// Reserve one row for the focus-aware header rendered by View.
+	// Reserve one row for the focus-aware header rendered by View, and one
+	// more for the folder tabs when there are any. Getting this wrong costs
+	// the last chat in the list: the pane draws a row the list does not know
+	// about and the bottom item falls off the end.
 	listHeight := height - 1
+	if len(m.folders) > 0 {
+		listHeight--
+	}
 	if listHeight < minListHeight {
 		listHeight = minListHeight
 	}

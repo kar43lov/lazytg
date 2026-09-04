@@ -76,6 +76,20 @@ type MessageEdited struct {
 
 func (MessageEdited) eventMarker() {}
 
+// FoldersLoaded carries the account's chat folders once they have been read
+// from Telegram. Published once per session: folders change rarely, and
+// re-reading them on a schedule would be steady traffic for nothing on an
+// account already watched for running an unofficial client.
+//
+// An empty slice is meaningful — it says the account has no folders — so a
+// consumer must distinguish "not published yet" from "published as empty"
+// rather than treating both as "keep whatever tabs are up".
+type FoldersLoaded struct {
+	Folders []domain.Folder
+}
+
+func (FoldersLoaded) eventMarker() {}
+
 // ChatOpened is emitted by the UI when the user opens a conversation. It
 // exists so the read-receipt path has a trigger without the UI reaching for
 // MTProto itself, and so the "mark as read" decision lives in one place

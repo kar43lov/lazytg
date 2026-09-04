@@ -190,6 +190,14 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.applyActionResult(m), nil
 	case events.MessageEdited:
 		return a.applyMessageEdited(m.ChatID, m.MessageID, m.Text), nil
+	case chats.SetFoldersMsg:
+		updated, cmd := a.chats.SetFolders(m.Folders)
+		a.chats = updated
+		return a, cmd
+	case events.FoldersLoaded:
+		updated, cmd := a.chats.SetFolders(m.Folders)
+		a.chats = updated
+		return a, cmd
 	}
 
 	if a.help.Visible {
@@ -223,6 +231,9 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// would act on it.
 		if a.confirm.Visible() {
 			updated, cmd := a.handleConfirmKey(k)
+			return updated, cmd
+		}
+		if updated, cmd, handled := a.applyFolderKey(k); handled {
 			return updated, cmd
 		}
 		if updated, cmd, handled := a.applyMessageActionKey(k); handled {

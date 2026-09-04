@@ -194,3 +194,99 @@ type Peer struct {
 	Type       ChatType
 	AccessHash int64
 }
+
+// Folder is a chat folder — what the MTProto API calls a dialog filter.
+//
+// Telegram stores the definition and every client decides what to do with it,
+// which is why this type carries rules rather than a list of chats: the
+// membership of a folder is computed from the account's chats each time, and
+// a chat that arrives after the folder was defined belongs to it immediately
+// if it matches.
+//
+// Two things are deliberately not modelled. Archived chats are not tracked by
+// this client at all, so ExcludeArchived is stored and ignored. And a folder
+// can name a bot or a contact, categories the local mirror has no column for
+// — see Matches for what that costs.
+type Folder struct {
+	ID       int64
+	Title    string
+	Emoticon string
+
+	// Pinned, Include and Exclude are chat ids named explicitly in the
+	// folder. Exclude wins over everything, which is what the other
+	// clients do: a chat you removed from a folder stays removed even
+	// when it matches a category.
+	Pinned  []int64
+	Include []int64
+	Exclude []int64
+
+	// The category switches. A folder with none of them set is exactly
+	// its Include list.
+	Contacts    bool
+	NonContacts bool
+	Groups      bool
+	Broadcasts  bool
+	Bots        bool
+
+	ExcludeMuted    bool
+	ExcludeRead     bool
+	ExcludeArchived bool
+
+	// ExplicitOnly marks a shared folder, whose membership is its list and
+	// nothing else. The category switches do not exist on that variant, and
+	// treating their zero values as "no categories" would be right by
+	// accident rather than by intent.
+	ExplicitOnly bool
+}
+
+// Matches reports whether a chat belongs to this folder.
+//
+// What it cannot do is worth stating plainly, because the alternative is a
+// folder that quietly shows the wrong chats. Telegram's Contacts and
+// NonContacts switches split private chats by whether the other party is in
+// the user's address book, and lazytg does not sync contacts — so a folder
+// using either switch matches every private chat. That is over-inclusive
+// rather than under-inclusive on purpose: a chat missing from a folder is
+// invisible, while an extra one is merely noise the user can see and judge.
+// Bots have the same problem and the same resolution.
+func (f Folder) Matches(c Chat) bool {
+	for _, id := range f.Exclude {
+		if id == c.ID {
+			return false
+		}
+	}
+	for _, id := range f.Include {
+		if id == c.ID {
+			return true
+		}
+	}
+	for _, id := range f.Pinned {
+		if id == c.ID {
+			return true
+		}
+	}
+	if f.ExplicitOnly {
+		return false
+	}
+	if f.ExcludeRead && c.UnreadCount == 0 {
+		return false
+	}
+	switch c.Type {
+	case ChatTypePrivate:
+		return f.Contacts || f.NonContacts || f.Bots
+	case ChatTypeGroup, ChatTypeSupergroup:
+		return f.Groups
+	case ChatTypeChannel:
+		return f.Broadcasts
+	}
+	return false
+}
+
+// Label is what the folder tab shows: its emoji and its name, or just the
+// name when the folder has no emoji.
+func (f Folder) Label() string {
+	if f.Emoticon == "" {
+		return f.Title
+	}
+	return f.Emoticon + " " + f.Title
+}

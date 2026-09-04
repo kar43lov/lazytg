@@ -278,3 +278,26 @@ func (a App) applyMessageActionKey(k tea.KeyPressMsg) (App, tea.Cmd, bool) {
 	}
 	return a, nil, false
 }
+
+// applyFolderKey routes the folder tabs.
+//
+// Unlike the message actions these are live in the chats pane as well as the
+// thread: switching folders is a navigation gesture, and needing to focus a
+// particular pane first would make it feel like a mode. The composer is still
+// excluded — there the brackets are punctuation somebody is typing.
+func (a App) applyFolderKey(k tea.KeyPressMsg) (App, tea.Cmd, bool) {
+	if a.focus == FocusInput || a.chats.IsFilterActive() {
+		return a, nil, false
+	}
+	switch {
+	case key.Matches(k, a.keymap.NextFolder):
+		updated, cmd := a.chats.NextFolder()
+		a.chats = updated
+		return a, cmd, true
+	case key.Matches(k, a.keymap.PrevFolder):
+		updated, cmd := a.chats.PrevFolder()
+		a.chats = updated
+		return a, cmd, true
+	}
+	return a, nil, false
+}

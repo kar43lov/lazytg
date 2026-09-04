@@ -101,6 +101,8 @@ func (h Help) rows() []row {
 		{"attach file", h.Keymap.Attach},
 		{"save attachment", h.Keymap.Download},
 		{"open attachment", h.Keymap.OpenMedia},
+		{"next folder", h.Keymap.NextFolder},
+		{"prev folder", h.Keymap.PrevFolder},
 		{"mark message", h.Keymap.MarkMessage},
 		{"copy message(s)", h.Keymap.CopyMessage},
 		{"edit message", h.Keymap.EditMessage},

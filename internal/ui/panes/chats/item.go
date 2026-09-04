@@ -121,3 +121,20 @@ func truncateRunes(s string, n int) string {
 	}
 	return string(runes[:n-1]) + "…"
 }
+
+// Chat rebuilds the domain view of this row.
+//
+// The item keeps the fields it renders rather than the whole record, so a
+// folder — which asks questions about type and unread state, not about how
+// the row looks — needs them handed back in the shape its rules are written
+// against.
+func (i ChatItem) Chat() domain.Chat {
+	return domain.Chat{
+		ID:              i.id,
+		Title:           i.name,
+		Type:            i.chatType,
+		UnreadCount:     i.unreadCount,
+		Pinned:          i.pinned,
+		LastMessageDate: i.lastMessageDate,
+	}
+}

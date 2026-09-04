@@ -160,6 +160,11 @@ type App struct {
 	// Read acknowledges opened chats to Telegram. Nil until a session is
 	// attached, so a cache-only launch simply never marks anything read.
 	Read *coresync.ReadService
+	// Folders reads the account's chat folders. Nil until a session is
+	// attached; the chat list then simply has no tabs, which is what an
+	// account without folders looks like anyway.
+	Folders *tgclient.FoldersFetcher
+
 	// Actions edits and deletes messages that already exist. Nil until a
 	// session is attached: both are round trips, and a cache-only launch
 	// has nothing to send them to.
@@ -454,6 +459,8 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 	} else {
 		a.Dialogs = dialogs
 	}
+
+	a.Folders = tgclient.NewFoldersFetcher(client.API())
 
 	// The edit path refuses somebody else's message without a round trip by
 	// reading the direction migration 0010 stores, so no self-id lookup is

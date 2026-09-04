@@ -30,6 +30,8 @@ type Keymap struct {
 	OpenPalette key.Binding
 	Download    key.Binding
 	OpenMedia   key.Binding
+	NextFolder  key.Binding
+	PrevFolder  key.Binding
 	MarkMessage key.Binding
 	CopyMessage key.Binding
 	EditMessage key.Binding
@@ -130,6 +132,18 @@ func Default() Keymap {
 		// nothing in the thread is typing. Each one is the letter its
 		// action has in a file manager or a mail client, which is the
 		// point — the chord should be one the user already knows.
+		// Bracket keys for the folder tabs: they are what a browser and a
+		// tmux session both use for "the next one of these", they are free
+		// everywhere outside the composer, and they read as arrows on a
+		// row of tabs.
+		NextFolder: key.NewBinding(
+			key.WithKeys("]"),
+			key.WithHelp("]", "next folder"),
+		),
+		PrevFolder: key.NewBinding(
+			key.WithKeys("["),
+			key.WithHelp("[", "prev folder"),
+		),
 		MarkMessage: key.NewBinding(
 			key.WithKeys(" "),
 			key.WithHelp("space", "mark message"),
