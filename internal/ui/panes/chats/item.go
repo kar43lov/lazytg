@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/ui/safetext"
 )
 
 // previewMaxRunes is the upper bound on Description() output. 60 runes
@@ -38,12 +39,15 @@ func NewChatItem(c domain.Chat, preview string) ChatItem {
 	// A preview is one row in a list: newlines from a multi-line message would
 	// push every chat below it down and break the row arithmetic the mouse
 	// hit-test relies on.
-	preview = strings.Join(strings.Fields(preview), " ")
+	// CleanLine also collapses the whitespace, and strips the escape
+	// sequences a sender could otherwise aim at the terminal from a
+	// message the user never opened — see internal/ui/safetext.
+	preview = safetext.CleanLine(preview)
 	// A chat discovered by the live path has no title until dialog sync runs:
 	// an update carries the peer id and kind, not a name. Rendering the raw
 	// empty string produced a blank row that looked like a drawing bug, so the
 	// id stands in until the real title arrives.
-	name := c.Title
+	name := safetext.CleanLine(c.Title)
 	if name == "" {
 		name = fmt.Sprintf("chat %d", c.ID)
 	}
