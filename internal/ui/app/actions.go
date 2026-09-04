@@ -331,3 +331,37 @@ func (a App) insertEmoji(char string) (tea.Model, tea.Cmd) {
 	a.input = updated
 	return a.setFocus(FocusInput), cmd
 }
+
+// applyQuickChatKey routes Alt+1 … Alt+9 to the nth chat in the list.
+//
+// The chat list is where a TUI spends its keystrokes: cycling to the sixth
+// conversation costs six presses, and the six chats a person actually uses
+// are almost always at the top of a frecency- and recency-ordered list. Alt
+// rather than a bare digit because a bare digit is something people type, and
+// a client that swallows one is worse than a client without the shortcut.
+//
+// Not routed through the keymap: nine bindings that differ only by their
+// digit would be nine near-identical entries in the file and in the help, to
+// express one rule. The modifier is what a user would want to change, and
+// that is a smaller thing to add later than nine bindings are to remove.
+func (a App) applyQuickChatKey(k tea.KeyPressMsg) (App, tea.Cmd, bool) {
+	if a.focus == FocusInput || a.chats.IsFilterActive() {
+		return a, nil, false
+	}
+	if k.Mod != tea.ModAlt {
+		return a, nil, false
+	}
+	r := k.Code
+	if r < '1' || r > '9' {
+		return a, nil, false
+	}
+	updated, cmd, ok := a.chats.SelectNth(int(r - '0'))
+	if !ok {
+		// The list is shorter than the number pressed. Saying nothing
+		// would look like a missed keypress.
+		a.status = a.status.SetNotice("no chat there")
+		return a, nil, true
+	}
+	a.chats = updated
+	return a, cmd, true
+}

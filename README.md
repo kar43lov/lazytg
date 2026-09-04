@@ -81,6 +81,7 @@ Current capabilities:
 |-----------------|---------------------------------------|
 | Tab / Shift+Tab | cycle focus between panes             |
 | Ctrl+Tab / Ctrl+Shift+Tab | next / previous chat (also Alt+N / Alt+P) |
+| Alt+1 … Alt+9   | open the nth chat in the list as shown |
 | Enter           | send message                          |
 | Alt+Enter       | newline in input (the composer grows to 4 rows) |
 | Ctrl+R          | reply to focused message              |

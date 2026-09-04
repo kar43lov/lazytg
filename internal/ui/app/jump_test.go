@@ -168,3 +168,45 @@ func TestUnreadOf_ReportsNothingForAnUnknownChat(t *testing.T) {
 		t.Fatalf("an unknown chat reports %d unread", got)
 	}
 }
+
+// A bare digit is something people type; a client that swallows one is worse
+// than a client without the shortcut. So the modifier is required.
+func TestQuickChatKey_NeedsTheModifier(t *testing.T) {
+	t.Parallel()
+
+	a := newAppForJumps(t)
+	_, _, handled := a.applyQuickChatKey(keyChord('3', 0))
+	if handled {
+		t.Fatal("a bare digit was taken as a chat shortcut")
+	}
+	_, _, handled = a.applyQuickChatKey(keyChord('n', tea.ModAlt))
+	if handled {
+		t.Fatal("alt+n was taken as a chat shortcut")
+	}
+}
+
+// Saying nothing when the list is shorter than the number pressed would look
+// like a missed keypress.
+func TestQuickChatKey_SaysWhenThereIsNoSuchChat(t *testing.T) {
+	t.Parallel()
+
+	a := newAppForJumps(t)
+	a, _, handled := a.applyQuickChatKey(keyChord('9', tea.ModAlt))
+	if !handled {
+		t.Fatal("alt+9 was not handled")
+	}
+	if !strings.Contains(a.statusText(), "no chat there") {
+		t.Fatalf("status reads %q", a.statusText())
+	}
+}
+
+// The composer is where digits are typed.
+func TestQuickChatKey_StaysOutOfTheComposer(t *testing.T) {
+	t.Parallel()
+
+	a := newAppForJumps(t)
+	a = a.setFocus(FocusInput)
+	if _, _, handled := a.applyQuickChatKey(keyChord('3', tea.ModAlt)); handled {
+		t.Fatal("the shortcut fired while the user was typing")
+	}
+}

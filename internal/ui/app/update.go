@@ -271,6 +271,9 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if updated, cmd, handled := a.applyFolderKey(k); handled {
 			return updated, cmd
 		}
+		if updated, cmd, handled := a.applyQuickChatKey(k); handled {
+			return updated, cmd
+		}
 		if updated, cmd, handled := a.applyMessageActionKey(k); handled {
 			return updated, cmd
 		}
