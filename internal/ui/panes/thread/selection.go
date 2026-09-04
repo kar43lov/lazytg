@@ -35,9 +35,20 @@ type selection struct {
 
 // blockSpan is the line range one message occupies in the rendered content,
 // end exclusive.
+//
+// id and mediaLine are what let a pointer position mean something other than
+// "these characters": the message the pointer is over, and — when that message
+// has an attachment — the one line where its badge is drawn, so a click on the
+// badge can open the attachment while a click anywhere else in the same
+// message does not. Both are produced by the renderer for the same reason the
+// line range is: a second implementation of the layout would drift.
 type blockSpan struct {
 	start int
 	end   int
+	// id is the message id, zero for an optimistic (not yet sent) row.
+	id int64
+	// mediaLine is the absolute line carrying the media badge, or -1.
+	mediaLine int
 }
 
 // contains reports whether line falls inside the span.
@@ -294,15 +305,23 @@ func (m Model) ClearSelection() Model {
 	return m
 }
 
-// dropSelection forgets whatever was highlighted. Every caller is a place that
-// replaces the body under the highlight — opening another chat, switching to
-// one, loading a jump window, reloading after a failed jump. A selection is a
-// range of line/column cells with no tie to the messages it covered, so
-// carrying it across a content swap lights up whichever lines happen to fall
-// inside the range in the new conversation. Found by review, not by use: the
-// mouse paths cleared it by hand and the keyboard paths did not.
+// dropSelection forgets whatever was highlighted, and where the cursor was.
+// Every caller is a place that replaces the body under both — opening another
+// chat, switching to one, loading a jump window, reloading after a failed
+// jump. A selection is a range of line/column cells with no tie to the
+// messages it covered, so carrying it across a content swap lights up
+// whichever lines happen to fall inside the range in the new conversation.
+// Found by review, not by use: the mouse paths cleared it by hand and the
+// keyboard paths did not.
+//
+// The cursor goes for a related but distinct reason: a message id is unique
+// per chat, not across chats — a channel numbers its own messages from one —
+// so an id carried into another conversation can match a completely different
+// message rather than simply missing. Resetting to zero puts it back on the
+// newest message, which is where a freshly opened chat should start.
 func (m Model) dropSelection() Model {
 	m.sel = nil
 	m.dragCache = nil
+	m.cursorID = 0
 	return m
 }

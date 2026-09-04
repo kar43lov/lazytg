@@ -117,8 +117,27 @@ func TestBuildFileLocation(t *testing.T) {
 		t.Fatalf("photo -> %T (%+v)", loc, got)
 	}
 
-	if _, err := buildFileLocation(domain.MediaInfo{Kind: "weird"}); err == nil {
-		t.Fatalf("expected error for unknown kind")
+	// Every kind that is not a photo is a document on the wire, so a kind
+	// this function has never heard of still downloads. The alternative —
+	// a switch listing the known kinds — is how adding a kind silently
+	// breaks downloading it, which is exactly what happened when video
+	// notes and voice messages stopped being called "document".
+	for _, kind := range []domain.MediaKind{
+		domain.MediaKindVideoNote, domain.MediaKindVoice, domain.MediaKindSticker, "kind-from-the-future",
+	} {
+		loc, err := buildFileLocation(domain.MediaInfo{Kind: kind, FileID: 1, AccessHash: 2})
+		if err != nil {
+			t.Fatalf("%s: %v", kind, err)
+		}
+		if _, ok := loc.(*tg.InputDocumentFileLocation); !ok {
+			t.Fatalf("%s -> %T, want a document location", kind, loc)
+		}
+	}
+
+	// An empty kind is not a kind: it means the row carried no media, and
+	// building a location for it would ask Telegram for document id 0.
+	if _, err := buildFileLocation(domain.MediaInfo{}); err == nil {
+		t.Fatalf("expected an error for an empty media kind")
 	}
 }
 

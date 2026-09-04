@@ -721,9 +721,9 @@ const messageUpsertSQL = `
             id, chat_id, from_id, date, text, reply_to, raw_blob,
             media_kind, media_id, media_access_hash, media_file_reference,
             media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-            outgoing
+            media_duration, outgoing
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chat_id, id) DO UPDATE SET
             from_id              = excluded.from_id,
             date                 = excluded.date,
@@ -739,6 +739,7 @@ const messageUpsertSQL = `
             media_size           = excluded.media_size,
             media_mime_type      = excluded.media_mime_type,
             media_thumb_size     = excluded.media_thumb_size,
+            media_duration       = excluded.media_duration,
             outgoing             = excluded.outgoing
     `
 
@@ -756,6 +757,7 @@ func messageInsertArgs(m domain.Message) []any {
 		mediaSize sql.NullInt64
 		mediaMime sql.NullString
 		mediaThSz sql.NullString
+		mediaDur  int
 	)
 	if m.Media != nil {
 		mediaKind = sql.NullString{String: string(m.Media.Kind), Valid: m.Media.Kind != ""}
@@ -769,6 +771,7 @@ func messageInsertArgs(m domain.Message) []any {
 		mediaSize = nullableInt64(m.Media.Size)
 		mediaMime = nullableString(m.Media.MimeType)
 		mediaThSz = nullableString(m.Media.ThumbSize)
+		mediaDur = m.Media.Duration
 	}
 	return []any{
 		m.ID,
@@ -787,6 +790,7 @@ func messageInsertArgs(m domain.Message) []any {
 		mediaSize,
 		mediaMime,
 		mediaThSz,
+		mediaDur,
 		m.Outgoing,
 	}
 }
@@ -868,7 +872,7 @@ const messageSelectColumns = `
         SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                media_kind, media_id, media_access_hash, media_file_reference,
                media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-               outgoing
+               media_duration, outgoing
     `
 
 // scanMessages drains rows into a slice of domain.Message, parsing the
@@ -892,12 +896,13 @@ func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 			mediaSize sql.NullInt64
 			mediaMime sql.NullString
 			mediaThSz sql.NullString
+			mediaDur  sql.NullInt64
 		)
 		if err := rows.Scan(
 			&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &raw,
 			&mediaKind, &mediaID, &mediaAH, &mediaRef,
 			&mediaDC, &mediaName, &mediaSize, &mediaMime, &mediaThSz,
-			&m.Outgoing,
+			&mediaDur, &m.Outgoing,
 		); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
@@ -917,6 +922,7 @@ func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 				Size:          mediaSize.Int64,
 				MimeType:      mediaMime.String,
 				ThumbSize:     mediaThSz.String,
+				Duration:      int(mediaDur.Int64),
 			}
 		}
 		out = append(out, m)

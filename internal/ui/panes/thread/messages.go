@@ -85,3 +85,21 @@ type DownloadRequestedMsg struct {
 	ChatTitle string
 	Media     domain.MediaInfo
 }
+
+// OpenRequestedMsg is emitted when the user asks to look at an
+// attachment rather than merely save it — the OpenMedia chord, or a
+// click on the badge. The app layer downloads it if it is not on disk
+// already and then hands the path to the system viewer.
+//
+// It is a distinct type with the same fields rather than a flag on
+// DownloadRequestedMsg, because the two gestures fail differently: a
+// download that fails is a failed download, while an open that fails
+// after a successful download is a viewer problem. The app converts one
+// to the other when there is no viewer wired, which compiles only while
+// the fields stay identical — the right place to be told they diverged.
+type OpenRequestedMsg struct {
+	ChatID    int64
+	MessageID int64
+	ChatTitle string
+	Media     domain.MediaInfo
+}

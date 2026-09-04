@@ -9,6 +9,7 @@ import (
 
 	"github.com/kar43lov/lazytg/internal/app"
 	"github.com/kar43lov/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/files"
 	uiapp "github.com/kar43lov/lazytg/internal/ui/app"
 	"github.com/kar43lov/lazytg/internal/ui/input"
 	"github.com/kar43lov/lazytg/internal/ui/palette"
@@ -131,6 +132,15 @@ func runTUI(cmd *cobra.Command, _ []string) error {
 	}
 	if runtime.DownloadSvc != nil {
 		deps.Downloader = runtime.DownloadSvc
+	}
+	// A missing viewer is not a reason to refuse to start: the open
+	// gesture degrades to a plain download, which is what lazytg did
+	// before it could open anything. The reason is logged once, here,
+	// rather than on every keypress.
+	if opener, err := files.NewOpener(logger); err != nil {
+		logger.Info("open: no media viewer configured", "err", err)
+	} else {
+		deps.Opener = opener
 	}
 	if runtime.UploadSvc != nil {
 		deps.Uploader = runtime.UploadSvc

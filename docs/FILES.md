@@ -13,7 +13,8 @@
 
 - Корень переопределяется через env-переменную `LAZYTG_DOWNLOADS`.
 - `<chat_title>` санитизируется: символы `/`, `\`, `..`, `:`, `*`, `?`, `"`, `<`, `>`, `|`, `\0`, control chars, leading/trailing dots/spaces заменяются на `_`. Это защищает от path-traversal через имя чата (имя задаёт собеседник) и от переноса на Windows-файловые системы.
-- `<filename>` берётся из `DocumentAttributeFilename` если он есть; иначе fallback `document_<id>.bin` для документов и `photo_<id>.jpg` для фото.
+- `<filename>` берётся из `DocumentAttributeFilename` если он есть; иначе fallback по виду вложения — `video_note_<id>.mp4`, `voice_<id>.ogg`, `video_<id>.mp4`, `animation_<id>.mp4`, `audio_<id>.mp3`, `sticker_<id>.webp`, `photo_<id>.jpg`, и `document_<id>.bin` для всего остального. Расширение важно не только для читаемости: системный просмотрщик выбирает приложение именно по нему.
+- 🔴 **Имена не уникальны, и это учтено.** Telegram не спрашивает у отправителя имя файла: любое видео с телефона приезжает как `video.mp4`. До 04.09.2026 такие вложения писались в один путь — второе скачивание молча затирало первое, а таблица дедупа после этого держала два `file_id` на один файл и отдавала по старшему чужие байты (воспроизведено на реальном зеркале: восемь вложений, одно имя). Теперь `FileStore.Reserve` подбирает свободное имя в браузерном стиле — `video.mp4`, `video (2).mp4`, … — и **занимает** его, создавая `.partial` с `O_EXCL`: две загрузки, стартовавшие одновременно, не могут выбрать одно имя.
 
 Папки создаются с `0700`, файлы с `0600` — соответствует базовому требованию SECURITY.md, медиа не утекает на multi-user системе.
 
@@ -45,8 +46,8 @@ Statusbar подписан на эти события, отрисовывает 
 | Что НЕ работает | Почему |
 |-----------------|--------|
 | Resume прерванной загрузки | gotd-downloader не возобновляет сессию по offset; реализация требует client-side reassembly. Будет в v0.3 |
-| Cursor-навигация по сообщениям для выбора media | Stage 3 Task 6: `Ctrl+D` оперирует **последним** сообщением в thread с media. Per-message cursor запланирован на v0.2 |
-| Inline media preview (Kitty/iTerm/sixel) | Месяцы работы. v0.3 |
+| ~~Cursor-навигация по сообщениям для выбора media~~ | **Закрыто 04.09.2026.** Курсор по сообщениям (`↑`/`↓`, `k`/`j`, клик) есть; `Ctrl+D` и `o` берут вложение под курсором или ближайшее выше него. Нетронутый курсор стоит на последнем сообщении, поэтому старое поведение сохранилось |
+| Inline media preview (Kitty/iTerm/sixel) | v0.3. Просмотр закрыт иначе: `o` отдаёт файл системному просмотрщику. Для кружочка и видео это единственный честный ответ — терминал видео не рисует |
 | Upload (`Ctrl+U`) | Stage 3 Task 7 — отдельная итерация |
 | Файлы > 2 ГБ | gotd поддерживает, но в Telegram free hard-limit ~2 ГБ. Файл скачается, обработка лимитов на стороне сервера |
 | FILE_REFERENCE_EXPIRED auto-refresh | v0.1 возвращает `tg.ErrFileReferenceExpired` ошибку. v0.2 переавтоматически перезапросит сообщение через `messages.getMessages` и повторит |
@@ -59,11 +60,22 @@ internal/core/files/store.go    — on-disk path resolution + sanitization
 internal/core/files/dedup.go    — кэш downloaded_files
 internal/core/files/download.go — orchestration: dedup → mkdir → tmp → progress → rename → record
 internal/core/files/progress.go — throttler (1 MiB / 5%)
+internal/core/files/open.go     — Opener: запуск системного просмотрщика (exec без shell)
 internal/core/events/events.go  — FileDownload* типизированные события
-internal/ui/panes/thread/       — display [📎 file, KiB] badge + Ctrl+D wiring
+internal/ui/panes/thread/       — бейдж [⏺ video note, 0:07, 1.2 MiB], курсор по сообщениям, Ctrl+D / o wiring
 internal/ui/statusbar/          — UpsertDownload / RemoveDownload + render `⬇ filename N%`
-internal/ui/app/update.go       — handleDownloadRequest → goroutine с timeout 30 минут
+internal/ui/app/update.go       — handleDownloadRequest / handleOpenRequest → goroutine с timeout 30 минут
 ```
+
+## Просмотр вложения
+
+`o` (или клик по строке бейджа) скачивает вложение, если его ещё нет на диске, и отдаёт путь системному просмотрщику. Повторное нажатие бесплатно: дедуп отдаёт кэшированный путь, сеть не трогается.
+
+- Программа по умолчанию: `open` на macOS, `xdg-open` на *BSD/Linux. Переопределяется через `LAZYTG_OPEN_CMD` — например `LAZYTG_OPEN_CMD="mpv --loop"` для кружочков, которые в официальном клиенте играют по кругу.
+- Просмотрщик запускается **напрямую**, без shell: аргумент — имя файла, выбранное отправителем, и shell сделал бы его пунктуацию исполняемой. Путь обязан быть абсолютным и существовать (иначе просмотрщик прочитал бы ведущий дефис как флаг).
+- `stdin`/`stdout`/`stderr` просмотрщику не отдаются: программа, пишущая в терминал, закрасила бы отрисованный тред, а читающая stdin — украла бы клавиши.
+- lazytg не ждёт закрытия окна и не отменяет просмотрщик при выходе из скачивания: контекст загрузки к этому моменту уже отменяется, и он убил бы только что открытое окно.
+- Просмотрщика может не быть (неизвестная платформа, кривой `LAZYTG_OPEN_CMD`). Тогда причина пишется в лог один раз при старте, а `o` работает как обычное скачивание.
 
 Зависимости расположены так:
 

@@ -32,12 +32,23 @@ type SendServiceInterface interface {
 	SendText(ctx context.Context, chatID int64, text string, replyTo int) (localID string, err error)
 }
 
-// composerHeight is the fixed visible height of the textarea body. The
-// surrounding pane is 3 rows (set in app/update.go); the remaining 2
-// rows are reserved for the optional reply hint above and the empty-
-// state hint below. Stage 2 keeps single-line composing as the common
-// case; multi-line deferral lives behind the $EDITOR escape hatch.
-const composerHeight = 1
+// composerHeight is the resting height of the textarea body, and
+// composerMaxHeight the tallest it grows to. Two more rows sit around it
+// in the pane — the optional reply hint above and the hint line below —
+// so the composer occupies composerHeight+2 rows at rest and
+// composerMaxHeight+2 at full stretch. Rows() is what the app layout
+// asks for; nothing outside this package should assume a fixed number.
+//
+// A single row was the Stage 2 decision, with $EDITOR as the escape
+// hatch for anything longer. It reads as broken the moment you write two
+// sentences: the text scrolls out of sight one line at a time and there
+// is no way to see what you just typed. Four rows covers the ordinary
+// long message without permanently spending screen on the composer, and
+// Ctrl-E is still there for a genuinely long one.
+const (
+	composerHeight    = 1
+	composerMaxHeight = 4
+)
 
 // composerCharLimit caps how many characters can sit in the textarea
 // at once. Telegram itself rejects messages over 4096 bytes; we cap at
@@ -115,6 +126,15 @@ func NewWithDeps(send SendServiceInterface, km keymap.Keymap, log *slog.Logger) 
 	ta := textarea.New()
 	ta.Placeholder = placeholder
 	ta.Prompt = blurredPrompt
+	// The composer grows with what is being written and shrinks back when
+	// it is sent. One row is the resting size — most messages are one
+	// line, and a permanently tall composer would take rows away from the
+	// conversation for nothing. Four is the ceiling: past that the text
+	// scrolls inside the box, and anything genuinely long belongs in
+	// $EDITOR via Ctrl-E.
+	ta.DynamicHeight = true
+	ta.MinHeight = composerHeight
+	ta.MaxHeight = composerMaxHeight
 	ta.SetHeight(composerHeight)
 	ta.CharLimit = composerCharLimit
 	ta.ShowLineNumbers = false
@@ -147,6 +167,24 @@ func (m Model) Init() tea.Cmd {
 // Value returns the current textarea contents. Exposed for tests so
 // they can assert what would be sent without rendering the View.
 func (m Model) Value() string { return m.textarea.Value() }
+
+// Rows reports how many terminal rows the composer needs right now: the
+// textarea's current height plus the reply-hint row above it and the
+// hint row below.
+//
+// The app layout reads this on every frame rather than a constant,
+// because the textarea grows as the user writes. Panes above give up a
+// row when it grows and take it back when the message is sent.
+func (m Model) Rows() int {
+	h := m.textarea.Height()
+	if h < composerHeight {
+		h = composerHeight
+	}
+	if h > composerMaxHeight {
+		h = composerMaxHeight
+	}
+	return h + 2
+}
 
 // ReplyTo returns the currently-armed reply pointer or nil. Test
 // helper.

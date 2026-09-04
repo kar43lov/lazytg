@@ -746,3 +746,55 @@ func TestRepo_RoundTrip_MessageDirection(t *testing.T) {
 		}
 	}
 }
+
+// The kind and the duration are what the badge reads, so a round trip
+// that loses either turns "video note, 0:07" back into an opaque blob.
+// Both column lists are exercised — insert and upsert — because they are
+// written separately and a column added to one and forgotten in the
+// other fails only on a re-fetch, which is the ordinary case: opening a
+// chat pulls history over messages the live path already stored.
+func TestRepo_RoundTrip_MediaKindAndDuration(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := repo.SaveChat(ctx, domain.Chat{
+		ID: 42, Type: domain.ChatTypePrivate, Title: "Peer", LastMessageDate: now,
+	}); err != nil {
+		t.Fatalf("save chat: %v", err)
+	}
+	note := &domain.MediaInfo{
+		Kind: domain.MediaKindVideoNote, FileID: 5123, AccessHash: 7,
+		Filename: "video_note_5123.mp4", Size: 1258291, MimeType: "video/mp4", Duration: 7,
+	}
+	if err := repo.SaveMessages(ctx, []domain.Message{
+		{ID: 1, ChatID: 42, Date: now, Media: note},
+	}); err != nil {
+		t.Fatalf("save message: %v", err)
+	}
+
+	got, err := repo.GetMessages(ctx, 42, 10, 0)
+	if err != nil {
+		t.Fatalf("get messages: %v", err)
+	}
+	if len(got) != 1 || got[0].Media == nil {
+		t.Fatalf("read %d messages, media present: %v", len(got), len(got) == 1 && got[0].Media != nil)
+	}
+	if got[0].Media.Kind != domain.MediaKindVideoNote {
+		t.Errorf("kind = %q, want %q", got[0].Media.Kind, domain.MediaKindVideoNote)
+	}
+	if got[0].Media.Duration != 7 {
+		t.Errorf("duration = %d, want 7", got[0].Media.Duration)
+	}
+
+	// The upsert path: re-fetching the same message must not flatten it.
+	if err := repo.SaveMessage(ctx, domain.Message{ID: 1, ChatID: 42, Date: now, Media: note}); err != nil {
+		t.Fatalf("re-save message: %v", err)
+	}
+	got, err = repo.GetMessages(ctx, 42, 10, 0)
+	if err != nil {
+		t.Fatalf("get messages after upsert: %v", err)
+	}
+	if got[0].Media == nil || got[0].Media.Duration != 7 || got[0].Media.Kind != domain.MediaKindVideoNote {
+		t.Fatalf("upsert lost the media detail: %+v", got[0].Media)
+	}
+}

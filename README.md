@@ -33,7 +33,7 @@ Think `lazygit` ergonomics, but for Telegram conversations: keyboard-driven, sin
 - 🔐 **Local-first** — sessions in an `age`-encrypted file whose passphrase lives in the OS keyring, permissions audit refuses `0644` secrets.
 - 🛡️ **Built-in ban-risk floor** — 10 msg/sec send rate-limit guard covers both text and media; not user-tunable upward.
 - ⌨️ **Emacs/readline keymap by default**, fully overridable through `keymap.toml` (vim-style modal bindings deferred to v0.2).
-- 📥📤 **First-class file transfer** — `Ctrl+D` downloads the focused media, `Ctrl+U` attaches a file with progress in the status bar.
+- 📥📤 **First-class file transfer** — a per-message cursor picks the attachment, `Ctrl+D` saves it, `o` (or a click on its badge) opens it in the system viewer, `Ctrl+U` attaches a file, all with progress in the status bar. Photos, videos, voice messages and round video messages are named and timed in the thread rather than shown as anonymous blobs.
 - 🧭 **Command palette (`Ctrl+Space`)** with frecency-ranked chat switcher and Unicode-fuzzy matching ("Алёна" === "Алена").
 - 🪶 **Pure-Go single binary**, no Electron, no CGo (sqlcipher build is opt-in, deferred for v0.1.x).
 - 🔬 **Cosign-keyless signed releases** — every archive ships with a sigstore bundle; `cosign verify-blob` confirms provenance.
@@ -41,7 +41,7 @@ Think `lazygit` ergonomics, but for Telegram conversations: keyboard-driven, sin
 
 ## Status
 
-**Alpha — release-candidate.** All four stages of the [v0.1.0 roadmap](docs/plans/lazytg-v0.1.0.md) have shipped (foundation, TUI, search/files/security, release pipeline). `runTUI` now opens the MTProto session before building the UI and syncs the dialog list, so the TUI reads live Telegram data; every failure path (no session, no network, revoked authorisation, connect timeout) degrades to the cached-only view rather than refusing to start. Two live runs against a real account have happened (18-19.08.2026): the basic path, and a connection cut with every interface down. Both found defects no test had — see CHANGELOG `Known gaps` for what is still open and `docs/MANUAL_SMOKE.md` for the checklist those runs corrected.
+**Alpha — release-candidate.** All four stages of the [v0.1.0 roadmap](docs/plans/lazytg-v0.1.0.md) have shipped (foundation, TUI, search/files/security, release pipeline). `runTUI` now opens the MTProto session before building the UI and syncs the dialog list, so the TUI reads live Telegram data; every failure path (no session, no network, revoked authorisation, connect timeout) degrades to the cached-only view rather than refusing to start. Four live runs against a real account have happened (18-19.08.2026): the basic path, a connection cut with every interface down, and two runs of ordinary use. Every one of them found defects no test had — see CHANGELOG `Known gaps` for what is still open and `docs/MANUAL_SMOKE.md` for the checklist those runs corrected.
 
 Current capabilities:
 
@@ -65,12 +65,14 @@ Current capabilities:
 | Tab / Shift+Tab | cycle focus between panes             |
 | Ctrl+Tab / Ctrl+Shift+Tab | next / previous chat (also Alt+N / Alt+P) |
 | Enter           | send message                          |
-| Alt+Enter       | newline in input                      |
+| Alt+Enter       | newline in input (the composer grows to 4 rows) |
 | Ctrl+R          | reply to focused message              |
 | Ctrl+E          | open `$EDITOR` with current draft     |
 | `/`             | open search overlay                   |
 | Ctrl+Space      | command palette (chat switcher L1)    |
-| Ctrl+D          | download last media in thread         |
+| ↑ / ↓ (k / j)   | move the message cursor in the thread |
+| Ctrl+D          | save the attachment at the cursor     |
+| `o`             | open the attachment at the cursor in the system viewer |
 | Ctrl+U          | attach file (upload)                  |
 | `?`             | toggle help overlay                   |
 | Ctrl+C / Ctrl+Q | quit                                  |
@@ -80,7 +82,8 @@ Current capabilities:
 | Gesture                  | Action                                      |
 |--------------------------|---------------------------------------------|
 | Left click on a chat row | focus the chat list and open that chat      |
-| Left click on the thread | focus the thread                            |
+| Left click on the thread | focus the thread and put the cursor on that message |
+| Left click on an attachment badge | open that attachment in the system viewer |
 | Left click on the input  | focus the composer                          |
 | Wheel over the chat list | move the highlight one chat per notch       |
 | Wheel over the thread    | scroll, loading older history at the top    |

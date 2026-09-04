@@ -39,6 +39,14 @@ type FileDownloader interface {
 	Download(ctx context.Context, chatID int64, chatTitle string, info domain.MediaInfo) (string, error)
 }
 
+// MediaOpener is the contract App.handleOpenRequest uses to show a
+// downloaded file to the user. The production implementation is
+// internal/core/files.Opener, which launches the system viewer; tests
+// substitute a fake so no window opens on a CI runner.
+type MediaOpener interface {
+	Open(ctx context.Context, path string) error
+}
+
 // FileUploader is the gotd-free contract App.handleAttachSubmit uses
 // to start an upload + sendMedia round-trip. The concrete production
 // implementation is internal/core/files.UploadService; tests substitute
@@ -151,6 +159,13 @@ type Deps struct {
 	// internal/core/files in scope.
 	Downloader FileDownloader
 
+	// Opener, if set, shows a downloaded file to the user when they
+	// press the OpenMedia chord ("o" by default) or click an
+	// attachment badge. nil makes the gesture download-only, which is
+	// what every test wants and what a build with no system viewer
+	// gets.
+	Opener MediaOpener
+
 	// Uploader, if set, is invoked when the user submits a file
 	// from the Attach overlay (Ctrl-U flow). nil makes the overlay
 	// open / browse / submit but the actual SendFile call becomes a
@@ -195,6 +210,11 @@ type App struct {
 	// Deps.Downloader. nil means "no downloader wired" and the
 	// Download chord becomes a friendly no-op.
 	downloader FileDownloader
+
+	// opener shows a downloaded file to the user, wired through
+	// Deps.Opener. nil means the open gesture downloads and stops
+	// there.
+	opener MediaOpener
 
 	// uploader is the file-upload collaborator wired through
 	// Deps.Uploader. nil means "no uploader wired" — the Attach
@@ -313,6 +333,7 @@ func New(deps Deps) App {
 		attach:            chooseAttach(deps.Attach, deps.Log),
 		paletteFrecency:   deps.PaletteFrecency,
 		downloader:        deps.Downloader,
+		opener:            deps.Opener,
 		uploader:          deps.Uploader,
 		jumper:            deps.Jumper,
 		backfiller:        deps.Backfiller,

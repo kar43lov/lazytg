@@ -29,6 +29,7 @@ type Keymap struct {
 	Search      key.Binding
 	OpenPalette key.Binding
 	Download    key.Binding
+	OpenMedia   key.Binding
 	Attach      key.Binding
 	Quit        key.Binding
 }
@@ -106,6 +107,15 @@ func Default() Keymap {
 		Download: key.NewBinding(
 			key.WithKeys("ctrl+d"),
 			key.WithHelp("ctrl+d", "download media"),
+		),
+		// A bare letter, which is safe because this one is only live
+		// while the thread pane has focus — the composer is a separate
+		// pane, so nothing here is typing. "o" is what a file manager,
+		// a mail client and a browser all use for "open", which is the
+		// point: the chord should be the one the user already knows.
+		OpenMedia: key.NewBinding(
+			key.WithKeys("o"),
+			key.WithHelp("o", "open media"),
 		),
 		Attach: key.NewBinding(
 			key.WithKeys("ctrl+u"),

@@ -106,12 +106,12 @@ func (s *Service) JumpContext(ctx context.Context, hit Hit, around int) ([]domai
         SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                media_kind, media_id, media_access_hash, media_file_reference,
                media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-               outgoing
+               media_duration, outgoing
         FROM (
             SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                    media_kind, media_id, media_access_hash, media_file_reference,
                    media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-                   outgoing,
+                   media_duration, outgoing,
                    0 AS half
             FROM messages
             WHERE chat_id = ? AND id < ?
@@ -122,12 +122,12 @@ func (s *Service) JumpContext(ctx context.Context, hit Hit, around int) ([]domai
         SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                media_kind, media_id, media_access_hash, media_file_reference,
                media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-               outgoing
+               media_duration, outgoing
         FROM (
             SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                    media_kind, media_id, media_access_hash, media_file_reference,
                    media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-                   outgoing,
+                   media_duration, outgoing,
                    1 AS half
             FROM messages
             WHERE chat_id = ? AND id >= ?
@@ -176,7 +176,7 @@ var ErrJumpTargetMissing = errors.New("search: jump target not found")
 // row layout (id, chat_id, from_id, date, text, reply_to, raw_blob,
 // media_kind, media_id, media_access_hash, media_file_reference,
 // media_dc, media_filename, media_size, media_mime_type,
-// media_thumb_size, outgoing) into a domain.Message with Media populated when
+// media_thumb_size, media_duration, outgoing) into a domain.Message with Media populated when
 // media_kind is non-NULL. Mirrors internal/storage/sqlite::scanMessages
 // — the duplication is deliberate because exporting that helper would
 // pull search into the storage package's surface area.
@@ -197,12 +197,13 @@ func scanMessageWithMedia(rows *sql.Rows) (domain.Message, error) {
 		mediaSize sql.NullInt64
 		mediaMime sql.NullString
 		mediaThSz sql.NullString
+		mediaDur  sql.NullInt64
 	)
 	if err := rows.Scan(
 		&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &rawBlob,
 		&mediaKind, &mediaID, &mediaAH, &mediaRef,
 		&mediaDC, &mediaName, &mediaSize, &mediaMime, &mediaThSz,
-		&m.Outgoing,
+		&mediaDur, &m.Outgoing,
 	); err != nil {
 		return domain.Message{}, err
 	}
@@ -222,6 +223,7 @@ func scanMessageWithMedia(rows *sql.Rows) (domain.Message, error) {
 			Size:          mediaSize.Int64,
 			MimeType:      mediaMime.String,
 			ThumbSize:     mediaThSz.String,
+			Duration:      int(mediaDur.Int64),
 		}
 	}
 	return m, nil
@@ -298,6 +300,7 @@ func (s *Service) Search(ctx context.Context, raw string, limit int) ([]Hit, err
                m.media_size,
                m.media_mime_type,
                m.media_thumb_size,
+               m.media_duration,
                snippet(messages_fts, 0, '<b>', '</b>', '...', 16) AS snippet,
                bm25(messages_fts) AS score
         FROM messages_fts
@@ -331,6 +334,7 @@ func (s *Service) Search(ctx context.Context, raw string, limit int) ([]Hit, err
 			mediaSize sql.NullInt64
 			mediaMime sql.NullString
 			mediaThSz sql.NullString
+			mediaDur  sql.NullInt64
 			snippet   string
 			score     float64
 		)
@@ -338,7 +342,7 @@ func (s *Service) Search(ctx context.Context, raw string, limit int) ([]Hit, err
 			&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &rawBlob,
 			&mediaKind, &mediaID, &mediaAH, &mediaRef,
 			&mediaDC, &mediaName, &mediaSize, &mediaMime, &mediaThSz,
-			&snippet, &score,
+			&mediaDur, &snippet, &score,
 		); err != nil {
 			return nil, fmt.Errorf("search scan: %w", err)
 		}
@@ -358,6 +362,7 @@ func (s *Service) Search(ctx context.Context, raw string, limit int) ([]Hit, err
 				Size:          mediaSize.Int64,
 				MimeType:      mediaMime.String,
 				ThumbSize:     mediaThSz.String,
+				Duration:      int(mediaDur.Int64),
 			}
 		}
 		hits = append(hits, Hit{

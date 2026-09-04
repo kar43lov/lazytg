@@ -53,7 +53,7 @@ All packages below ship in the v0.1 branch (Stages 1–3 complete). Stage labels
 | `internal/core/search`           | 3     | FTS5 indexer (`Indexer.Backfill`), reindex service (`RunAll`/`Run`), lazy trigger, query parser + builder, search service.          | `internal/{core/events,core/domain,storage}` | `gotd/td`, `charmbracelet/bubbletea` |
 | `internal/core/files`            | 3     | Download / upload orchestration: `FileStore`, `DedupCache`, `DownloadService`, `UploadService`, throttled progress emitters.        | `internal/{core/events,core/domain}`    | `gotd/td`, `charmbracelet/bubbletea`     |
 | `internal/core/security`         | 3     | Permissions audit (`CheckAtStartup` / `EnforceFatal`), `SendGuard` (TokenBucket wrapper at 10 msg/s).                              | `internal/core/sync`                    | `gotd/td`, `charmbracelet/bubbletea`     |
-| `internal/storage/sqlite`        | 1–3   | Repository implementation: migrations 0001–0010, FTS5 trigram index, frecency, dedup tables, outgoing/peers/state repos.            | `internal/core/domain`                  | `internal/ui`, `internal/tg`             |
+| `internal/storage/sqlite`        | 1–3   | Repository implementation: migrations 0001–0011, FTS5 trigram index, frecency, dedup tables, outgoing/peers/state repos.            | `internal/core/domain`                  | `internal/ui`, `internal/tg`             |
 | `internal/ui/app`                | 2     | Bubble Tea root model, focus orchestration, modal overlay routing, mouse hit-testing (`layout.go` owns the geometry that resizing and clicks share).                                                                | `internal/core` (interfaces), `internal/ui/*` | `gotd/td`                          |
 | `internal/ui/{chats,thread}`     | 2     | Stage 2 panes (chats list, thread reader).                                                                                          | `internal/core` (interfaces)            | `gotd/td`                                |
 | `internal/ui/{search,attach}`    | 3     | Stage 3 overlays (search results + jump, attach file picker).                                                                       | `internal/core` (interfaces)            | `gotd/td`                                |
@@ -76,6 +76,14 @@ the next event it actually cared about falls off the end. `ReadService` and
 a worker goroutine that does the waiting, with a small buffered channel between
 them — the reader never blocks, and a full queue costs one skipped acknowledgement
 rather than a lost event of another kind.
+
+The queue's depth follows the semantics of what it carries. `ReadService` keeps
+two: opening a chat is a discrete user action, so those are queued and each is
+sent; a message arriving into the open chat is a stream whose entries supersede
+one another — acknowledging id 40 covers everything below it — so those go into
+a depth-one slot that the newest arrival displaces. One shared queue would spend
+a request per message and let a busy conversation push another chat's open off
+the end.
 
 A test for this must pace its event stream. A tight publish loop outruns any
 consumer, so it fails against correct code and proves nothing; see

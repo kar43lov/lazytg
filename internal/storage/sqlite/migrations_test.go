@@ -101,20 +101,20 @@ func tableExists(ctx context.Context, db *sql.DB, name string) (bool, error) {
 	return found == name, nil
 }
 
-// TestMigrations0009And0010_UpgradeAnExistingDatabase covers the path the unit
+// TestMigrations0009To0011_UpgradeAnExistingDatabase covers the path the unit
 // suite never exercises: an installed database that already carries rows,
 // rather than a fresh file built by running every migration at once. 0009
 // rebuilds `state` and `channel_state` to drop a foreign key that made them
 // unwritable — a rebuild is exactly the kind of migration that loses data when
-// it is wrong — and 0010 adds a column to a `messages` table that already has
-// rows in it.
+// it is wrong — while 0010 and 0011 each add a column to a `messages` table
+// that already has rows in it.
 //
 // The fixture is the pre-0009 schema, seeded and stamped as applied through
 // version 8, so Open() has to perform the upgrade rather than create the
 // tables from scratch. It carries a messages table for the same reason: a
 // migration that only ever runs against the tables a test happens to create
 // is not tested against anything a user has.
-func TestMigrations0009And0010_UpgradeAnExistingDatabase(t *testing.T) {
+func TestMigrations0009To0011_UpgradeAnExistingDatabase(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	t.Cleanup(cancel)
 
@@ -208,6 +208,20 @@ func TestMigrations0009And0010_UpgradeAnExistingDatabase(t *testing.T) {
 	}
 	if outgoing {
 		t.Fatalf("pre-0010 message came back marked outgoing")
+	}
+
+	// 0011: the same row gains a duration of zero rather than a NULL that
+	// every scan would then have to guard. A message stored before the
+	// column existed has no duration to recover — it is a text message —
+	// and re-fetching history to learn that would be a network round trip
+	// for a cosmetic field.
+	var duration int
+	if err := repo.DB().QueryRowContext(ctx,
+		`SELECT media_duration FROM messages WHERE chat_id = 275641346 AND id = 28`).Scan(&duration); err != nil {
+		t.Fatalf("read migrated media_duration: %v", err)
+	}
+	if duration != 0 {
+		t.Fatalf("pre-0011 message came back with duration %d, want 0", duration)
 	}
 
 	var violations int
