@@ -101,6 +101,17 @@ const cursorMark = "▸"
 
 var cursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
 
+// markMark and markStyle draw a message the user has picked out for an
+// action that takes several. It sits in the same column as the cursor
+// glyph and replaces it while both apply, because they answer different
+// questions — "where am I" and "what have I chosen" — and the cursor is
+// recoverable at a glance from the arrow keys while the marks are not.
+// Yellow (ANSI 3) rather than cyan so the two are distinguishable on a
+// monochrome-ish theme by shape as well as colour.
+const markMark = "✓"
+
+var markStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+
 // boldStyle / italicStyle / codeStyle drive the simple-markdown inline
 // pass. Code uses dim grey on the default background — a real background
 // fill would clash with the surrounding pane lipgloss border.
@@ -142,12 +153,23 @@ func formatMessageAs(msg domain.Message, width int, replyTo *domain.Message, aut
 // block: the body stays where it was, so nothing about wrapping, selection
 // columns or the golden snapshots moves when the cursor passes over a message.
 func formatMessageBlock(msg domain.Message, width int, replyTo *domain.Message, author string, cursor bool) (string, int) {
+	return formatMessageBlockMarked(msg, width, replyTo, author, cursor, false)
+}
+
+// formatMessageBlockMarked is formatMessageBlock with the mark state the
+// multi-select needs. The two are separate so every existing caller — and
+// every existing golden test — keeps its signature: a mark is an addition
+// to the row, not a change to how a row is built.
+func formatMessageBlockMarked(msg domain.Message, width int, replyTo *domain.Message, author string, cursor, marked bool) (string, int) {
 	if width < minBodyWidth {
 		width = minBodyWidth
 	}
 
 	var b strings.Builder
-	if cursor {
+	switch {
+	case marked:
+		b.WriteString(markStyle.Render(markMark) + " ")
+	case cursor:
 		b.WriteString(cursorStyle.Render(cursorMark) + " ")
 	}
 	b.WriteString(renderHeader(msg.Date, author, ""))

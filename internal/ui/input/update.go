@@ -44,6 +44,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case SetReplyMsg:
 		m.replyTo = typed.Msg
 		return m, nil
+	case StartEditMsg:
+		m.startEdit(typed)
+		return m, nil
+	case CancelEditMsg:
+		m.cancelEdit()
+		return m, nil
 	case SendDispatchedMsg:
 		// Remember the dispatched body + reply pointer keyed by
 		// LocalID. The thread pane has its own copy for rendering; we
@@ -86,7 +92,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 // the key falls through to the textarea.
 func (m *Model) handleChord(k tea.KeyPressMsg) (tea.Cmd, bool) {
 	switch {
+	case m.editing != nil && k.String() == "esc":
+		// Esc leaves edit mode before anything else looks at the key:
+		// the mode displaced a draft, and the way out has to be the
+		// key every user already tries first.
+		m.cancelEdit()
+		return nil, true
 	case key.Matches(k, m.keymap.Send):
+		if m.editing != nil {
+			return m.submitEdit(), true
+		}
 		return m.handleSend(), true
 	case key.Matches(k, m.keymap.Newline):
 		m.textarea.InsertString("\n")

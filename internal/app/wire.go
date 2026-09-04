@@ -160,6 +160,10 @@ type App struct {
 	// Read acknowledges opened chats to Telegram. Nil until a session is
 	// attached, so a cache-only launch simply never marks anything read.
 	Read *coresync.ReadService
+	// Actions edits and deletes messages that already exist. Nil until a
+	// session is attached: both are round trips, and a cache-only launch
+	// has nothing to send them to.
+	Actions *coresync.ActionService
 	// Rediscover refreshes the chat list when the live path invents a chat,
 	// which is the only way such a chat ever gets a title. Built by the cmd
 	// layer, which is the first place Dialogs exists.
@@ -450,6 +454,14 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 	} else {
 		a.Dialogs = dialogs
 	}
+
+	// The edit path refuses somebody else's message without a round trip by
+	// reading the direction migration 0010 stores, so no self-id lookup is
+	// plumbed through here.
+	a.Actions = coresync.NewActionService(
+		tgclient.NewEditor(client.API(), peerResolverAdapter{peers: a.Peers}),
+		tgclient.NewDeleter(client.API(), peerResolverAdapter{peers: a.Peers}),
+		a.Repo, a.Bus, a.Log)
 
 	sender := tgclient.NewSender(client.API(), peerResolverAdapter{peers: a.Peers})
 	a.Sender = coresync.NewSendService(senderAdapter{sender: sender}, outgoingStoreAdapter{repo: a.Repo}, a.Bus, a.Log, coresync.SendConfig{}).

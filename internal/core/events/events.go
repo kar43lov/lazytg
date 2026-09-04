@@ -60,6 +60,22 @@ type MessagesDeleted struct {
 
 func (MessagesDeleted) eventMarker() {}
 
+// MessageEdited is emitted when a message's text has been rewritten and the
+// mirror already agrees. Panes redraw the one row rather than reloading the
+// conversation: an edit changes a single message, and a reload would move the
+// reader's position for no reason.
+//
+// Unlike MessagesDeleted, this always names the chat. Deletions arrive from
+// Telegram in an id space that sometimes omits it; an edit is something this
+// client just did, so the chat is known.
+type MessageEdited struct {
+	ChatID    int64
+	MessageID int64
+	Text      string
+}
+
+func (MessageEdited) eventMarker() {}
+
 // ChatOpened is emitted by the UI when the user opens a conversation. It
 // exists so the read-receipt path has a trigger without the UI reaching for
 // MTProto itself, and so the "mark as read" decision lives in one place

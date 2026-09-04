@@ -875,6 +875,37 @@ const messageSelectColumns = `
                media_duration, outgoing
     `
 
+// ErrMessageNotFound is returned by Message when the mirror holds no such
+// row. It is a distinct error rather than a zero value because the callers
+// that ask for one message by id — editing it, quoting it — must not act on
+// an empty message as though it were real.
+var ErrMessageNotFound = errors.New("message not found")
+
+// Message returns a single message by chat and id.
+//
+// The chat is part of the key, not a filter for tidiness: a channel numbers
+// its own messages from one, so id 42 exists in several chats at once and
+// means something different in each. Every other read in this file is scoped
+// the same way, for the same reason.
+func (r *Repo) Message(ctx context.Context, chatID, messageID int64) (domain.Message, error) {
+	rows, err := r.db.QueryContext(ctx,
+		messageSelectColumns+` FROM messages WHERE chat_id = ? AND id = ? LIMIT 1`,
+		chatID, messageID)
+	if err != nil {
+		return domain.Message{}, fmt.Errorf("query message %d/%d: %w", chatID, messageID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	msgs, err := scanMessages(rows)
+	if err != nil {
+		return domain.Message{}, err
+	}
+	if len(msgs) == 0 {
+		return domain.Message{}, fmt.Errorf("%w: chat=%d id=%d", ErrMessageNotFound, chatID, messageID)
+	}
+	return msgs[0], nil
+}
+
 // scanMessages drains rows into a slice of domain.Message, parsing the
 // media columns into a *MediaInfo when media_kind is non-NULL.
 func scanMessages(rows *sql.Rows) ([]domain.Message, error) {

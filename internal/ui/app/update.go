@@ -184,6 +184,12 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.closeAttach(), nil
 	case attach.SubmitMsg:
 		return a.handleAttachSubmit(m)
+	case input.EditSubmittedMsg:
+		return a, a.cmdSubmitEdit(m)
+	case messageActionsResultMsg:
+		return a.applyActionResult(m), nil
+	case events.MessageEdited:
+		return a.applyMessageEdited(m.ChatID, m.MessageID, m.Text), nil
 	}
 
 	if a.help.Visible {
@@ -211,6 +217,17 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if k, ok := msg.(tea.KeyPressMsg); ok {
+		// The confirmation modal takes every key while it is up, and it
+		// is checked before anything else for the reason it exists: the
+		// key after "delete 3 messages?" must not reach a pane that
+		// would act on it.
+		if a.confirm.Visible() {
+			updated, cmd := a.handleConfirmKey(k)
+			return updated, cmd
+		}
+		if updated, cmd, handled := a.applyMessageActionKey(k); handled {
+			return updated, cmd
+		}
 		if cmd, handled := a.handleGlobalKey(k); handled {
 			return a, cmd
 		}

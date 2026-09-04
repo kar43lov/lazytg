@@ -52,6 +52,10 @@ func bindingFields(km *Keymap) map[string]*key.Binding {
 		"open_palette": &km.OpenPalette,
 		"download":     &km.Download,
 		"open_media":   &km.OpenMedia,
+		"mark_message": &km.MarkMessage,
+		"copy_message": &km.CopyMessage,
+		"edit_message": &km.EditMessage,
+		"delete_msg":   &km.DeleteMsg,
 		"attach":       &km.Attach,
 		"quit":         &km.Quit,
 	}

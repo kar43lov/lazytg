@@ -100,6 +100,10 @@ func injectMessages(m thread.Model, msgs []domain.Message) thread.Model {
 		ev := events.MessageReceived{
 			ChatID: msg.ChatID, MessageID: msg.ID, FromID: msg.FromID,
 			Date: msg.Date, Text: msg.Text, Media: msg.Media,
+			// Direction matters to anything that asks "is this mine":
+			// editing refuses somebody else's message, and the author
+			// label in a 1:1 dialog has nothing else to go on.
+			Outgoing: msg.Outgoing,
 		}
 		updated, _ := m.Update(ev)
 		m = updated

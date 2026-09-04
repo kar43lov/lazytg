@@ -97,6 +97,14 @@ func (h Help) rows() []row {
 		{"scroll up", h.Keymap.ScrollUp},
 		{"scroll down", h.Keymap.ScrollDown},
 		{"search", h.Keymap.Search},
+		{"command palette", h.Keymap.OpenPalette},
+		{"attach file", h.Keymap.Attach},
+		{"save attachment", h.Keymap.Download},
+		{"open attachment", h.Keymap.OpenMedia},
+		{"mark message", h.Keymap.MarkMessage},
+		{"copy message(s)", h.Keymap.CopyMessage},
+		{"edit message", h.Keymap.EditMessage},
+		{"delete message(s)", h.Keymap.DeleteMsg},
 		{"quit", h.Keymap.Quit},
 	}
 	out := make([]row, 0, len(bindings))

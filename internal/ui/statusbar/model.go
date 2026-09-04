@@ -126,6 +126,16 @@ type Model struct {
 	// partially-mutated map across goroutine boundaries.
 	downloads map[int64]Download
 
+	// Notice is a one-line answer to something the user just did —
+	// "copied 3 messages", "delete failed: …". It takes the place of the
+	// chat title, which is the one cell the eye is already on, and stays
+	// until something replaces it.
+	//
+	// No timer: a notice that erases itself after N seconds is a notice
+	// the user misses while looking at the message they just deleted, and
+	// the next action overwrites it anyway.
+	Notice string
+
 	// uploads is the upload-side twin of downloads, keyed by the
 	// in-process UploadID UploadService assigns. Same copy-on-write
 	// discipline so the Model stays value-typed across goroutines.
@@ -181,6 +191,9 @@ func (m Model) renderLeft(budget int) string {
 	if chat == "" {
 		chat = "-"
 	}
+	if m.Notice != "" {
+		chat = m.Notice
+	}
 
 	full := alias + " | " + chat
 	if lipgloss.Width(full) <= budget {
@@ -200,6 +213,14 @@ func (m Model) renderLeft(budget int) string {
 		return truncate(alias, aliasBudget) + ellipsis
 	}
 	return truncate(alias, budget)
+}
+
+// SetNotice replaces the notice line. An empty string clears it, which is
+// what a chat switch does: the answer to "copied 3 messages" belongs to the
+// conversation it happened in.
+func (m Model) SetNotice(s string) Model {
+	m.Notice = s
+	return m
 }
 
 // renderRight composes "unread N | conn[: reason] | storage" with colour on

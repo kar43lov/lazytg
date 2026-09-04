@@ -47,6 +47,19 @@ type MediaOpener interface {
 	Open(ctx context.Context, path string) error
 }
 
+// MessageActions is the gotd-free contract for the operations a user
+// performs on messages that already exist. The production implementation is
+// internal/core/sync.ActionService; tests substitute a fake so no RPC
+// happens and the destructive path can be asserted without a live account.
+//
+// Delete takes a list because the gesture does: marking a run of messages
+// and removing them is one act, and sending them one at a time would be
+// several requests and several chances to half-succeed.
+type MessageActions interface {
+	Edit(ctx context.Context, chatID, messageID int64, text string) error
+	Delete(ctx context.Context, chatID int64, ids []int64, revoke bool) error
+}
+
 // FileUploader is the gotd-free contract App.handleAttachSubmit uses
 // to start an upload + sendMedia round-trip. The concrete production
 // implementation is internal/core/files.UploadService; tests substitute
@@ -180,6 +193,12 @@ type Deps struct {
 	// is still within the freshly-loaded 200-message head.
 	Jumper JumpContextProvider
 
+	// Actions, if set, performs edits and deletions on existing messages.
+	// nil means the chords report that the client is offline rather than
+	// pretending to have done something — a deletion that only happened
+	// locally is the one outcome worse than none.
+	Actions MessageActions
+
 	// Backfiller, if set, is asked to pull history from Telegram when the
 	// user opens a chat. Without it the thread pane shows only what the
 	// local mirror already holds — which for a freshly synced chat list is
@@ -220,6 +239,18 @@ type App struct {
 	// Deps.Uploader. nil means "no uploader wired" — the Attach
 	// overlay still opens but Submit silently no-ops.
 	uploader FileUploader
+
+	// actions performs edits and deletions, wired through Deps.Actions.
+	// nil means offline.
+	actions MessageActions
+
+	// confirm is the modal that stands in front of a deletion.
+	confirm overlay.Confirm
+
+	// pendingDelete remembers what a confirmation is about while the
+	// modal is up. Held here rather than in the modal because the modal
+	// is a widget that knows about keys and text, not about messages.
+	pendingDelete pendingDelete
 
 	// backfiller is the history-pull collaborator wired through
 	// Deps.Backfiller. nil means "offline" — the thread shows only
@@ -337,6 +368,8 @@ func New(deps Deps) App {
 		uploader:          deps.Uploader,
 		jumper:            deps.Jumper,
 		backfiller:        deps.Backfiller,
+		actions:           deps.Actions,
+		confirm:           overlay.NewConfirm(),
 		historyGate:       make(chan struct{}, maxConcurrentHistoryRequests),
 		inFlightDownloads: newDownloadRegistry(),
 		preSearchFocus:    -1,
@@ -345,7 +378,7 @@ func New(deps Deps) App {
 		focus:             FocusChats,
 		keymap:            deps.Keymap,
 		bus:               deps.Bus,
-		log:               deps.Log,
+		log:               orDiscard(deps.Log),
 	}
 	app.chats = app.chats.SetFocus(true)
 	return app
@@ -494,3 +527,17 @@ func (a App) AttachModel() attach.Model { return a.attach }
 // TooSmall reports whether the last WindowSize was below MinWidth/MinHeight.
 // Exposed for tests so they can assert without parsing the rendered View.
 func (a App) TooSmall() bool { return a.tooSmall }
+
+// orDiscard guarantees a usable logger.
+//
+// Every a.log call site would otherwise need a nil check, and the ones that
+// forgot panicked only on the path they logged from — which is by definition
+// the failure path, so the crash arrived exactly when something had already
+// gone wrong. A test constructing Deps without a logger is the ordinary case,
+// not a misuse.
+func orDiscard(l *slog.Logger) *slog.Logger {
+	if l != nil {
+		return l
+	}
+	return slog.New(slog.DiscardHandler)
+}

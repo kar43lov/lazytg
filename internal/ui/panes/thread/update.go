@@ -506,6 +506,17 @@ func (m Model) handleKey(k tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m.MoveCursor(-1).paginateAfterScroll(nil, false)
 	case "down", "j":
 		return m.MoveCursor(1).paginateAfterScroll(nil, true)
+	case " ", "space":
+		// Space marks the message under the cursor. It is the gesture a
+		// file manager uses for the same job, and it is free here: the
+		// composer is a separate pane, so nothing in the thread is
+		// typing.
+		return m.ToggleMark(), nil
+	case "esc":
+		// One key clears both kinds of "never mind" — a dragged text
+		// selection and a set of marks — because to the user they are
+		// one state: something is picked out and they no longer want it.
+		return m.ClearMarks().ClearSelection(), nil
 	}
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(k)

@@ -133,6 +133,12 @@ func runTUI(cmd *cobra.Command, _ []string) error {
 	if runtime.DownloadSvc != nil {
 		deps.Downloader = runtime.DownloadSvc
 	}
+	// Nil when the launch is cache-only. The edit and delete chords then
+	// say so rather than appearing to work: a deletion that happened only
+	// on this screen is the one outcome worse than none.
+	if runtime.Actions != nil {
+		deps.Actions = runtime.Actions
+	}
 	// A missing viewer is not a reason to refuse to start: the open
 	// gesture degrades to a plain download, which is what lazytg did
 	// before it could open anything. The reason is logged once, here,

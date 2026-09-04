@@ -31,6 +31,13 @@ func (a App) View() tea.View {
 	}
 
 	body := a.renderBody()
+	// The confirmation is drawn over the layout rather than replacing it,
+	// unlike every overlay below: the user is being asked about messages
+	// they can see, and a modal that hides them asks the question without
+	// the context needed to answer it.
+	if a.confirm.Visible() {
+		body = a.overlayConfirm(body)
+	}
 	switch {
 	case a.help.Visible:
 		body = a.help.View(a.width, maxInt(a.height-1, 1))
@@ -124,4 +131,15 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// overlayConfirm centres the confirmation box on top of the rendered layout.
+func (a App) overlayConfirm(body string) string {
+	box := a.confirm.View()
+	if box == "" || a.width <= 0 || a.height <= 0 {
+		return body
+	}
+	return lipgloss.Place(a.width, maxInt(a.height-1, 1),
+		lipgloss.Center, lipgloss.Center, box,
+		lipgloss.WithWhitespaceChars(" "))
 }

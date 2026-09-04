@@ -85,6 +85,11 @@ type Model struct {
 	// because everything under it moves; see cursor.go.
 	cursorID int64
 
+	// marked holds the ids the user has picked out for an action that
+	// takes several — copying a run of messages, deleting them. Ids for
+	// the same reason as the cursor; see marks.go.
+	marked map[int64]bool
+
 	// now supplies the current time to the date separators, which need
 	// it to say "Today" and "Yesterday". Injectable so a golden test of
 	// the rendered thread does not change meaning overnight.
@@ -512,8 +517,9 @@ func (m Model) renderContent() (string, []blockSpan) {
 			appendSeparator(renderDaySeparator(msg.Date, now, width))
 			lastDay = msg.Date
 		}
-		rendered, mediaLine := formatMessageBlock(msg, width, nil,
-			resolveAuthor(msg, m.chatID, m.private, m.authorNames), msg.ID == cursorID)
+		rendered, mediaLine := formatMessageBlockMarked(msg, width, nil,
+			resolveAuthor(msg, m.chatID, m.private, m.authorNames),
+			msg.ID == cursorID, m.marked[msg.ID])
 		appendBlock(rendered, msg.ID, mediaLine)
 	}
 	for _, out := range m.outgoing {

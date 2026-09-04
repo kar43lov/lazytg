@@ -30,6 +30,10 @@ type Keymap struct {
 	OpenPalette key.Binding
 	Download    key.Binding
 	OpenMedia   key.Binding
+	MarkMessage key.Binding
+	CopyMessage key.Binding
+	EditMessage key.Binding
+	DeleteMsg   key.Binding
 	Attach      key.Binding
 	Quit        key.Binding
 }
@@ -120,6 +124,27 @@ func Default() Keymap {
 		Attach: key.NewBinding(
 			key.WithKeys("ctrl+u"),
 			key.WithHelp("ctrl+u", "attach file"),
+		),
+		// The four thread-only actions below are bare letters, safe for
+		// the same reason "o" is: the composer is a separate pane, so
+		// nothing in the thread is typing. Each one is the letter its
+		// action has in a file manager or a mail client, which is the
+		// point — the chord should be one the user already knows.
+		MarkMessage: key.NewBinding(
+			key.WithKeys(" "),
+			key.WithHelp("space", "mark message"),
+		),
+		CopyMessage: key.NewBinding(
+			key.WithKeys("y"),
+			key.WithHelp("y", "copy message(s)"),
+		),
+		EditMessage: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "edit message"),
+		),
+		DeleteMsg: key.NewBinding(
+			key.WithKeys("d"),
+			key.WithHelp("d", "delete message(s)"),
 		),
 		Quit: key.NewBinding(
 			key.WithKeys("ctrl+c", "ctrl+q"),
