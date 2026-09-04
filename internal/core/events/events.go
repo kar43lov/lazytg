@@ -74,6 +74,32 @@ type MessageReactionsChanged struct {
 
 func (MessageReactionsChanged) eventMarker() {}
 
+// PeerTyping is emitted when Telegram says somebody is composing something in
+// a chat.
+//
+// It costs nothing to receive — the server pushes it whether or not anyone
+// looks — and it is most of what makes a conversation feel live. Sending the
+// same notification for this account's own typing is a separate question and
+// deliberately not answered here: it is a request per keystroke burst on an
+// account already watched for running an unofficial client.
+//
+// Action is what they are doing, in the plain words a status line wants:
+// "typing", "recording a voice message", "sending a photo". Telegram has a
+// dozen of these and the difference matters — "recording a voice message"
+// tells the reader to wait rather than to keep writing.
+//
+// There is no "stopped" counterpart worth relying on. Telegram sends one, but
+// only sometimes; every client instead expires the indicator on its own after
+// a few seconds and lets the sender's repeat refresh it.
+type PeerTyping struct {
+	ChatID int64
+	FromID int64
+	Action string
+	At     time.Time
+}
+
+func (PeerTyping) eventMarker() {}
+
 // MessageEdited is emitted when a message's text has been rewritten and the
 // mirror already agrees. Panes redraw the one row rather than reloading the
 // conversation: an edit changes a single message, and a reload would move the

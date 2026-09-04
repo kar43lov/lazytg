@@ -136,6 +136,12 @@ type Model struct {
 	// the next action overwrites it anyway.
 	Notice string
 
+	// Typing is what the other side is doing right now — "typing…",
+	// "recording a voice message…". Empty almost always, and it is the one
+	// field here that expires on its own: the app clears it on a timer,
+	// because Telegram's "stopped" notification is not reliably sent.
+	Typing string
+
 	// uploads is the upload-side twin of downloads, keyed by the
 	// in-process UploadID UploadService assigns. Same copy-on-write
 	// discipline so the Model stays value-typed across goroutines.
@@ -191,7 +197,14 @@ func (m Model) renderLeft(budget int) string {
 	if chat == "" {
 		chat = "-"
 	}
+	if m.Typing != "" {
+		// Somebody writing to you right now outranks the chat title,
+		// which has not changed and is on screen anyway.
+		chat = chat + " · " + m.Typing
+	}
 	if m.Notice != "" {
+		// A notice is the answer to something the user just did, so it
+		// outranks both. It is transient; the indicator comes back.
 		chat = m.Notice
 	}
 
@@ -213,6 +226,17 @@ func (m Model) renderLeft(budget int) string {
 		return truncate(alias, aliasBudget) + ellipsis
 	}
 	return truncate(alias, budget)
+}
+
+// SetTyping replaces the "somebody is composing something" indicator. An
+// empty string clears it.
+//
+// Held here rather than composed by the caller because the status bar owns
+// the budget: the line is truncated to fit the terminal, and a caller
+// splicing its own text into the title would be truncated as one blob.
+func (m Model) SetTyping(s string) Model {
+	m.Typing = s
+	return m
 }
 
 // SetNotice replaces the notice line. An empty string clears it, which is

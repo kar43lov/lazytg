@@ -197,6 +197,12 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.applyReactionResult(m), nil
 	case events.MessageReactionsChanged:
 		return a.applyReactionsChanged(m), nil
+	case events.PeerTyping:
+		updated, cmd := a.applyTyping(m)
+		return updated, cmd
+	case typingSweepMsg:
+		updated, cmd := a.sweepTyping()
+		return updated, cmd
 	case attach.OpenedMsg:
 		return a.openAttach(m)
 	case attach.ClosedMsg:
@@ -397,6 +403,7 @@ func (a App) handleChatSelected(msg chats.ChatSelectedMsg) (tea.Model, tea.Cmd) 
 	if wipe := a.clearDrawnImagesCmd(); wipe != nil {
 		cmds = append(cmds, wipe)
 	}
+	a = a.clearTyping()
 	updatedThread, cmd := a.thread.OpenChat(msg.ChatID)
 	a.thread = updatedThread
 	if cmd != nil {
@@ -879,6 +886,7 @@ func (a App) handlePaletteSelected(msg palette.SelectedMsg) (tea.Model, tea.Cmd)
 	a.onChatOpened(chatID)
 
 	wipe := a.clearDrawnImagesCmd()
+	a = a.clearTyping()
 	updatedThread, cmd := a.thread.OpenChat(chatID)
 	a.thread = updatedThread
 	cmds := []tea.Cmd{}

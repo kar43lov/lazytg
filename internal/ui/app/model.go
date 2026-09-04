@@ -304,6 +304,10 @@ type App struct {
 	// selection, cleared when the palette closes with nothing chosen.
 	pendingForward *pendingForward
 
+	// typing is who is composing something in the chat on screen, keyed by
+	// the person, with the moment their indicator goes stale. See typing.go.
+	typing map[int64]typingState
+
 	// pendingReaction remembers which message an emoji picker opened to
 	// react is about, and what this account already has on it.
 	pendingReaction *pendingReaction

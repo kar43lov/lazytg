@@ -142,6 +142,14 @@ func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass) {
 		d.publishDeleted(0, upd.Messages)
 	case *tg.UpdateDeleteChannelMessages:
 		d.publishDeleted(upd.ChannelID, upd.Messages)
+	case *tg.UpdateUserTyping:
+		// A private dialog is named by the user typing in it: there is
+		// only one other person, so they are both the chat and the typer.
+		d.publishTyping(upd.UserID, upd.UserID, upd.Action, time.Now())
+	case *tg.UpdateChatUserTyping:
+		d.publishTyping(upd.ChatID, chatIDFromPeer(upd.FromID), upd.Action, time.Now())
+	case *tg.UpdateChannelUserTyping:
+		d.publishTyping(upd.ChannelID, chatIDFromPeer(upd.FromID), upd.Action, time.Now())
 	case *tg.UpdateMessageReactions:
 		d.publishReactions(upd)
 	case *tg.UpdateEditMessage, *tg.UpdateEditChannelMessage:
