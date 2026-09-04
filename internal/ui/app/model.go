@@ -59,6 +59,7 @@ type MediaOpener interface {
 type MessageActions interface {
 	Edit(ctx context.Context, chatID, messageID int64, text string) error
 	Delete(ctx context.Context, chatID int64, ids []int64, revoke bool) error
+	Forward(ctx context.Context, fromChatID, toChatID int64, ids []int64, dropAuthor bool) error
 }
 
 // FileUploader is the gotd-free contract App.handleAttachSubmit uses
@@ -296,6 +297,11 @@ type App struct {
 	// restore it. -1 means "no overlay open" so the field is
 	// effectively ignored.
 	preSearchFocus FocusTarget
+
+	// pendingForward remembers what a chat-picking palette is about. Set
+	// when the user presses the forward key, consumed by the palette
+	// selection, cleared when the palette closes with nothing chosen.
+	pendingForward *pendingForward
 
 	// prePaletteFocus is the same idea for the command palette so
 	// closing it (Esc / SelectedMsg) can restore the prior focus

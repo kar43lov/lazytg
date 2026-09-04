@@ -67,7 +67,7 @@ func TestActionService_Edit_RefusesSomebodyElsesMessage(t *testing.T) {
 
 	editor := &fakeEditor{}
 	store := &fakeActionStore{msg: domain.Message{ID: 7, ChatID: 1, Outgoing: false}}
-	svc := NewActionService(editor, nil, store, nil, nil)
+	svc := NewActionService(editor, nil, nil, store, nil, nil)
 
 	err := svc.Edit(context.Background(), 1, 7, "rewritten")
 	if !errors.Is(err, ErrNotEditable) {
@@ -91,7 +91,7 @@ func TestActionService_Edit_AllowsAnOutgoingMessageWithNoFromID(t *testing.T) {
 	editor := &fakeEditor{}
 	store := &fakeActionStore{msg: domain.Message{ID: 7, ChatID: 1, FromID: 0, Outgoing: true, Text: "before"}}
 	bus := &recordingBus{}
-	svc := NewActionService(editor, nil, store, bus, nil)
+	svc := NewActionService(editor, nil, nil, store, bus, nil)
 
 	if err := svc.Edit(context.Background(), 1, 7, "after"); err != nil {
 		t.Fatalf("Edit of own message: %v", err)
@@ -116,7 +116,7 @@ func TestActionService_Edit_LeavesTheMirrorAloneWhenTheServerRefuses(t *testing.
 	editor := &fakeEditor{err: errors.New("MESSAGE_EDIT_TIME_EXPIRED")}
 	store := &fakeActionStore{msg: domain.Message{ID: 7, ChatID: 1, Outgoing: true, Text: "before"}}
 	bus := &recordingBus{}
-	svc := NewActionService(editor, nil, store, bus, nil)
+	svc := NewActionService(editor, nil, nil, store, bus, nil)
 
 	if err := svc.Edit(context.Background(), 1, 7, "after"); err == nil {
 		t.Fatal("Edit should surface the server's refusal")
@@ -136,7 +136,7 @@ func TestActionService_Delete_AnnouncesOnlyAfterTheServerAgrees(t *testing.T) {
 		t.Parallel()
 		deleter := &fakeDeleter{err: errors.New("MESSAGE_DELETE_FORBIDDEN")}
 		bus := &recordingBus{}
-		svc := NewActionService(nil, deleter, &fakeActionStore{}, bus, nil)
+		svc := NewActionService(nil, deleter, nil, &fakeActionStore{}, bus, nil)
 
 		if err := svc.Delete(context.Background(), 1, []int64{7, 8}, true); err == nil {
 			t.Fatal("Delete should surface the refusal")
@@ -153,7 +153,7 @@ func TestActionService_Delete_AnnouncesOnlyAfterTheServerAgrees(t *testing.T) {
 		t.Parallel()
 		deleter := &fakeDeleter{report: 2}
 		bus := &recordingBus{}
-		svc := NewActionService(nil, deleter, &fakeActionStore{}, bus, nil)
+		svc := NewActionService(nil, deleter, nil, &fakeActionStore{}, bus, nil)
 
 		if err := svc.Delete(context.Background(), 1, []int64{7, 8}, true); err != nil {
 			t.Fatalf("Delete: %v", err)
@@ -178,7 +178,7 @@ func TestActionService_Delete_PassesTheRevokeChoiceThrough(t *testing.T) {
 
 	for _, revoke := range []bool{true, false} {
 		deleter := &fakeDeleter{}
-		svc := NewActionService(nil, deleter, &fakeActionStore{}, nil, nil)
+		svc := NewActionService(nil, deleter, nil, &fakeActionStore{}, nil, nil)
 		if err := svc.Delete(context.Background(), 1, []int64{7}, revoke); err != nil {
 			t.Fatalf("Delete: %v", err)
 		}
@@ -191,11 +191,71 @@ func TestActionService_Delete_PassesTheRevokeChoiceThrough(t *testing.T) {
 func TestActionService_ReportsBeingOffline(t *testing.T) {
 	t.Parallel()
 
-	svc := NewActionService(nil, nil, &fakeActionStore{}, nil, nil)
+	svc := NewActionService(nil, nil, nil, &fakeActionStore{}, nil, nil)
 	if err := svc.Edit(context.Background(), 1, 2, "x"); err == nil {
 		t.Fatal("Edit with no editor should report that it is not connected")
 	}
 	if err := svc.Delete(context.Background(), 1, []int64{2}, true); err == nil {
 		t.Fatal("Delete with no deleter should report that it is not connected")
+	}
+}
+
+// fakeForwarder records what reached the wire.
+type fakeForwarder struct {
+	calls []fwdCall
+	err   error
+}
+
+type fwdCall struct {
+	from, to   int64
+	ids        []int64
+	dropAuthor bool
+}
+
+func (f *fakeForwarder) Forward(_ context.Context, from, to int64, ids []int64, dropAuthor bool) error {
+	f.calls = append(f.calls, fwdCall{from, to, append([]int64(nil), ids...), dropAuthor})
+	return f.err
+}
+
+func TestActionService_ForwardPassesThrough(t *testing.T) {
+	t.Parallel()
+
+	fwd := &fakeForwarder{}
+	svc := NewActionService(nil, nil, fwd, &fakeActionStore{}, nil, nil)
+
+	if err := svc.Forward(context.Background(), 42, 99, []int64{1, 2}, true); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if len(fwd.calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(fwd.calls))
+	}
+	if got := fwd.calls[0]; got.from != 42 || got.to != 99 || !got.dropAuthor {
+		t.Fatalf("call = %+v", got)
+	}
+}
+
+// The forwarded copies arrive through the live update path like any other
+// message. Announcing them here would produce a second copy the moment that
+// update landed.
+func TestActionService_ForwardAnnouncesNothing(t *testing.T) {
+	t.Parallel()
+
+	bus := &recordingBus{}
+	svc := NewActionService(nil, nil, &fakeForwarder{}, &fakeActionStore{}, bus, nil)
+
+	if err := svc.Forward(context.Background(), 42, 99, []int64{1}, false); err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if got := len(bus.events); got != 0 {
+		t.Fatalf("%d events published for a forward: %v", got, bus.events)
+	}
+}
+
+func TestActionService_ForwardOfflineSaysSo(t *testing.T) {
+	t.Parallel()
+
+	svc := NewActionService(nil, nil, nil, &fakeActionStore{}, nil, nil)
+	if err := svc.Forward(context.Background(), 42, 99, []int64{1}, false); err == nil {
+		t.Fatal("forwarding with no client succeeded")
 	}
 }

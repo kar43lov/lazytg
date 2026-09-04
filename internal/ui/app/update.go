@@ -172,7 +172,9 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case palette.OpenedMsg:
 		return a.openPalette()
 	case palette.ClosedMsg:
-		return a.closePalette(), nil
+		// A forward whose palette was dismissed is a forward that did not
+		// happen; the messages stay marked so the user can try again.
+		return a.cancelPendingForward().closePalette(), nil
 	case palette.SelectedMsg:
 		return a.handlePaletteSelected(m)
 	case palette.LoadedMsg, palette.QueryChangedMsg:
@@ -196,6 +198,8 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.cmdSubmitEdit(m)
 	case messageActionsResultMsg:
 		return a.applyActionResult(m), nil
+	case forwardResultMsg:
+		return a.applyForwardResult(m), nil
 	case inlineImageReadyMsg:
 		return a.applyInlineImage(m), nil
 	case events.MessageEdited:
@@ -850,6 +854,12 @@ func (a App) closePalette() App {
 // will retry and the palette will fall back to the chats list order
 // in the meantime.
 func (a App) handlePaletteSelected(msg palette.SelectedMsg) (tea.Model, tea.Cmd) {
+	// A palette opened to pick a forward target answers to the forward
+	// path instead of switching chats. Checked first so the two cannot
+	// both run and leave the user in a chat they only meant to send to.
+	if updated, cmd, handled := a.handleForwardPick(msg); handled {
+		return updated, cmd
+	}
 	chatID := msg.ChatID
 	a = a.closePalette()
 	// Same rationale as handleChatSelected: a palette pick is a

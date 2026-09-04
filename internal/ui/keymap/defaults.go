@@ -15,26 +15,27 @@ import "charm.land/bubbles/v2/key"
 // the snake_case mapping table in loader.go. New bindings must be registered
 // in three places: this struct, defaults(), and bindingFields() in loader.go.
 type Keymap struct {
-	Send        key.Binding
-	Newline     key.Binding
-	Reply       key.Binding
-	OpenEditor  key.Binding
-	ToggleHelp  key.Binding
-	FocusNext   key.Binding
-	FocusPrev   key.Binding
-	NextChat    key.Binding
-	PrevChat    key.Binding
-	ScrollUp    key.Binding
-	ScrollDown  key.Binding
-	Search      key.Binding
-	OpenPalette key.Binding
-	Download    key.Binding
-	OpenMedia   key.Binding
-	NextFolder  key.Binding
-	PrevFolder  key.Binding
-	ShowImage   key.Binding
-	MarkMessage key.Binding
-	EmojiPicker key.Binding
+	Send           key.Binding
+	Newline        key.Binding
+	Reply          key.Binding
+	OpenEditor     key.Binding
+	ToggleHelp     key.Binding
+	FocusNext      key.Binding
+	FocusPrev      key.Binding
+	NextChat       key.Binding
+	PrevChat       key.Binding
+	ScrollUp       key.Binding
+	ScrollDown     key.Binding
+	Search         key.Binding
+	OpenPalette    key.Binding
+	Download       key.Binding
+	OpenMedia      key.Binding
+	NextFolder     key.Binding
+	PrevFolder     key.Binding
+	ShowImage      key.Binding
+	MarkMessage    key.Binding
+	ForwardMessage key.Binding
+	EmojiPicker    key.Binding
 	// CompleteEmoji shares its key with FocusNext on purpose. Tab means
 	// "finish what I am typing" everywhere a shell or an editor is
 	// involved, and it only reaches the composer when there is a
@@ -69,6 +70,10 @@ func Default() Keymap {
 		OpenEditor: key.NewBinding(
 			key.WithKeys("ctrl+e"),
 			key.WithHelp("ctrl+e", "open editor"),
+		),
+		ForwardMessage: key.NewBinding(
+			key.WithKeys("f"),
+			key.WithHelp("f", "forward message(s)"),
 		),
 		EmojiPicker: key.NewBinding(
 			key.WithKeys("alt+e"),

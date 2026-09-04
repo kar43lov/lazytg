@@ -19,10 +19,33 @@ import (
 
 // fakeActions records what the UI asked for without touching a network.
 type fakeActions struct {
-	mu      sync.Mutex
-	edits   []editRecord
-	deletes []deleteRecord
-	err     error
+	mu       sync.Mutex
+	edits    []editRecord
+	deletes  []deleteRecord
+	forwards []forwardRecord
+	err      error
+}
+
+type forwardRecord struct {
+	from       int64
+	to         int64
+	ids        []int64
+	dropAuthor bool
+}
+
+func (f *fakeActions) Forward(_ context.Context, from, to int64, ids []int64, dropAuthor bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.forwards = append(f.forwards, forwardRecord{from, to, append([]int64(nil), ids...), dropAuthor})
+	return f.err
+}
+
+func (f *fakeActions) forwardCalls() []forwardRecord {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]forwardRecord, len(f.forwards))
+	copy(out, f.forwards)
+	return out
 }
 
 type editRecord struct {

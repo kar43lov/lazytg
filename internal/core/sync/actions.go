@@ -23,6 +23,12 @@ type MessageDeleter interface {
 	Delete(ctx context.Context, chatID int64, ids []int64, revoke bool) (int, error)
 }
 
+// MessageForwarder is the gotd-free contract for passing messages to another
+// chat. Satisfied by *internal/tg.Forwarder in production.
+type MessageForwarder interface {
+	Forward(ctx context.Context, fromChatID, toChatID int64, ids []int64, dropAuthor bool) error
+}
+
 // ActionStore is the storage surface ActionService writes through: the same
 // SaveMessage the live path uses, because an edit is an upsert of a row that
 // already exists.
@@ -60,11 +66,12 @@ var ErrNotEditable = errors.New("only your own messages can be edited")
 //     space; duplicating that here would be a second implementation of a
 //     deletion path, and the two would drift.
 type ActionService struct {
-	editor  MessageEditor
-	deleter MessageDeleter
-	store   ActionStore
-	bus     EventPublisher
-	log     *slog.Logger
+	editor    MessageEditor
+	deleter   MessageDeleter
+	forwarder MessageForwarder
+	store     ActionStore
+	bus       EventPublisher
+	log       *slog.Logger
 }
 
 // EventPublisher is the slice of events.Bus this service needs.
@@ -75,17 +82,36 @@ type EventPublisher interface {
 // NewActionService wires the service. Any of editor, deleter and bus may be
 // nil, which is how an offline session is expressed — the corresponding
 // operation then reports that it is unavailable rather than panicking.
-func NewActionService(editor MessageEditor, deleter MessageDeleter, store ActionStore, bus EventPublisher, log *slog.Logger) *ActionService {
+func NewActionService(editor MessageEditor, deleter MessageDeleter, forwarder MessageForwarder, store ActionStore, bus EventPublisher, log *slog.Logger) *ActionService {
 	if log == nil {
 		log = slog.New(noopHandler{})
 	}
 	return &ActionService{
-		editor:  editor,
-		deleter: deleter,
-		store:   store,
-		bus:     bus,
-		log:     log,
+		editor:    editor,
+		deleter:   deleter,
+		forwarder: forwarder,
+		store:     store,
+		bus:       bus,
+		log:       log,
 	}
+}
+
+// Forward passes messages to another chat.
+//
+// Nothing is written locally and nothing is announced on the bus. The
+// forwarded copies are new messages in the target chat, and they arrive the
+// same way any other message does — through the live update path, which
+// stores them and tells the panes. Writing them here would produce a second
+// copy the moment the update landed, and writing them *instead* would leave
+// the mirror holding messages the server never confirmed.
+func (s *ActionService) Forward(ctx context.Context, fromChatID, toChatID int64, ids []int64, dropAuthor bool) error {
+	if s == nil || s.forwarder == nil {
+		return errors.New("forward: not connected")
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.forwarder.Forward(ctx, fromChatID, toChatID, ids, dropAuthor)
 }
 
 // Edit rewrites a message and updates the mirror to match.
