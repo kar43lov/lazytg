@@ -73,7 +73,28 @@ func (a App) Init() tea.Cmd {
 //  5. Internal Cmd-driven messages (focusCycledMsg, helpToggledMsg) are
 //     applied last — they always arrive as a plain tea.Msg so the route
 //     order doesn't matter.
+//
+// The composer grows and shrinks with what is being written, and the
+// panes above have to give up rows and take them back as it does. Rather
+// than remember that at each of the two dozen places that can touch the
+// input pane, Update measures it before and after and re-sizes when it
+// moved: one choke point, and no path can forget it. A frame drawn with
+// a taller composer and unchanged panes overflows the terminal height,
+// which is the visible symptom this prevents.
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	before := a.input.Rows()
+	model, cmd := a.update(msg)
+	updated, ok := model.(App)
+	if !ok {
+		return model, cmd
+	}
+	if !updated.tooSmall && updated.input.Rows() != before {
+		updated = updated.applySizes()
+	}
+	return updated, cmd
+}
+
+func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
 	case tea.WindowSizeMsg:
 		return a.handleResize(m), nil
@@ -1036,14 +1057,19 @@ func (a App) handleResize(msg tea.WindowSizeMsg) App {
 // handleResize because dragging the separator changes the geometry without a
 // terminal resize, and both paths must size the panes identically.
 func (a App) applySizes() App {
-	l := computeLayout(a.width, a.height, a.chatsWidth)
+	l := computeLayout(a.width, a.height, a.chatsWidth, a.input.Rows())
 
 	a.chats = a.chats.SetSize(l.chatsW, l.paneH)
 	// Re-wrapping moves every character in the thread, so a highlight recorded
 	// in line/column cells now covers different text. Dragging the separator
 	// with a selection on screen made it crawl across unrelated lines.
 	a.thread = a.thread.ClearSelection().SetSize(l.threadW, l.paneH)
-	a.input = a.input.SetWidth(a.width)
+	// Minus the padding inputStyle spends, or the composer renders lines
+	// as wide as the terminal inside a box two columns narrower and
+	// lipgloss wraps every one of them. Invisible while the composer was
+	// a single short row; the moment it grew, three rows of text became
+	// six and the frame overflowed the terminal.
+	a.input = a.input.SetWidth(a.width - paneHPadding)
 	a.search = a.search.SetSize(a.width, a.height)
 	a.palette = a.palette.SetSize(a.width, a.height)
 	a.attach = a.attach.SetSize(a.width, a.height)

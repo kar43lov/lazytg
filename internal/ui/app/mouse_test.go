@@ -296,7 +296,7 @@ func TestComputeLayout_MatchesResize(t *testing.T) {
 		a := New(Deps{Keymap: keymap.Default()})
 		model, _ := a.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		app := model.(App)
-		l := computeLayout(size[0], size[1], 0)
+		l := computeLayout(size[0], size[1], 0, inputRows)
 
 		if app.chats.Width != l.chatsW || app.chats.Height != l.paneH {
 			t.Errorf("%dx%d: chats pane is %dx%d, layout says %dx%d",

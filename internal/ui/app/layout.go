@@ -1,6 +1,11 @@
 package app
 
 // Rows reserved at the bottom of the frame, below the two panes.
+//
+// The composer is no longer a fixed three rows: it grows with what is
+// being written, so its height comes from the pane itself and travels
+// through computeLayout into the layout. inputRows survives only as the
+// resting size, used where no pane is available to ask.
 const (
 	statusRows = 1
 	inputRows  = 3
@@ -19,6 +24,7 @@ type layout struct {
 	sepX    int // column holding the vertical separator
 	threadX int // first column of the thread pane
 	inputY  int // first row of the composer
+	inputH  int // rows the composer occupies right now
 	statusY int // the status row
 }
 
@@ -61,7 +67,12 @@ func clampChatsWidth(requested, total int) int {
 // column, thread pane, then the composer and the status row.
 //
 // chatsOverride is the user's dragged split; 0 means the automatic 30%.
-func computeLayout(width, height, chatsOverride int) layout {
+// composerRows is how many rows the composer wants right now; 0 or less
+// falls back to the resting size.
+func computeLayout(width, height, chatsOverride, composerRows int) layout {
+	if composerRows <= 0 {
+		composerRows = inputRows
+	}
 	chatsW := width * 30 / 100
 	if chatsW < minPaneWidth {
 		chatsW = minPaneWidth
@@ -75,7 +86,7 @@ func computeLayout(width, height, chatsOverride int) layout {
 	if threadW < 1 {
 		threadW = 1
 	}
-	paneH := height - statusRows - inputRows
+	paneH := height - statusRows - composerRows
 	if paneH < 1 {
 		paneH = 1
 	}
@@ -86,7 +97,8 @@ func computeLayout(width, height, chatsOverride int) layout {
 		sepX:    chatsW,
 		threadX: chatsW + 1,
 		inputY:  paneH,
-		statusY: paneH + inputRows,
+		inputH:  composerRows,
+		statusY: paneH + composerRows,
 	}
 }
 
@@ -104,7 +116,7 @@ func (l layout) inThread(x, y int) bool {
 
 // inInput reports whether a screen cell belongs to the composer.
 func (l layout) inInput(_, y int) bool {
-	return y >= l.inputY && y < l.inputY+inputRows
+	return y >= l.inputY && y < l.inputY+l.inputH
 }
 
 // onSeparator reports whether a screen cell is the draggable split between the

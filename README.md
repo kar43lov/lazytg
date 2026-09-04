@@ -65,7 +65,7 @@ Current capabilities:
 | Tab / Shift+Tab | cycle focus between panes             |
 | Ctrl+Tab / Ctrl+Shift+Tab | next / previous chat (also Alt+N / Alt+P) |
 | Enter           | send message                          |
-| Alt+Enter       | newline in input                      |
+| Alt+Enter       | newline in input (the composer grows to 4 rows) |
 | Ctrl+R          | reply to focused message              |
 | Ctrl+E          | open `$EDITOR` with current draft     |
 | `/`             | open search overlay                   |

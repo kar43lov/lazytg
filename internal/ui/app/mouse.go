@@ -192,7 +192,7 @@ func (a App) dragSeparatorTo(x int) App {
 
 // layout is the geometry of the current frame, including the user's split.
 func (a App) layout() layout {
-	return computeLayout(a.width, a.height, a.chatsWidth)
+	return computeLayout(a.width, a.height, a.chatsWidth, a.input.Rows())
 }
 
 // handleMouseWheel scrolls whatever the pointer is over, without moving focus.
