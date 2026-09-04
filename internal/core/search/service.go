@@ -106,12 +106,12 @@ func (s *Service) JumpContext(ctx context.Context, hit Hit, around int) ([]domai
         SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                media_kind, media_id, media_access_hash, media_file_reference,
                media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-               media_duration, outgoing
+               media_duration, outgoing, reactions
         FROM (
             SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                    media_kind, media_id, media_access_hash, media_file_reference,
                    media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-                   media_duration, outgoing,
+                   media_duration, outgoing, reactions,
                    0 AS half
             FROM messages
             WHERE chat_id = ? AND id < ?
@@ -122,12 +122,12 @@ func (s *Service) JumpContext(ctx context.Context, hit Hit, around int) ([]domai
         SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                media_kind, media_id, media_access_hash, media_file_reference,
                media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-               media_duration, outgoing
+               media_duration, outgoing, reactions
         FROM (
             SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                    media_kind, media_id, media_access_hash, media_file_reference,
                    media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-                   media_duration, outgoing,
+                   media_duration, outgoing, reactions,
                    1 AS half
             FROM messages
             WHERE chat_id = ? AND id >= ?
@@ -176,7 +176,7 @@ var ErrJumpTargetMissing = errors.New("search: jump target not found")
 // row layout (id, chat_id, from_id, date, text, reply_to, raw_blob,
 // media_kind, media_id, media_access_hash, media_file_reference,
 // media_dc, media_filename, media_size, media_mime_type,
-// media_thumb_size, media_duration, outgoing) into a domain.Message with Media populated when
+// media_thumb_size, media_duration, outgoing, reactions) into a domain.Message with Media populated when
 // media_kind is non-NULL. Mirrors internal/storage/sqlite::scanMessages
 // — the duplication is deliberate because exporting that helper would
 // pull search into the storage package's surface area.
@@ -198,12 +198,13 @@ func scanMessageWithMedia(rows *sql.Rows) (domain.Message, error) {
 		mediaMime sql.NullString
 		mediaThSz sql.NullString
 		mediaDur  sql.NullInt64
+		reactions sql.NullString
 	)
 	if err := rows.Scan(
 		&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &rawBlob,
 		&mediaKind, &mediaID, &mediaAH, &mediaRef,
 		&mediaDC, &mediaName, &mediaSize, &mediaMime, &mediaThSz,
-		&mediaDur, &m.Outgoing,
+		&mediaDur, &m.Outgoing, &reactions,
 	); err != nil {
 		return domain.Message{}, err
 	}
@@ -212,6 +213,7 @@ func scanMessageWithMedia(rows *sql.Rows) (domain.Message, error) {
 	m.ReplyTo = replyTo.Int64
 	m.Date = time.Unix(date, 0).UTC()
 	m.RawBlob = rawBlob
+	m.Reactions = domain.DecodeReactions(reactions.String)
 	if mediaKind.Valid && mediaKind.String != "" {
 		m.Media = &domain.MediaInfo{
 			Kind:          domain.MediaKind(mediaKind.String),

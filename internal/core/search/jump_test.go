@@ -202,3 +202,41 @@ func TestService_JumpContext_HydratesMedia(t *testing.T) {
 		}
 	}
 }
+
+// The jump window hand-lists its columns, which is how the media fields once
+// went missing from a jumped-to message. Reactions sit in the same position:
+// a message reached by a search jump has to carry them, or a jump silently
+// strips what the ordinary read shows.
+func TestService_JumpContext_CarriesReactions(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+	const chatID int64 = 30009
+	seedChat(t, repo, ctx, chatID, "Reactions")
+
+	for i := 1; i <= 5; i++ {
+		if err := repo.SaveMessage(ctx, domain.Message{
+			ID:     int64(i),
+			ChatID: chatID,
+			FromID: 7,
+			Date:   time.Date(2026, 1, 1, 0, 0, i, 0, time.UTC),
+			Text:   "msg",
+		}); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+	}
+	if err := repo.SetReactions(ctx, chatID, 3, []domain.Reaction{{Emoticon: "\U0001F525", Count: 2, Chosen: true}}); err != nil {
+		t.Fatalf("SetReactions: %v", err)
+	}
+
+	svc := search.NewService(repo, nil, nil)
+	msgs, target, err := svc.JumpContext(ctx, search.Hit{
+		Message: domain.Message{ID: 3, ChatID: chatID},
+		ChatID:  chatID,
+	}, 2)
+	if err != nil {
+		t.Fatalf("JumpContext: %v", err)
+	}
+	got := msgs[target].Reactions
+	if len(got) != 1 || got[0].Count != 2 || !got[0].Chosen {
+		t.Fatalf("jumped-to message carries %v", got)
+	}
+}
