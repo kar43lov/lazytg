@@ -115,12 +115,28 @@ jobs:
           echo "::notice title=no embedded credentials::$TAG ships binaries that report 'api: none', which is the documented default. Users export LAZYTG_API_ID/LAZYTG_API_HASH themselves; the brew caveats and docs/INSTALL.md tell them how. Set both secrets only if a release is meant to carry an application key of its own — and read docs/SECURITY.md first."
           exit 0
 
+      # Same diagnostics the snapshot job carries, and for the same reason:
+      # when this step dies it dies with no output, and there is otherwise
+      # nothing recorded to tell memory from disk.
+      - name: Runner resources before the build
+        run: |
+          nproc
+          free -h
+          df -h /
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: '~> v2'
-          args: release --clean
+          # --parallelism 2 for the reason the snapshot job already has it:
+          # four concurrent links of a ~23 MB binary is where the build
+          # starts dying silently. v0.1.0-alpha.2 proved the release job
+          # needs it too — it ran for 17m55s, printed the four "building"
+          # lines, and ended with no error at all. The snapshot job had been
+          # fixed; this one was left on the default and nobody noticed,
+          # because the last release predated the failure.
+          args: release --clean --parallelism 2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # HOMEBREW_TAP_GITHUB_TOKEN may be unset on first release; goreleaser only
@@ -141,3 +157,13 @@ jobs:
           # covers lazytg's own logs, not workflow output.
           LAZYTG_RELEASE_API_ID: ${{ secrets.LAZYTG_RELEASE_API_ID }}
           LAZYTG_RELEASE_API_HASH: ${{ secrets.LAZYTG_RELEASE_API_HASH }}
+
+      # Runs even when the build died, which is the case worth diagnosing: a
+      # step that ends without an error leaves the kernel log as the only
+      # witness.
+      - name: Why the build stopped
+        if: always()
+        run: |
+          free -h
+          df -h /
+          sudo dmesg | grep -iE "killed process|out of memory|oom" | tail -20 || echo "no OOM records"
