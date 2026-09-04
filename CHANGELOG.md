@@ -5,7 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0-alpha.2] - 2026-09-04
+
+Everything below came out of live runs against a real account rather than out of the test suite — two ordinary sessions, one over attachments, and the security pass that followed. The pattern is now consistent enough to state plainly: coverage in `core` sits around 81% and catches logic, but not what happens between the process and the server, and least of all what happens when a fixture fills in a field the server never sends.
+
+### Known gaps opened in this release
+
+- **An empty thread has three different causes and the client tells them apart for nobody.** A chat opened on 04.09.2026 showed no messages at all. It can mean the conversation is genuinely empty, that it holds only service messages, or that backfill never ran — and none of the three is visible from the outside. `decodeHistory` (`internal/tg/history.go:87`) keeps only `*tg.Message`, dropping `MessageService` and `MessageEmpty` silently, so a chat of "X joined the group" rows decodes to zero messages and looks identical to an empty one. Meanwhile `HistoryService.LoadInitial` logs `history: empty batch` at `Debug` (`internal/core/sync/history.go:120`) while the app runs at `Info`, so the log does not separate "the server returned nothing" from "we never asked". Fixing it means two things that belong together: render service messages instead of discarding them, and raise that line so an empty result is on the record.
+- **Types the platform opens without an execute bit are not filtered.** `o` hands the attachment to the system viewer, and `.webloc`, `.inetloc`, `.url`, `.terminal` and `.html` behave exactly as they would from Finder. The executable kinds are already blocked by the file mode (`0600`, no `+x`) and the badge can no longer disguise an extension, so what remains is the same exposure as opening the attachment from any other client. A deny-list is the next step if that judgement changes — see `docs/SECURITY.md`.
+- Neither of the two large batches merged in this release (PR #24, #33) nor the security fix (PR #34) had an independent review: both third-party engines were out of quota on 19.08 and again on 04.09. Everything here carries one signature.
+
+The older list, unchanged, is under `0.1.0-alpha.1` → **Known gaps**.
 
 ### Added
 
@@ -239,8 +249,6 @@ account — see [docs/INSTALL.md](docs/INSTALL.md) and [docs/SECURITY.md](docs/S
 - Search-jump now resists stale repo loads: a slow `OpenChat` fetch (or in-flight older-page pagination) for the same chat can no longer clobber the freshly-installed jump window. The thread model carries a `loadGen` counter bumped on every `OpenChat` / `SwitchTo` / `LoadJumpWindow`; `loadCmd` / `paginateCmd` / `paginateNewerCmd` capture it at scheduling time and the matching apply-handlers drop messages whose generation no longer matches.
 
 ### Known gaps (Stage 2 + Stage 3 follow-up)
-
-- **An empty thread has three different causes and the client tells them apart for nobody.** A chat opened on 04.09.2026 showed no messages at all. It can mean the conversation is genuinely empty, that it holds only service messages, or that backfill never ran — and none of the three is visible from the outside. `decodeHistory` (`internal/tg/history.go:87`) keeps only `*tg.Message`, dropping `MessageService` and `MessageEmpty` silently, so a chat of "X joined the group" rows decodes to zero messages and looks identical to an empty one. Meanwhile `HistoryService.LoadInitial` logs `history: empty batch` at `Debug` (`internal/core/sync/history.go:120`) while the app runs at `Info`, so the log does not separate "the server returned nothing" from "we never asked". Fixing it means two things that belong together: render service messages instead of discarding them, and raise that line so an empty result is on the record.
 
 - **The chat list is ordered by a date only dialog sync maintains.** `chats.last_message_date` is written by `SaveChat`, and nothing on the live path updates it — so a message arriving in an existing chat does not move that chat up the list until the next sync. `EnsureChat` seeds the column for a chat it creates, which fixes the new-chat case at the moment of discovery, but a backlog delivered oldest-first after a reconnect leaves the row stamped with the oldest message of the batch. Found by review on 19.08.2026; left alone deliberately, because the fix belongs with the ordering path rather than inside a function whose job is to create a missing row.
 
