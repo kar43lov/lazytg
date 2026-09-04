@@ -116,6 +116,10 @@ var markStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
 // reactionStyle is the ordinary reaction; chosenReactionStyle is the one this
 // account sent, which the user has to be able to pick out at a glance because
 // it decides what the react key does next.
+// waveformStyle paints the voice shape. Cyan rather than the metadata grey:
+// it is the only part of the badge line that carries the message itself.
+var waveformStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+
 var (
 	reactionStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	chosenReactionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true)
@@ -276,6 +280,12 @@ func mediaBadge(m *domain.MediaInfo) string {
 		parts = append(parts, formatBytes(m.Size))
 	}
 	badge := mediaStyle.Render("[" + mediaIcon(m.Kind) + " " + strings.Join(parts, ", ") + "]")
+	// The waveform goes outside the brackets, between the badge and the
+	// hint: it is the one part of the line that is the message rather than
+	// a description of it.
+	if wave := renderWaveform(m.Waveform); wave != "" {
+		badge += " " + waveformStyle.Render(wave)
+	}
 	return badge + " " + hintStyle.Render("o to open, ctrl+d to save")
 }
 

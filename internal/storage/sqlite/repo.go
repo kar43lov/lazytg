@@ -721,9 +721,9 @@ const messageUpsertSQL = `
             id, chat_id, from_id, date, text, reply_to, raw_blob,
             media_kind, media_id, media_access_hash, media_file_reference,
             media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-            media_duration, outgoing, reactions
+            media_duration, outgoing, reactions, media_waveform
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chat_id, id) DO UPDATE SET
             from_id              = excluded.from_id,
             date                 = excluded.date,
@@ -741,7 +741,8 @@ const messageUpsertSQL = `
             media_thumb_size     = excluded.media_thumb_size,
             media_duration       = excluded.media_duration,
             outgoing             = excluded.outgoing,
-            reactions            = excluded.reactions
+            reactions            = excluded.reactions,
+            media_waveform       = excluded.media_waveform
     `
 
 // messageInsertArgs builds the positional argument slice for
@@ -759,6 +760,7 @@ func messageInsertArgs(m domain.Message) []any {
 		mediaMime sql.NullString
 		mediaThSz sql.NullString
 		mediaDur  int
+		mediaWave []byte
 	)
 	if m.Media != nil {
 		mediaKind = sql.NullString{String: string(m.Media.Kind), Valid: m.Media.Kind != ""}
@@ -773,6 +775,7 @@ func messageInsertArgs(m domain.Message) []any {
 		mediaMime = nullableString(m.Media.MimeType)
 		mediaThSz = nullableString(m.Media.ThumbSize)
 		mediaDur = m.Media.Duration
+		mediaWave = m.Media.Waveform
 	}
 	return []any{
 		m.ID,
@@ -794,6 +797,7 @@ func messageInsertArgs(m domain.Message) []any {
 		mediaDur,
 		m.Outgoing,
 		encodeReactions(m.Reactions),
+		mediaWave,
 	}
 }
 
@@ -874,7 +878,7 @@ const messageSelectColumns = `
         SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                media_kind, media_id, media_access_hash, media_file_reference,
                media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-               media_duration, outgoing, reactions
+               media_duration, outgoing, reactions, media_waveform
     `
 
 // ErrMessageNotFound is returned by Message when the mirror holds no such
@@ -931,12 +935,13 @@ func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 			mediaThSz sql.NullString
 			mediaDur  sql.NullInt64
 			reactions sql.NullString
+			mediaWave []byte
 		)
 		if err := rows.Scan(
 			&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &raw,
 			&mediaKind, &mediaID, &mediaAH, &mediaRef,
 			&mediaDC, &mediaName, &mediaSize, &mediaMime, &mediaThSz,
-			&mediaDur, &m.Outgoing, &reactions,
+			&mediaDur, &m.Outgoing, &reactions, &mediaWave,
 		); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
@@ -957,6 +962,7 @@ func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 				MimeType:      mediaMime.String,
 				ThumbSize:     mediaThSz.String,
 				Duration:      int(mediaDur.Int64),
+				Waveform:      mediaWave,
 			}
 		}
 		m.Reactions = decodeReactions(reactions.String)

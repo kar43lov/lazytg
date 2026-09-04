@@ -209,7 +209,7 @@ func MediaFromMessage(m *tg.Message) *domain.MediaInfo {
 		if !ok {
 			return nil
 		}
-		kind, duration := classifyDocument(doc)
+		kind, duration, waveform := classifyDocument(doc)
 		return &domain.MediaInfo{
 			Kind:          kind,
 			FileID:        doc.ID,
@@ -220,6 +220,7 @@ func MediaFromMessage(m *tg.Message) *domain.MediaInfo {
 			Size:          doc.Size,
 			MimeType:      doc.MimeType,
 			Duration:      duration,
+			Waveform:      waveform,
 		}
 	case *tg.MessageMediaPhoto:
 		photo, ok := v.Photo.(*tg.Photo)
@@ -252,7 +253,7 @@ func MediaFromMessage(m *tg.Message) *domain.MediaInfo {
 // scan collects what it finds and decides afterwards, most specific
 // first — animated-plus-video is an animation, not a video, and a
 // sticker is a sticker even though it also carries a filename.
-func classifyDocument(doc *tg.Document) (domain.MediaKind, int) {
+func classifyDocument(doc *tg.Document) (domain.MediaKind, int, []byte) {
 	var (
 		video     *tg.DocumentAttributeVideo
 		audio     *tg.DocumentAttributeAudio
@@ -273,23 +274,27 @@ func classifyDocument(doc *tg.Document) (domain.MediaKind, int) {
 	}
 	switch {
 	case sticker:
-		return domain.MediaKindSticker, 0
+		return domain.MediaKindSticker, 0, nil
 	case video != nil && video.RoundMessage:
-		return domain.MediaKindVideoNote, int(video.Duration)
+		return domain.MediaKindVideoNote, int(video.Duration), nil
 	case animation:
 		duration := 0
 		if video != nil {
 			duration = int(video.Duration)
 		}
-		return domain.MediaKindAnimation, duration
+		return domain.MediaKindAnimation, duration, nil
 	case video != nil:
-		return domain.MediaKindVideo, int(video.Duration)
+		return domain.MediaKindVideo, int(video.Duration), nil
 	case audio != nil && audio.Voice:
-		return domain.MediaKindVoice, audio.Duration
+		// The waveform rides along only for a voice message. A music
+		// track carries the same attribute and sometimes a waveform too,
+		// but there the useful line is the title, not the shape.
+		wf, _ := audio.GetWaveform()
+		return domain.MediaKindVoice, audio.Duration, wf
 	case audio != nil:
-		return domain.MediaKindAudio, audio.Duration
+		return domain.MediaKindAudio, audio.Duration, nil
 	default:
-		return domain.MediaKindDocument, 0
+		return domain.MediaKindDocument, 0, nil
 	}
 }
 

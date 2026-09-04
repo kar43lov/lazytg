@@ -106,12 +106,12 @@ func (s *Service) JumpContext(ctx context.Context, hit Hit, around int) ([]domai
         SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                media_kind, media_id, media_access_hash, media_file_reference,
                media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-               media_duration, outgoing, reactions
+               media_duration, outgoing, reactions, media_waveform
         FROM (
             SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                    media_kind, media_id, media_access_hash, media_file_reference,
                    media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-                   media_duration, outgoing, reactions,
+                   media_duration, outgoing, reactions, media_waveform,
                    0 AS half
             FROM messages
             WHERE chat_id = ? AND id < ?
@@ -122,12 +122,12 @@ func (s *Service) JumpContext(ctx context.Context, hit Hit, around int) ([]domai
         SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                media_kind, media_id, media_access_hash, media_file_reference,
                media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-               media_duration, outgoing, reactions
+               media_duration, outgoing, reactions, media_waveform
         FROM (
             SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                    media_kind, media_id, media_access_hash, media_file_reference,
                    media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-                   media_duration, outgoing, reactions,
+                   media_duration, outgoing, reactions, media_waveform,
                    1 AS half
             FROM messages
             WHERE chat_id = ? AND id >= ?
@@ -199,12 +199,13 @@ func scanMessageWithMedia(rows *sql.Rows) (domain.Message, error) {
 		mediaThSz sql.NullString
 		mediaDur  sql.NullInt64
 		reactions sql.NullString
+		mediaWave []byte
 	)
 	if err := rows.Scan(
 		&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &rawBlob,
 		&mediaKind, &mediaID, &mediaAH, &mediaRef,
 		&mediaDC, &mediaName, &mediaSize, &mediaMime, &mediaThSz,
-		&mediaDur, &m.Outgoing, &reactions,
+		&mediaDur, &m.Outgoing, &reactions, &mediaWave,
 	); err != nil {
 		return domain.Message{}, err
 	}
@@ -226,6 +227,7 @@ func scanMessageWithMedia(rows *sql.Rows) (domain.Message, error) {
 			MimeType:      mediaMime.String,
 			ThumbSize:     mediaThSz.String,
 			Duration:      int(mediaDur.Int64),
+			Waveform:      mediaWave,
 		}
 	}
 	return m, nil

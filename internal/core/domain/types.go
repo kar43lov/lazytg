@@ -213,6 +213,10 @@ type MediaInfo struct {
 	MimeType      string
 	ThumbSize     string
 	Duration      int
+	// Waveform is the shape of a voice message, as Telegram sends it:
+	// five bits per sample, packed. Nil for everything else, and for
+	// voice messages stored before migration 0013.
+	Waveform []byte
 }
 
 // Peer is the resolved MTProto access metadata for a chat. AccessHash is

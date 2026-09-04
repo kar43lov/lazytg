@@ -77,3 +77,40 @@ func TestSaveMessage_CarriesReactions(t *testing.T) {
 		t.Fatalf("reactions = %v", got.Reactions)
 	}
 }
+
+// The waveform column is written by the message upsert like every other media
+// field. It is bytes rather than text, and a round trip through a BLOB is the
+// kind of thing that silently comes back as nil.
+func TestSaveMessage_CarriesTheVoiceWaveform(t *testing.T) {
+	t.Parallel()
+
+	repo, ctx := openTestRepo(t)
+	if err := repo.SaveChat(ctx, domain.Chat{ID: 42, Type: domain.ChatTypePrivate, Title: "friend"}); err != nil {
+		t.Fatalf("SaveChat: %v", err)
+	}
+	wave := []byte{0xde, 0xad, 0xbe, 0xef, 0x01}
+	if err := repo.SaveMessage(ctx, domain.Message{
+		ID: 7, ChatID: 42, Date: time.Now(),
+		Media: &domain.MediaInfo{
+			Kind: domain.MediaKindVoice, FileID: 1, Duration: 42, Waveform: wave,
+		},
+	}); err != nil {
+		t.Fatalf("SaveMessage: %v", err)
+	}
+
+	got, err := repo.Message(ctx, 42, 7)
+	if err != nil {
+		t.Fatalf("Message: %v", err)
+	}
+	if got.Media == nil {
+		t.Fatal("the media went missing")
+	}
+	if len(got.Media.Waveform) != len(wave) {
+		t.Fatalf("waveform came back as %v", got.Media.Waveform)
+	}
+	for i := range wave {
+		if got.Media.Waveform[i] != wave[i] {
+			t.Fatalf("waveform byte %d = %#x, want %#x", i, got.Media.Waveform[i], wave[i])
+		}
+	}
+}

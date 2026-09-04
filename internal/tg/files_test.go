@@ -473,3 +473,39 @@ func TestSender_SendMedia_RejectsNilFile(t *testing.T) {
 		t.Fatalf("expected error for nil file")
 	}
 }
+
+// The waveform is the one thing a terminal can show about a voice message,
+// and it arrives in the attribute the classifier was already reading.
+func TestClassifyDocument_KeepsTheVoiceWaveform(t *testing.T) {
+	t.Parallel()
+
+	audio := &tg.DocumentAttributeAudio{Duration: 42, Voice: true}
+	audio.SetWaveform([]byte{0x01, 0x02, 0x03, 0x04, 0x05})
+	doc := &tg.Document{Attributes: []tg.DocumentAttributeClass{audio}}
+
+	kind, duration, waveform := classifyDocument(doc)
+	if kind != domain.MediaKindVoice || duration != 42 {
+		t.Fatalf("kind=%q duration=%d", kind, duration)
+	}
+	if len(waveform) != 5 {
+		t.Fatalf("waveform = %v, want the five bytes that arrived", waveform)
+	}
+}
+
+// A music track carries the same attribute and sometimes a waveform too, but
+// there the useful line is the title, not the shape.
+func TestClassifyDocument_NoWaveformForMusic(t *testing.T) {
+	t.Parallel()
+
+	audio := &tg.DocumentAttributeAudio{Duration: 200}
+	audio.SetWaveform([]byte{0x01, 0x02, 0x03})
+	doc := &tg.Document{Attributes: []tg.DocumentAttributeClass{audio}}
+
+	kind, _, waveform := classifyDocument(doc)
+	if kind != domain.MediaKindAudio {
+		t.Fatalf("kind = %q", kind)
+	}
+	if waveform != nil {
+		t.Fatalf("a music track carried a waveform: %v", waveform)
+	}
+}
