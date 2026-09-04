@@ -88,6 +88,11 @@ func (m Model) applyLoaded(msg messagesLoadedMsg) (Model, tea.Cmd) {
 	m.forwardCursorID = 0
 	m.loading = false
 	m.recomputeOldestID()
+	// The boundary is worked out here, once, and then left alone:
+	// acknowledging the chat clears the count within a second of opening
+	// it, and a divider recomputed from that would vanish while the reader
+	// was still looking at it.
+	m = m.locateUnread()
 	m.viewport.SetContent(m.renderAll())
 	m.viewport.GotoBottom()
 	return m, nil

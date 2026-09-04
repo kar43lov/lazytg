@@ -405,7 +405,10 @@ func (a App) handleChatSelected(msg chats.ChatSelectedMsg) (tea.Model, tea.Cmd) 
 	}
 	a = a.clearTyping().clearJumpTrail()
 	updatedThread, cmd := a.thread.OpenChat(msg.ChatID)
-	a.thread = updatedThread
+	// The unread count has to be taken now: acknowledging the chat clears
+	// it a moment later, and by the time the messages land there would be
+	// nothing left to draw a divider from.
+	a.thread = updatedThread.MarkUnread(a.unreadOf(msg.ChatID))
 	if cmd != nil {
 		cmds = append(cmds, cmd)
 	}
@@ -894,7 +897,7 @@ func (a App) handlePaletteSelected(msg palette.SelectedMsg) (tea.Model, tea.Cmd)
 	wipe := a.clearDrawnImagesCmd()
 	a = a.clearTyping().clearJumpTrail()
 	updatedThread, cmd := a.thread.OpenChat(chatID)
-	a.thread = updatedThread
+	a.thread = updatedThread.MarkUnread(a.unreadOf(chatID))
 	cmds := []tea.Cmd{}
 	if wipe != nil {
 		cmds = append(cmds, wipe)
@@ -1080,6 +1083,18 @@ func (a App) handleOpenRequest(req thread.OpenRequestedMsg) (tea.Model, tea.Cmd)
 // list is empty or the id isn't present (the latter happens when the
 // user opens a chat ahead of the chats pane finishing its initial
 // load — the title catches up on the next reload).
+// unreadOf reports how many messages the chat list believes are unread in a
+// chat. Zero when it does not know the chat, which is the right answer: a
+// divider drawn from a guess is worse than none.
+func (a App) unreadOf(id int64) int {
+	for _, it := range a.chats.Items() {
+		if it.ID() == id {
+			return it.UnreadCount()
+		}
+	}
+	return 0
+}
+
 func (a App) chatTitle(id int64) (string, bool) {
 	for _, it := range a.chats.Items() {
 		if it.ID() == id {

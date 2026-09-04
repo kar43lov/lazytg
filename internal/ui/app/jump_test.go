@@ -157,3 +157,14 @@ func TestJumpToParent_SaysWhenTheParentIsNotLoaded(t *testing.T) {
 		t.Fatalf("status reads %q", a.statusText())
 	}
 }
+
+// A divider drawn from a guess is worse than none, so a chat the list does
+// not know reports nothing rather than a default.
+func TestUnreadOf_ReportsNothingForAnUnknownChat(t *testing.T) {
+	t.Parallel()
+
+	a := newAppForJumps(t)
+	if got := a.unreadOf(999); got != 0 {
+		t.Fatalf("an unknown chat reports %d unread", got)
+	}
+}

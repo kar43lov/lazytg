@@ -89,6 +89,12 @@ type Model struct {
 	// See inline.go.
 	inline map[int64]inlineImage
 
+	// unreadCount is how many messages were unread when this chat was
+	// opened, and unreadFrom the message the divider sits above. Both are
+	// worked out once and left alone; see unread.go.
+	unreadCount int
+	unreadFrom  int64
+
 	// marked holds the ids the user has picked out for an action that
 	// takes several — copying a run of messages, deleting them. Ids for
 	// the same reason as the cursor; see marks.go.
@@ -217,6 +223,8 @@ func (m Model) OpenChat(chatID int64) (Model, tea.Cmd) {
 	m = m.dropSelection()
 	m.chatID = chatID
 	m.messages = nil
+	m.unreadCount = 0
+	m.unreadFrom = 0
 	m.outgoing = nil
 	m.pendingServerIDs = make(map[int64]string)
 	m.finalizedLocalIDs = make(map[string]struct{})
@@ -521,6 +529,13 @@ func (m Model) renderContent() (string, []blockSpan) {
 			appendSeparator(renderDaySeparator(msg.Date, now, width))
 			lastDay = msg.Date
 		}
+		// The unread rule sits below the day separator when both fall in
+		// the same place: the date is context for what follows, the rule
+		// is where the reader is going, and the reader should end up
+		// under it.
+		if m.unreadAbove(msg) {
+			appendSeparator(renderUnreadRule(m.unreadCount, width))
+		}
 		rendered, mediaLine := formatMessageBlockMarked(msg, width, nil,
 			resolveAuthor(msg, m.chatID, m.private, m.authorNames),
 			msg.ID == cursorID, m.marked[msg.ID])
@@ -573,6 +588,8 @@ func (m Model) SwitchTo(chatID int64) Model {
 	m = m.dropSelection()
 	m.chatID = chatID
 	m.messages = nil
+	m.unreadCount = 0
+	m.unreadFrom = 0
 	m.outgoing = nil
 	m.pendingServerIDs = make(map[int64]string)
 	m.finalizedLocalIDs = make(map[string]struct{})
