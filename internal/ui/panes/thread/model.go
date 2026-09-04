@@ -85,6 +85,11 @@ type Model struct {
 	// because everything under it moves; see cursor.go.
 	cursorID int64
 
+	// now supplies the current time to the date separators, which need
+	// it to say "Today" and "Yesterday". Injectable so a golden test of
+	// the rendered thread does not change meaning overnight.
+	now func() time.Time
+
 	// authorNames maps a sender id to a display name, supplied by the app from
 	// the chat list. Private tells resolveAuthor it may treat "not the peer" as
 	// "the reader"; both are refreshed by SetDirectory when a chat is opened.
@@ -423,6 +428,24 @@ func (m Model) ScrollTo(messageID int64, around int) Model {
 	return m
 }
 
+// clock returns the model's time source, falling back to time.Now so
+// the zero Model — the one chooseModel hands out when the app wires no
+// thread pane — renders separators rather than panicking.
+func (m Model) clock() time.Time {
+	if m.now == nil {
+		return time.Now()
+	}
+	return m.now()
+}
+
+// SetClock replaces the time source behind the "Today" / "Yesterday"
+// separators. Test seam only; production uses time.Now.
+func (m Model) SetClock(now func() time.Time) Model {
+	m.now = now
+	m.viewport.SetContent(m.renderAll())
+	return m
+}
+
 // renderAll concatenates every message with a blank-line separator,
 // then appends every still-pending or failed optimistic-UI entry.
 // Messages are stored oldest-first so the natural top-to-bottom reading
@@ -463,6 +486,19 @@ func (m Model) renderContent() (string, []blockSpan) {
 		spans = append(spans, blockSpan{start: line, end: line + height, id: id, mediaLine: mediaLine})
 		line += height - 1
 	}
+	// A separator is written before the first message of each day. It
+	// occupies one line and gets no span: it belongs to no message, so a
+	// click on it must not select the message below.
+	appendSeparator := func(rendered string) {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+			line += 2
+		}
+		b.WriteString(rendered)
+	}
+	now := m.clock()
+	var lastDay time.Time
+
 	cursorID := m.cursorID
 	if cursorID == 0 && len(m.messages) > 0 {
 		// An unplaced cursor is drawn on the newest message rather than
@@ -472,6 +508,10 @@ func (m Model) renderContent() (string, []blockSpan) {
 		cursorID = m.messages[len(m.messages)-1].ID
 	}
 	for _, msg := range m.messages {
+		if lastDay.IsZero() || !sameDay(lastDay, msg.Date) {
+			appendSeparator(renderDaySeparator(msg.Date, now, width))
+			lastDay = msg.Date
+		}
 		rendered, mediaLine := formatMessageBlock(msg, width, nil,
 			resolveAuthor(msg, m.chatID, m.private, m.authorNames), msg.ID == cursorID)
 		appendBlock(rendered, msg.ID, mediaLine)

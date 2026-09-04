@@ -568,14 +568,15 @@ func TestTextSelection_DragCopiesToClipboard(t *testing.T) {
 	a := appWithLongChats(t)
 	l := a.layout()
 	x := l.threadX + 3
+	y := threadTextRow(t, a, "сообщения приходят")
 
-	model, _ := a.Update(click(x, 2))
+	model, _ := a.Update(click(x, y))
 	dragging := model.(App)
 	if !dragging.draggingText {
 		t.Fatal("pressing inside the thread did not start a selection")
 	}
-	model, _ = dragging.Update(drag(x+20, 2))
-	model, cmd := model.(App).Update(release(x+20, 2))
+	model, _ = dragging.Update(drag(x+20, y))
+	model, cmd := model.(App).Update(release(x+20, y))
 
 	after := model.(App)
 	if after.draggingText {
@@ -603,9 +604,10 @@ func TestTextSelection_ClickWithoutDragCopiesNothing(t *testing.T) {
 	a := appWithLongChats(t)
 	l := a.layout()
 	x := l.threadX + 3
+	y := threadTextRow(t, a, "сообщения приходят")
 
-	model, _ := a.Update(click(x, 2))
-	model, cmd := model.(App).Update(release(x, 2))
+	model, _ := a.Update(click(x, y))
+	model, cmd := model.(App).Update(release(x, y))
 	after := model.(App)
 
 	if cmd != nil {
@@ -640,10 +642,11 @@ func TestTextSelection_ClearedByClickingElsewhere(t *testing.T) {
 	a := appWithLongChats(t)
 	l := a.layout()
 	x := l.threadX + 3
+	y := threadTextRow(t, a, "сообщения приходят")
 
-	model, _ := a.Update(click(x, 2))
-	model, _ = model.(App).Update(drag(x+20, 2))
-	model, _ = model.(App).Update(release(x+20, 2))
+	model, _ := a.Update(click(x, y))
+	model, _ = model.(App).Update(drag(x+20, y))
+	model, _ = model.(App).Update(release(x+20, y))
 	if !model.(App).thread.HasSelection() {
 		t.Fatal("precondition: expected a selection after the drag")
 	}
@@ -662,10 +665,11 @@ func TestTextSelection_DoubleClickTakesTheMessage(t *testing.T) {
 	a := appWithLongChats(t)
 	l := a.layout()
 	x := l.threadX + 3
+	y := threadTextRow(t, a, "сообщения приходят")
 
-	model, _ := a.Update(click(x, 2))
-	model, _ = model.(App).Update(release(x, 2))
-	second, cmd := model.(App).Update(click(x, 2))
+	model, _ := a.Update(click(x, y))
+	model, _ = model.(App).Update(release(x, y))
+	second, cmd := model.(App).Update(click(x, y))
 
 	if !second.(App).thread.HasSelection() {
 		t.Error("double click did not highlight the message")
@@ -722,4 +726,21 @@ func TestResizeDropsTheSelection(t *testing.T) {
 	if model.(App).thread.HasSelection() {
 		t.Error("the highlight survived a resize and now covers re-wrapped text")
 	}
+}
+
+// threadTextRow returns the pane row carrying the fixture's message body.
+//
+// Hard-coded row numbers used to do this job, and they broke the moment the
+// thread grew a date separator above its first message — three tests failed
+// while the gesture they cover was working perfectly. Locating the row by its
+// content keeps them measuring the gesture rather than the layout.
+func threadTextRow(t *testing.T, a App, want string) int {
+	t.Helper()
+	for i, line := range strings.Split(a.thread.View(), "\n") {
+		if strings.Contains(line, want) {
+			return i
+		}
+	}
+	t.Fatalf("no row of the thread pane contains %q:\n%s", want, a.thread.View())
+	return -1
 }

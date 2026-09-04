@@ -36,6 +36,61 @@ var nameStyle = lipgloss.NewStyle().Bold(true)
 // visually below the headline without competing with the body text.
 var replyStyle = lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("8"))
 
+// dayStyle paints the date separator: grey, like the other metadata in
+// the thread, so it separates without competing with the conversation.
+var dayStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+
+// renderDaySeparator draws the "─── August 19 ───" rule that marks where
+// one day's messages end and the next day's begin.
+//
+// The thread prints times and only times, which is right inside a day
+// and actively misleading across days: a live run showed 16:35 followed
+// by 15:10 and read as a broken sort, when in fact a fortnight had
+// passed between them. Every chat client draws this line for the same
+// reason, and the cost of not drawing it is that the user distrusts the
+// ordering.
+func renderDaySeparator(day time.Time, now time.Time, width int) string {
+	label := " " + dayLabel(day, now) + " "
+	if width < minBodyWidth {
+		width = minBodyWidth
+	}
+	rule := width - lipgloss.Width(label)
+	if rule < 2 {
+		return dayStyle.Render(label)
+	}
+	left := rule / 2
+	return dayStyle.Render(strings.Repeat("─", left) + label + strings.Repeat("─", rule-left))
+}
+
+// dayLabel names a day the way a reader thinks of it: the two most
+// recent days by name, everything else by date, and the year only when
+// it is not the current one.
+func dayLabel(day, now time.Time) string {
+	d := day.Local()
+	n := now.Local()
+	today := time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, n.Location())
+	switch {
+	case !d.Before(today):
+		return "Today"
+	case !d.Before(today.AddDate(0, 0, -1)):
+		return "Yesterday"
+	case d.Year() == n.Year():
+		return d.Format("January 2")
+	default:
+		return d.Format("January 2, 2006")
+	}
+}
+
+// sameDay reports whether two instants fall on the same local calendar
+// day. Local, because the separator answers "what day was this for me",
+// and the timestamps beside it are printed in local time too.
+func sameDay(a, b time.Time) bool {
+	al, bl := a.Local(), b.Local()
+	ay, am, ad := al.Date()
+	by, bm, bd := bl.Date()
+	return ay == by && am == bm && ad == bd
+}
+
 // cursorMark and cursorStyle draw the per-message cursor. A glyph rather
 // than a highlighted row: the thread already uses reverse video for the
 // text selection, and two different things wearing the same paint is how
