@@ -16,7 +16,7 @@ require (
 	github.com/zalando/go-keyring v0.2.8
 	go.uber.org/goleak v1.3.0
 	golang.org/x/term v0.45.0
-	golang.org/x/text v0.40.0
+	golang.org/x/text v0.41.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	modernc.org/sqlite v1.57.0
 )
