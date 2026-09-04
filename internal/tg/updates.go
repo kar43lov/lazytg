@@ -142,6 +142,8 @@ func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass) {
 		d.publishDeleted(0, upd.Messages)
 	case *tg.UpdateDeleteChannelMessages:
 		d.publishDeleted(upd.ChannelID, upd.Messages)
+	case *tg.UpdateMessageReactions:
+		d.publishReactions(upd)
 	case *tg.UpdateEditMessage, *tg.UpdateEditChannelMessage:
 		d.log.Debug("update: edit ignored in v0.1", "type", u.TypeName())
 	default:
@@ -176,6 +178,23 @@ func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass) {
 		Media:     MediaFromMessage(m),
 		ChatType:  chatTypeFromPeer(m.PeerID),
 		Outgoing:  m.Out,
+	})
+}
+
+// publishReactions converts a reaction update into a bus event.
+//
+// Not deduplicated against the message LRU: that cache stops the same arrival
+// being rendered twice, and reactions on one message change repeatedly by
+// design — a second update for the same message is the point, not a repeat.
+func (d *UpdatesDispatcher) publishReactions(upd *tg.UpdateMessageReactions) {
+	chatID := chatIDFromPeer(upd.Peer)
+	if chatID == 0 {
+		return
+	}
+	d.bus.Publish(events.MessageReactionsChanged{
+		ChatID:    chatID,
+		MessageID: int64(upd.MsgID),
+		Reactions: decodeReactions(upd.Reactions),
 	})
 }
 

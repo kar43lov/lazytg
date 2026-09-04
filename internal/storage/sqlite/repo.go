@@ -721,9 +721,9 @@ const messageUpsertSQL = `
             id, chat_id, from_id, date, text, reply_to, raw_blob,
             media_kind, media_id, media_access_hash, media_file_reference,
             media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-            media_duration, outgoing
+            media_duration, outgoing, reactions
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chat_id, id) DO UPDATE SET
             from_id              = excluded.from_id,
             date                 = excluded.date,
@@ -740,7 +740,8 @@ const messageUpsertSQL = `
             media_mime_type      = excluded.media_mime_type,
             media_thumb_size     = excluded.media_thumb_size,
             media_duration       = excluded.media_duration,
-            outgoing             = excluded.outgoing
+            outgoing             = excluded.outgoing,
+            reactions            = excluded.reactions
     `
 
 // messageInsertArgs builds the positional argument slice for
@@ -792,6 +793,7 @@ func messageInsertArgs(m domain.Message) []any {
 		mediaThSz,
 		mediaDur,
 		m.Outgoing,
+		encodeReactions(m.Reactions),
 	}
 }
 
@@ -872,7 +874,7 @@ const messageSelectColumns = `
         SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                media_kind, media_id, media_access_hash, media_file_reference,
                media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-               media_duration, outgoing
+               media_duration, outgoing, reactions
     `
 
 // ErrMessageNotFound is returned by Message when the mirror holds no such
@@ -928,12 +930,13 @@ func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 			mediaMime sql.NullString
 			mediaThSz sql.NullString
 			mediaDur  sql.NullInt64
+			reactions sql.NullString
 		)
 		if err := rows.Scan(
 			&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &raw,
 			&mediaKind, &mediaID, &mediaAH, &mediaRef,
 			&mediaDC, &mediaName, &mediaSize, &mediaMime, &mediaThSz,
-			&mediaDur, &m.Outgoing,
+			&mediaDur, &m.Outgoing, &reactions,
 		); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
@@ -956,6 +959,7 @@ func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 				Duration:      int(mediaDur.Int64),
 			}
 		}
+		m.Reactions = decodeReactions(reactions.String)
 		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -1053,4 +1057,25 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// SetReactions replaces the reactions stored against one message.
+//
+// Deliberately not part of the message upsert. A reaction update carries no
+// message body, so writing it through SaveMessage would blank the text of
+// every message somebody reacted to. It also does not create a row: a
+// reaction on a message outside the fetched history is the ordinary case, and
+// inventing an empty message to hang it on would put a blank line in the
+// thread.
+func (r *Repo) SetReactions(ctx context.Context, chatID, messageID int64, rs []domain.Reaction) error {
+	if r.readOnly.Load() {
+		return ErrReadOnly
+	}
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE messages SET reactions = ? WHERE chat_id = ? AND id = ?`,
+		encodeReactions(rs), chatID, messageID)
+	if err != nil {
+		return fmt.Errorf("set reactions %d/%d: %w", chatID, messageID, err)
+	}
+	return nil
 }

@@ -106,6 +106,7 @@ func (h Help) rows() []row {
 		{"show image inline", h.Keymap.ShowImage},
 		{"mark message", h.Keymap.MarkMessage},
 		{"forward message", h.Keymap.ForwardMessage},
+		{"react to message", h.Keymap.ReactMessage},
 		{"emoji picker", h.Keymap.EmojiPicker},
 		{"complete :emoji", h.Keymap.CompleteEmoji},
 		{"copy message(s)", h.Keymap.CopyMessage},

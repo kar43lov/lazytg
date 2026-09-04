@@ -58,6 +58,10 @@ func (s *stampedStore) DeleteMessages(_ context.Context, _ int64, ids []int64) (
 	return int64(len(ids)), nil
 }
 
+func (s *stampedStore) SetReactions(context.Context, int64, int64, []domain.Reaction) error {
+	return nil
+}
+
 func (s *stampedStore) EnsureChat(_ context.Context, _ int64, _ domain.ChatType, _ time.Time) (bool, error) {
 	return false, nil
 }

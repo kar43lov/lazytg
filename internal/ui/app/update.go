@@ -185,9 +185,18 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.emojiPicker = a.emojiPicker.Open()
 		return a, nil
 	case overlay.EmojiPickedMsg:
+		// A picker opened to react answers to the reaction path instead
+		// of typing the character into the composer.
+		if updated, cmd, handled := a.handleReactionPick(m.Char); handled {
+			return updated, cmd
+		}
 		return a.insertEmoji(m.Char)
 	case overlay.EmojiClosedMsg:
-		return a, nil
+		return a.cancelPendingReaction(), nil
+	case reactionResultMsg:
+		return a.applyReactionResult(m), nil
+	case events.MessageReactionsChanged:
+		return a.applyReactionsChanged(m), nil
 	case attach.OpenedMsg:
 		return a.openAttach(m)
 	case attach.ClosedMsg:

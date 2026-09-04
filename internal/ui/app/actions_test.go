@@ -23,6 +23,7 @@ type fakeActions struct {
 	edits    []editRecord
 	deletes  []deleteRecord
 	forwards []forwardRecord
+	reacts   []reactRecord
 	err      error
 }
 
@@ -38,6 +39,27 @@ func (f *fakeActions) Forward(_ context.Context, from, to int64, ids []int64, dr
 	defer f.mu.Unlock()
 	f.forwards = append(f.forwards, forwardRecord{from, to, append([]int64(nil), ids...), dropAuthor})
 	return f.err
+}
+
+type reactRecord struct {
+	chatID    int64
+	messageID int64
+	emoticon  string
+}
+
+func (f *fakeActions) React(_ context.Context, chatID, messageID int64, emoticon string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reacts = append(f.reacts, reactRecord{chatID, messageID, emoticon})
+	return f.err
+}
+
+func (f *fakeActions) reactCalls() []reactRecord {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]reactRecord, len(f.reacts))
+	copy(out, f.reacts)
+	return out
 }
 
 func (f *fakeActions) forwardCalls() []forwardRecord {

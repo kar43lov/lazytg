@@ -43,10 +43,17 @@ func (f *fakeDeleter) Delete(_ context.Context, chatID int64, ids []int64, revok
 }
 
 type fakeActionStore struct {
-	msg    domain.Message
-	readEr error
-	saved  []domain.Message
-	saveEr error
+	msg       domain.Message
+	readEr    error
+	saved     []domain.Message
+	saveEr    error
+	reactions []domain.Reaction
+	reactEr   error
+}
+
+func (f *fakeActionStore) SetReactions(_ context.Context, _, _ int64, rs []domain.Reaction) error {
+	f.reactions = append([]domain.Reaction(nil), rs...)
+	return f.reactEr
 }
 
 func (f *fakeActionStore) Message(_ context.Context, _, _ int64) (domain.Message, error) {
@@ -67,7 +74,7 @@ func TestActionService_Edit_RefusesSomebodyElsesMessage(t *testing.T) {
 
 	editor := &fakeEditor{}
 	store := &fakeActionStore{msg: domain.Message{ID: 7, ChatID: 1, Outgoing: false}}
-	svc := NewActionService(editor, nil, nil, store, nil, nil)
+	svc := NewActionService(editor, nil, nil, nil, store, nil, nil)
 
 	err := svc.Edit(context.Background(), 1, 7, "rewritten")
 	if !errors.Is(err, ErrNotEditable) {
@@ -91,7 +98,7 @@ func TestActionService_Edit_AllowsAnOutgoingMessageWithNoFromID(t *testing.T) {
 	editor := &fakeEditor{}
 	store := &fakeActionStore{msg: domain.Message{ID: 7, ChatID: 1, FromID: 0, Outgoing: true, Text: "before"}}
 	bus := &recordingBus{}
-	svc := NewActionService(editor, nil, nil, store, bus, nil)
+	svc := NewActionService(editor, nil, nil, nil, store, bus, nil)
 
 	if err := svc.Edit(context.Background(), 1, 7, "after"); err != nil {
 		t.Fatalf("Edit of own message: %v", err)
@@ -116,7 +123,7 @@ func TestActionService_Edit_LeavesTheMirrorAloneWhenTheServerRefuses(t *testing.
 	editor := &fakeEditor{err: errors.New("MESSAGE_EDIT_TIME_EXPIRED")}
 	store := &fakeActionStore{msg: domain.Message{ID: 7, ChatID: 1, Outgoing: true, Text: "before"}}
 	bus := &recordingBus{}
-	svc := NewActionService(editor, nil, nil, store, bus, nil)
+	svc := NewActionService(editor, nil, nil, nil, store, bus, nil)
 
 	if err := svc.Edit(context.Background(), 1, 7, "after"); err == nil {
 		t.Fatal("Edit should surface the server's refusal")
@@ -136,7 +143,7 @@ func TestActionService_Delete_AnnouncesOnlyAfterTheServerAgrees(t *testing.T) {
 		t.Parallel()
 		deleter := &fakeDeleter{err: errors.New("MESSAGE_DELETE_FORBIDDEN")}
 		bus := &recordingBus{}
-		svc := NewActionService(nil, deleter, nil, &fakeActionStore{}, bus, nil)
+		svc := NewActionService(nil, deleter, nil, nil, &fakeActionStore{}, bus, nil)
 
 		if err := svc.Delete(context.Background(), 1, []int64{7, 8}, true); err == nil {
 			t.Fatal("Delete should surface the refusal")
@@ -153,7 +160,7 @@ func TestActionService_Delete_AnnouncesOnlyAfterTheServerAgrees(t *testing.T) {
 		t.Parallel()
 		deleter := &fakeDeleter{report: 2}
 		bus := &recordingBus{}
-		svc := NewActionService(nil, deleter, nil, &fakeActionStore{}, bus, nil)
+		svc := NewActionService(nil, deleter, nil, nil, &fakeActionStore{}, bus, nil)
 
 		if err := svc.Delete(context.Background(), 1, []int64{7, 8}, true); err != nil {
 			t.Fatalf("Delete: %v", err)
@@ -178,7 +185,7 @@ func TestActionService_Delete_PassesTheRevokeChoiceThrough(t *testing.T) {
 
 	for _, revoke := range []bool{true, false} {
 		deleter := &fakeDeleter{}
-		svc := NewActionService(nil, deleter, nil, &fakeActionStore{}, nil, nil)
+		svc := NewActionService(nil, deleter, nil, nil, &fakeActionStore{}, nil, nil)
 		if err := svc.Delete(context.Background(), 1, []int64{7}, revoke); err != nil {
 			t.Fatalf("Delete: %v", err)
 		}
@@ -191,7 +198,7 @@ func TestActionService_Delete_PassesTheRevokeChoiceThrough(t *testing.T) {
 func TestActionService_ReportsBeingOffline(t *testing.T) {
 	t.Parallel()
 
-	svc := NewActionService(nil, nil, nil, &fakeActionStore{}, nil, nil)
+	svc := NewActionService(nil, nil, nil, nil, &fakeActionStore{}, nil, nil)
 	if err := svc.Edit(context.Background(), 1, 2, "x"); err == nil {
 		t.Fatal("Edit with no editor should report that it is not connected")
 	}
@@ -221,7 +228,7 @@ func TestActionService_ForwardPassesThrough(t *testing.T) {
 	t.Parallel()
 
 	fwd := &fakeForwarder{}
-	svc := NewActionService(nil, nil, fwd, &fakeActionStore{}, nil, nil)
+	svc := NewActionService(nil, nil, fwd, nil, &fakeActionStore{}, nil, nil)
 
 	if err := svc.Forward(context.Background(), 42, 99, []int64{1, 2}, true); err != nil {
 		t.Fatalf("Forward: %v", err)
@@ -241,7 +248,7 @@ func TestActionService_ForwardAnnouncesNothing(t *testing.T) {
 	t.Parallel()
 
 	bus := &recordingBus{}
-	svc := NewActionService(nil, nil, &fakeForwarder{}, &fakeActionStore{}, bus, nil)
+	svc := NewActionService(nil, nil, &fakeForwarder{}, nil, &fakeActionStore{}, bus, nil)
 
 	if err := svc.Forward(context.Background(), 42, 99, []int64{1}, false); err != nil {
 		t.Fatalf("Forward: %v", err)
@@ -254,8 +261,115 @@ func TestActionService_ForwardAnnouncesNothing(t *testing.T) {
 func TestActionService_ForwardOfflineSaysSo(t *testing.T) {
 	t.Parallel()
 
-	svc := NewActionService(nil, nil, nil, &fakeActionStore{}, nil, nil)
+	svc := NewActionService(nil, nil, nil, nil, &fakeActionStore{}, nil, nil)
 	if err := svc.Forward(context.Background(), 42, 99, []int64{1}, false); err == nil {
 		t.Fatal("forwarding with no client succeeded")
+	}
+}
+
+type fakeReactor struct {
+	calls []reactCall
+	out   []domain.Reaction
+	err   error
+}
+
+type reactCall struct {
+	chatID    int64
+	messageID int64
+	emoticon  string
+}
+
+func (f *fakeReactor) React(_ context.Context, chatID, messageID int64, emoticon string) ([]domain.Reaction, error) {
+	f.calls = append(f.calls, reactCall{chatID, messageID, emoticon})
+	return f.out, f.err
+}
+
+func TestActionService_React_StoresWhatTheServerReturned(t *testing.T) {
+	t.Parallel()
+
+	reactor := &fakeReactor{out: []domain.Reaction{{Emoticon: "👍", Count: 5, Chosen: true}}}
+	store := &fakeActionStore{}
+	bus := &recordingBus{}
+	svc := NewActionService(nil, nil, nil, reactor, store, bus, nil)
+
+	if err := svc.React(context.Background(), 42, 7, "👍"); err != nil {
+		t.Fatalf("React: %v", err)
+	}
+	// The count is the server's, not an increment of the local copy: counts
+	// belong to everybody and drift the moment two people react at once.
+	if len(store.reactions) != 1 || store.reactions[0].Count != 5 {
+		t.Fatalf("stored %v", store.reactions)
+	}
+	if len(bus.events) != 1 {
+		t.Fatalf("published %v, want one MessageReactionsChanged", bus.events)
+	}
+	ev, ok := bus.events[0].(events.MessageReactionsChanged)
+	if !ok || ev.MessageID != 7 || len(ev.Reactions) != 1 {
+		t.Fatalf("event = %#v", bus.events[0])
+	}
+}
+
+// Announcing before the server agreed would put a count on screen that never
+// happened — and a channel refusing reactions is an ordinary outcome.
+func TestActionService_React_SaysNothingWhenTheServerRefuses(t *testing.T) {
+	t.Parallel()
+
+	reactor := &fakeReactor{err: errors.New("REACTION_INVALID")}
+	bus := &recordingBus{}
+	svc := NewActionService(nil, nil, nil, reactor, &fakeActionStore{}, bus, nil)
+
+	if err := svc.React(context.Background(), 42, 7, "👍"); err == nil {
+		t.Fatal("React swallowed the refusal")
+	}
+	if len(bus.events) != 0 {
+		t.Fatalf("published %v after a refusal", bus.events)
+	}
+}
+
+// An empty emoticon is a removal, and the empty result that comes back with
+// it is the truth rather than a missing answer.
+func TestActionService_React_RemovalStoresTheEmptySet(t *testing.T) {
+	t.Parallel()
+
+	reactor := &fakeReactor{out: nil}
+	store := &fakeActionStore{reactions: []domain.Reaction{{Emoticon: "👍", Count: 1, Chosen: true}}}
+	bus := &recordingBus{}
+	svc := NewActionService(nil, nil, nil, reactor, store, bus, nil)
+
+	if err := svc.React(context.Background(), 42, 7, ""); err != nil {
+		t.Fatalf("React: %v", err)
+	}
+	if len(store.reactions) != 0 {
+		t.Fatalf("the removal left %v behind", store.reactions)
+	}
+	if len(bus.events) != 1 {
+		t.Fatalf("a removal published %v", bus.events)
+	}
+}
+
+// The server accepted it but told us nothing. Announcing a guess is the one
+// way to put a wrong count on screen; the push update will say.
+func TestActionService_React_SilentResponseAnnouncesNothing(t *testing.T) {
+	t.Parallel()
+
+	reactor := &fakeReactor{out: nil}
+	store := &fakeActionStore{}
+	bus := &recordingBus{}
+	svc := NewActionService(nil, nil, nil, reactor, store, bus, nil)
+
+	if err := svc.React(context.Background(), 42, 7, "👍"); err != nil {
+		t.Fatalf("React: %v", err)
+	}
+	if len(bus.events) != 0 {
+		t.Fatalf("published %v from a silent response", bus.events)
+	}
+}
+
+func TestActionService_React_OfflineSaysSo(t *testing.T) {
+	t.Parallel()
+
+	svc := NewActionService(nil, nil, nil, nil, &fakeActionStore{}, nil, nil)
+	if err := svc.React(context.Background(), 42, 7, "👍"); err == nil {
+		t.Fatal("reacting with no client succeeded")
 	}
 }

@@ -38,6 +38,7 @@ Think `lazygit` ergonomics, but for Telegram conversations: keyboard-driven, sin
 - ✍️ **Act on messages, one or many** — `Space` marks, `y` copies, `e` rewrites your own, `d` deletes with a choice of "for me" or "for everyone", `f` forwards to a chat picked in the command palette. Marks make it a batch: mark four messages and one `d` removes all four.
 - 🗂 **Your Telegram folders, as tabs** — the folders you already made on your phone narrow the chat list here, `[` and `]` walk between them, and `All` is always the first tab.
 - 🖼 **Photos drawn in the thread** — `i` shows the picture inside the conversation on terminals that speak the Kitty graphics protocol (Ghostty, kitty, WezTerm). Everything else keeps the badge and `o`, which is the honest answer for video: no terminal plays one.
+- 💬 **Reactions, both ways** — what people put on your messages shows under them with counts and yours boxed; `r` sets or clears your own through the emoji picker.
 - 😀 **Emoji without leaving the keyboard** — type `:rocket` and press Tab, press it again to walk the other matches; `Alt+E` opens a picker with categories, search and what you used last.
 - 🧭 **Command palette (`Ctrl+Space`)** with frecency-ranked chat switcher and Unicode-fuzzy matching ("Алёна" === "Алена").
 - 🪶 **Pure-Go single binary**, no Electron, no CGo (sqlcipher build is opt-in, deferred for v0.1.x).
@@ -63,6 +64,7 @@ Current capabilities:
 - Search overlay (`/`), command palette (Ctrl+Space), a message cursor with per-message download (Ctrl+D) and open-in-viewer (`o`), file upload (Ctrl+U).
 - Message actions on the cursor or on a marked set: copy, edit your own, delete for yourself or for everyone, forward to another chat (`Space`, `y`, `e`, `d`, `f`).
 - The account's Telegram folders as tabs over the chat list (`[` / `]`), including chat-list folders (shared links), which are matched by their explicit membership only.
+- Reactions read from the messages themselves and kept current by `updateMessageReactions`; `r` sends yours (standard emoji only — premium custom reactions are a sticker, not a character).
 - Emoji entry two ways: `:shortcode` completion on Tab in the composer, and an `Alt+E` picker over ~1100 characters with the GitHub/Slack aliases people actually type.
 - Inline photos through the Kitty graphics protocol (`i`), auto-detected from the environment and overridable with `LAZYTG_IMAGE_PROTOCOL=kitty|none`.
 - DB-size monitor + permissions audit + 10 msg/s send rate-limit guard (covers both text and media sends).
@@ -85,6 +87,7 @@ Current capabilities:
 | `e`             | edit your own message at the cursor   |
 | `d`             | delete the marked messages, or the one at the cursor |
 | `f`             | forward them to another chat (picks the chat in the palette) |
+| `r`             | react to the message at the cursor (opens the emoji picker) |
 | `i`             | draw the photo at the cursor inside the thread |
 | `[` / `]`       | previous / next Telegram folder       |
 | Tab (in the composer) | complete the `:shortcode` you are typing, again to cycle |

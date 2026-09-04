@@ -104,6 +104,36 @@ type Message struct {
 	// thread pane cannot tell the reader's own messages from the other
 	// party's. See migration 0010.
 	Outgoing bool
+	// Reactions is who reacted and with what, newest counts first as
+	// Telegram orders them. Empty for the overwhelming majority of
+	// messages, so it costs nothing to carry. See migration 0012.
+	Reactions []Reaction
+}
+
+// Reaction is one emoji on a message, with how many people used it.
+//
+// Only standard emoji reactions are represented. A premium custom reaction is
+// a document id rather than a character: showing one means downloading and
+// drawing a sticker, and until that exists a count attached to nothing is
+// worse than the reaction being absent.
+type Reaction struct {
+	// Emoticon is the character itself, as Telegram sends it.
+	Emoticon string
+	// Count is how many people reacted with it.
+	Count int
+	// Chosen marks the reaction this account sent. It is the bit that
+	// decides whether pressing the key adds a reaction or takes it back.
+	Chosen bool
+}
+
+// ChosenReaction returns the emoji this account reacted with, or "".
+func (m Message) ChosenReaction() string {
+	for _, r := range m.Reactions {
+		if r.Chosen {
+			return r.Emoticon
+		}
+	}
+	return ""
 }
 
 // MediaKind discriminates the variant of a Telegram media object so the

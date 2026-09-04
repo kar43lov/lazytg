@@ -60,6 +60,7 @@ type MessageActions interface {
 	Edit(ctx context.Context, chatID, messageID int64, text string) error
 	Delete(ctx context.Context, chatID int64, ids []int64, revoke bool) error
 	Forward(ctx context.Context, fromChatID, toChatID int64, ids []int64, dropAuthor bool) error
+	React(ctx context.Context, chatID, messageID int64, emoticon string) error
 }
 
 // FileUploader is the gotd-free contract App.handleAttachSubmit uses
@@ -302,6 +303,10 @@ type App struct {
 	// when the user presses the forward key, consumed by the palette
 	// selection, cleared when the palette closes with nothing chosen.
 	pendingForward *pendingForward
+
+	// pendingReaction remembers which message an emoji picker opened to
+	// react is about, and what this account already has on it.
+	pendingReaction *pendingReaction
 
 	// prePaletteFocus is the same idea for the command palette so
 	// closing it (Esc / SelectedMsg) can restore the prior focus

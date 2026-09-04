@@ -2,6 +2,7 @@ package thread
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -112,6 +113,14 @@ const markMark = "✓"
 
 var markStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
 
+// reactionStyle is the ordinary reaction; chosenReactionStyle is the one this
+// account sent, which the user has to be able to pick out at a glance because
+// it decides what the react key does next.
+var (
+	reactionStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	chosenReactionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true)
+)
+
 // boldStyle / italicStyle / codeStyle drive the simple-markdown inline
 // pass. Code uses dim grey on the default background — a real background
 // fill would clash with the surrounding pane lipgloss border.
@@ -194,7 +203,47 @@ func formatMessageBlockMarked(msg domain.Message, width int, replyTo *domain.Mes
 	body := renderInlineMarkdown(safetext.Clean(msg.Text))
 	body = wrapText(body, width-2)
 	b.WriteString(body)
+
+	if row := reactionRow(msg.Reactions); row != "" {
+		b.WriteByte('\n')
+		b.WriteString(row)
+	}
 	return b.String(), mediaLine
+}
+
+// reactionRow renders the reactions under a message, or "" when there are
+// none — which is the case for almost every message, so it costs a line only
+// where there is something to show.
+//
+// The one this account sent is boxed. That is the bit the user needs before
+// pressing the key: reacting again with the same emoji takes it back, and
+// without a mark on screen the gesture is a coin flip.
+//
+// A count of one is left off. "👍" already says one person did it, and a
+// column of "👍 1  ❤ 1" is noise where "👍 ❤" is a sentence.
+func reactionRow(rs []domain.Reaction) string {
+	if len(rs) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(rs))
+	for _, r := range rs {
+		if r.Emoticon == "" {
+			continue
+		}
+		label := safetext.CleanLine(r.Emoticon)
+		if r.Count > 1 {
+			label += " " + strconv.Itoa(r.Count)
+		}
+		if r.Chosen {
+			parts = append(parts, chosenReactionStyle.Render("["+label+"]"))
+			continue
+		}
+		parts = append(parts, reactionStyle.Render(" "+label+" "))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " ")
 }
 
 // mediaBadge formats a one-line marker like "[📎 report.pdf, 234 KiB]" so

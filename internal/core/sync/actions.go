@@ -29,12 +29,21 @@ type MessageForwarder interface {
 	Forward(ctx context.Context, fromChatID, toChatID int64, ids []int64, dropAuthor bool) error
 }
 
+// MessageReactor is the gotd-free contract for this account's own reaction on
+// a message. It returns the message's reactions as the server now has them —
+// counts belong to everybody, so the authoritative list is the only one worth
+// storing. Satisfied by *internal/tg.Reactor in production.
+type MessageReactor interface {
+	React(ctx context.Context, chatID, messageID int64, emoticon string) ([]domain.Reaction, error)
+}
+
 // ActionStore is the storage surface ActionService writes through: the same
 // SaveMessage the live path uses, because an edit is an upsert of a row that
 // already exists.
 type ActionStore interface {
 	SaveMessage(ctx context.Context, m domain.Message) error
 	Message(ctx context.Context, chatID, messageID int64) (domain.Message, error)
+	SetReactions(ctx context.Context, chatID, messageID int64, rs []domain.Reaction) error
 }
 
 // ErrNotEditable is returned when the user asks to edit a message the client
@@ -69,6 +78,7 @@ type ActionService struct {
 	editor    MessageEditor
 	deleter   MessageDeleter
 	forwarder MessageForwarder
+	reactor   MessageReactor
 	store     ActionStore
 	bus       EventPublisher
 	log       *slog.Logger
@@ -82,7 +92,7 @@ type EventPublisher interface {
 // NewActionService wires the service. Any of editor, deleter and bus may be
 // nil, which is how an offline session is expressed — the corresponding
 // operation then reports that it is unavailable rather than panicking.
-func NewActionService(editor MessageEditor, deleter MessageDeleter, forwarder MessageForwarder, store ActionStore, bus EventPublisher, log *slog.Logger) *ActionService {
+func NewActionService(editor MessageEditor, deleter MessageDeleter, forwarder MessageForwarder, reactor MessageReactor, store ActionStore, bus EventPublisher, log *slog.Logger) *ActionService {
 	if log == nil {
 		log = slog.New(noopHandler{})
 	}
@@ -90,6 +100,7 @@ func NewActionService(editor MessageEditor, deleter MessageDeleter, forwarder Me
 		editor:    editor,
 		deleter:   deleter,
 		forwarder: forwarder,
+		reactor:   reactor,
 		store:     store,
 		bus:       bus,
 		log:       log,
@@ -174,6 +185,44 @@ func (s *ActionService) Delete(ctx context.Context, chatID int64, ids []int64, r
 	}
 	// LiveService owns the local half, including the channel id space.
 	s.publish(events.MessagesDeleted{ChatID: chatID, MessageIDs: ids})
+	return nil
+}
+
+// React sets or clears this account's reaction on a message.
+//
+// The emoticon the caller passes is what the account should end up holding;
+// an empty string means "none". The toggle — pressing the same emoji twice to
+// take it back — is decided by the caller, which is the only place that knows
+// what the user was looking at when they pressed the key.
+//
+// The mirror is updated from the server's answer, then announced. Doing it
+// the other way round would show a count that never happened if the request
+// was refused, and reactions are exactly the kind of thing a channel refuses.
+func (s *ActionService) React(ctx context.Context, chatID, messageID int64, emoticon string) error {
+	if s == nil || s.reactor == nil {
+		return errors.New("react: not connected")
+	}
+	reactions, err := s.reactor.React(ctx, chatID, messageID, emoticon)
+	if err != nil {
+		return err
+	}
+	if reactions == nil && emoticon != "" {
+		// The server accepted it but told us nothing about the result.
+		// The push update will; announcing a guess here would be the one
+		// way to put a wrong count on screen.
+		s.log.Debug("react: no reaction list in the response",
+			"chat_id", chatID, "message_id", messageID)
+		return nil
+	}
+	if err := s.store.SetReactions(ctx, chatID, messageID, reactions); err != nil {
+		s.log.Warn("react: server accepted the reaction but the mirror was not updated",
+			"chat_id", chatID, "message_id", messageID, "err", err)
+	}
+	s.publish(events.MessageReactionsChanged{
+		ChatID:    chatID,
+		MessageID: messageID,
+		Reactions: reactions,
+	})
 	return nil
 }
 

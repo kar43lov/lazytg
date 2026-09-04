@@ -26,6 +26,7 @@ type recordingStore struct {
 	ensureCreated bool
 	unread        []int64
 	unreadErr     error
+	reactions     []reactionWrite
 }
 
 // IncrementUnread satisfies coresync.LiveStore and records which chats had
@@ -77,6 +78,29 @@ func (s *recordingStore) DeleteMessages(_ context.Context, chatID int64, ids []i
 	s.deleted = append(s.deleted, deletedBatch{chatID: chatID, ids: append([]int64(nil), ids...)})
 	s.order = append(s.order, "delete")
 	return int64(len(ids)), nil
+}
+
+func (s *recordingStore) SetReactions(_ context.Context, chatID, messageID int64, rs []domain.Reaction) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reactions = append(s.reactions, reactionWrite{chatID: chatID, messageID: messageID, rs: append([]domain.Reaction(nil), rs...)})
+	s.order = append(s.order, "reactions")
+	return nil
+}
+
+// reactionsSnapshot returns a copy of the recorded SetReactions calls.
+func (s *recordingStore) reactionsSnapshot() []reactionWrite {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]reactionWrite, len(s.reactions))
+	copy(out, s.reactions)
+	return out
+}
+
+type reactionWrite struct {
+	chatID    int64
+	messageID int64
+	rs        []domain.Reaction
 }
 
 // deletedSnapshot returns a copy of the recorded DeleteMessages calls.
@@ -563,6 +587,43 @@ func TestLiveService_LeavesTheOpenChatAlone(t *testing.T) {
 
 	if raised := store.unreadSnapshot(); len(raised) != 0 {
 		t.Fatalf("raised the badge on %v, want none", raised)
+	}
+
+	cancel()
+	<-done
+}
+
+// A reaction made on another device reaches the mirror the same way a
+// deletion does: through the live path, because nothing else is watching.
+func TestLiveService_StoresReactionsFromAnotherDevice(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	store := &recordingStore{}
+	svc := NewLiveService(store, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+
+	bus.Publish(events.MessageReactionsChanged{
+		ChatID: 42, MessageID: 7,
+		Reactions: []domain.Reaction{{Emoticon: "👍", Count: 3}},
+	})
+
+	deadline := time.After(time.Second)
+	for {
+		writes := store.reactionsSnapshot()
+		if len(writes) == 1 {
+			if writes[0].chatID != 42 || writes[0].messageID != 7 || len(writes[0].rs) != 1 {
+				t.Fatalf("SetReactions called with %+v", writes[0])
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("SetReactions was never called; reactions from other devices would never appear")
+		case <-time.After(5 * time.Millisecond):
+		}
 	}
 
 	cancel()

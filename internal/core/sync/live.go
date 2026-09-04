@@ -20,6 +20,11 @@ type LiveStore interface {
 	// chat id means the update named no chat, which is how deletions in
 	// private chats and basic groups arrive.
 	DeleteMessages(ctx context.Context, chatID int64, ids []int64) (int64, error)
+	// SetReactions replaces the reactions stored against one message. It
+	// touches nothing else about the row, because a reaction update says
+	// nothing about the message body and rewriting the whole row from an
+	// update that does not carry it would blank the text.
+	SetReactions(ctx context.Context, chatID, messageID int64, rs []domain.Reaction) error
 	// EnsureChat creates the parent chats row when the peer is unknown and
 	// leaves an existing row untouched. Without it a message from a chat
 	// outside the synced dialog window fails its foreign key and is lost.
@@ -121,6 +126,8 @@ func (s *LiveService) drain(ctx context.Context, ch <-chan events.Event) error {
 				s.persist(ctx, typed)
 			case events.MessagesDeleted:
 				s.forget(ctx, typed)
+			case events.MessageReactionsChanged:
+				s.applyReactions(ctx, typed)
 			case events.ChatOpened:
 				s.openChat.Store(typed.ChatID)
 			}
@@ -147,6 +154,19 @@ func (s *LiveService) forget(ctx context.Context, ev events.MessagesDeleted) {
 	if removed != int64(len(ev.MessageIDs)) {
 		s.log.Debug("live: deleted fewer messages than reported",
 			"chat_id", ev.ChatID, "reported", len(ev.MessageIDs), "removed", removed)
+	}
+}
+
+// applyReactions writes a reaction change into the mirror.
+//
+// A message the mirror does not hold is the ordinary case rather than an
+// error: reactions arrive for the whole account, including chats whose
+// history was never fetched. The store reports it and nothing is logged at a
+// level anybody watches.
+func (s *LiveService) applyReactions(ctx context.Context, ev events.MessageReactionsChanged) {
+	if err := s.store.SetReactions(ctx, ev.ChatID, ev.MessageID, ev.Reactions); err != nil {
+		s.log.Debug("live: reactions not stored",
+			"chat_id", ev.ChatID, "message_id", ev.MessageID, "err", err)
 	}
 }
 

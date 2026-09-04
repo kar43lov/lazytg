@@ -60,6 +60,20 @@ type MessagesDeleted struct {
 
 func (MessagesDeleted) eventMarker() {}
 
+// MessageReactionsChanged is emitted when the reactions on a message change —
+// somebody added one, took one back, or this account did from another device.
+//
+// It carries the whole set rather than a delta. Telegram sends the complete
+// list in updateMessageReactions, and reconstructing a delta from it only to
+// re-apply it would invent a chance to get the counts wrong.
+type MessageReactionsChanged struct {
+	ChatID    int64
+	MessageID int64
+	Reactions []domain.Reaction
+}
+
+func (MessageReactionsChanged) eventMarker() {}
+
 // MessageEdited is emitted when a message's text has been rewritten and the
 // mirror already agrees. Panes redraw the one row rather than reloading the
 // conversation: an edit changes a single message, and a reload would move the

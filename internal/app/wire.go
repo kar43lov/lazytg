@@ -469,6 +469,7 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 		tgclient.NewEditor(client.API(), peerResolverAdapter{peers: a.Peers}),
 		tgclient.NewDeleter(client.API(), peerResolverAdapter{peers: a.Peers}),
 		tgclient.NewForwarder(client.API(), peerResolverAdapter{peers: a.Peers}),
+		tgclient.NewReactor(client.API(), peerResolverAdapter{peers: a.Peers}),
 		a.Repo, a.Bus, a.Log)
 
 	sender := tgclient.NewSender(client.API(), peerResolverAdapter{peers: a.Peers})
