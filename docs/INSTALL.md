@@ -13,12 +13,13 @@ credentials setup. Verifying release artifacts is documented separately in
 
 ## Available today
 
-> **The only release so far is an alpha**, [v0.1.0-alpha.1](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.1).
+> **Releases are still alphas** — the latest is [v0.1.0-alpha.2](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.2).
 > Its artifacts are real and verifiable — signed archives, `.deb`, `.rpm`,
 > checksums — and `go install` resolves it. **Homebrew is the exception**: the
 > cask is pushed to the tap from stable tags only, so `brew install` has
-> nothing to find until `v0.1.0` proper. Treat everything here as first-build
-> software: the pipeline that produced it had never run before that tag.
+> nothing to find until `v0.1.0` proper. Treat everything here as early
+> software: two releases so far, and the client behind them has met a real
+> Telegram account on five occasions.
 
 | Method                                     | Best for                                     | Available |
 |--------------------------------------------|----------------------------------------------|-----------|
@@ -125,14 +126,14 @@ the archive above.
 
 ## `.deb` (Debian, Ubuntu, Mint)
 
-> Available from [v0.1.0-alpha.1](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.1)
-> onward — an alpha, and the first build this pipeline ever produced.
+> Available from [v0.1.0-alpha.2](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.2)
+> onward — an alpha: the pipeline works, the client behind it is young.
 
 
 ```sh
 # pick the right arch — amd64 is most common, arm64 for Raspberry Pi 4+ / Ampere
 ARCH=amd64
-VERSION=0.1.0-alpha.1        # the only tag published so far
+VERSION=0.1.0-alpha.2        # latest tag; see the releases page
 curl -fsSLO "https://github.com/kar43lov/lazytg/releases/download/v${VERSION}/lazytg_${VERSION}_linux_${ARCH}.deb"
 sudo dpkg -i "lazytg_${VERSION}_linux_${ARCH}.deb"
 ```
@@ -144,13 +145,13 @@ The package places the binary at `/usr/bin/lazytg` and copies `LICENSE` +
 
 ## `.rpm` (Fedora, RHEL, openSUSE)
 
-> Available from [v0.1.0-alpha.1](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.1)
-> onward — an alpha, and the first build this pipeline ever produced.
+> Available from [v0.1.0-alpha.2](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.2)
+> onward — an alpha: the pipeline works, the client behind it is young.
 
 
 ```sh
 ARCH=amd64
-VERSION=0.1.0-alpha.1        # the only tag published so far
+VERSION=0.1.0-alpha.2        # latest tag; see the releases page
 sudo dnf install "https://github.com/kar43lov/lazytg/releases/download/v${VERSION}/lazytg_${VERSION}_linux_${ARCH}.rpm"
 # or, on zypper distros:
 # sudo zypper install <same URL>
@@ -162,8 +163,8 @@ Same layout as the `.deb`.
 
 ## Manual binary archive
 
-> Available from [v0.1.0-alpha.1](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.1)
-> onward — an alpha, and the first build this pipeline ever produced.
+> Available from [v0.1.0-alpha.2](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.2)
+> onward — an alpha: the pipeline works, the client behind it is young.
 
 
 Use this when you want to verify the cosign signature before installing,
@@ -172,7 +173,7 @@ or when no package manager covers your distro.
 ```sh
 ARCH=amd64                              # or arm64
 OS=linux                                # or darwin
-VERSION=0.1.0-alpha.1        # the only tag published so far
+VERSION=0.1.0-alpha.2        # latest tag; see the releases page
 BASE="https://github.com/kar43lov/lazytg/releases/download/v${VERSION}"
 
 curl -fsSLO "${BASE}/lazytg_${VERSION}_${OS}_${ARCH}.tar.gz"
@@ -203,8 +204,8 @@ not produced by this repo's `release.yml`.
 
 ## `go install`
 
-> Available from [v0.1.0-alpha.1](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.1)
-> onward — an alpha, and the first build this pipeline ever produced.
+> Available from [v0.1.0-alpha.2](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.2)
+> onward — an alpha: the pipeline works, the client behind it is young.
 
 
 Requires Go ≥ 1.26.6 (the `go` directive in `go.mod`). The version is not arbitrary: it is the first release without the standard-library vulnerabilities `govulncheck` reports as reachable from this code, two of them in `crypto/tls`.

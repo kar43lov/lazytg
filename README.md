@@ -141,7 +141,7 @@ Anything not on this list is out of scope until it lands here — see the non-go
 
 ## Quickstart
 
-> **The first release is an alpha** ([v0.1.0-alpha.1](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.1)),
+> **Releases are still alphas** (latest: [v0.1.0-alpha.2](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.2)),
 > so signed archives, `.deb`, `.rpm` and `go install` work, while `brew` does not
 > yet: the cask is published from stable tags only. Below are the two paths
 > that need nothing but a terminal — build it yourself, or run a binary someone
@@ -204,15 +204,15 @@ release is tagged; today it has no version to resolve.
 
 ### Pre-built binaries
 
-[v0.1.0-alpha.1](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.1)
+[v0.1.0-alpha.2](https://github.com/kar43lov/lazytg/releases/tag/v0.1.0-alpha.2)
 is on the releases page: archives for `linux` and `darwin` × `amd64`/`arm64`,
 `.deb` and `.rpm`, SHA256 checksums, and cosign keyless signatures (a sigstore
 bundle per archive plus a signed `checksums.txt`). Verification recipes are in
 [docs/VERIFY.md](docs/VERIFY.md).
 
-Alpha means what it says: this is the first build the pipeline has ever
-produced, and the client behind it has had one live session. Homebrew is not
-served from it — the cask goes to the tap on stable tags only.
+Alpha means what it says: the client behind it has had five live sessions, and
+every one of them found something the test suite did not. Homebrew is not
+served from these builds — the cask goes to the tap on stable tags only.
 
 ### Encrypted database (deferred past v0.1)
 
