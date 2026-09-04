@@ -32,8 +32,11 @@ const sendTimeoutSeconds = 10
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch typed := msg.(type) {
 	case SetChatMsg:
-		m.chatID = typed.ChatID
-		m.replyTo = nil
+		// The draft goes with the chat it was written for: before this
+		// the box simply kept its contents, so a half-written message
+		// followed the user into somebody else's conversation and left
+		// on the next Enter.
+		m.switchChat(typed.ChatID)
 		// The pending-draft tracker is per-chat: switching chats means
 		// the user has moved on and any in-flight Failed event for the
 		// previous chat must not re-populate the new composer with

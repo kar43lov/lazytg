@@ -108,6 +108,11 @@ type Model struct {
 	// emoji is non-nil while a `:shortcode` completion is cycling. See
 	// emoji.go.
 	emoji *emojiCompletion
+
+	// drafts holds what was half-written in each chat, so switching
+	// conversations does not carry a message to the wrong person. See
+	// drafts.go.
+	drafts map[int64]draft
 }
 
 // inFlightDraft is the state the input pane needs to rebuild a textarea
