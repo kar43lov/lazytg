@@ -303,3 +303,23 @@ func (a App) applyFolderKey(k tea.KeyPressMsg) (App, tea.Cmd, bool) {
 	}
 	return a, nil, false
 }
+
+// cmdOpenEmojiPicker asks the app to show the picker. Routed as a message
+// rather than flipping the field here so the gesture behaves like every other
+// overlay open and is testable from outside.
+func cmdOpenEmojiPicker() tea.Cmd {
+	return func() tea.Msg { return openEmojiPickerMsg{} }
+}
+
+type openEmojiPickerMsg struct{}
+
+// insertEmoji puts a picked character into the composer and leaves the focus
+// there, because the next thing the user does is keep typing.
+func (a App) insertEmoji(char string) (tea.Model, tea.Cmd) {
+	if char == "" {
+		return a, nil
+	}
+	updated, cmd := a.input.Update(input.InsertTextMsg{Text: char})
+	a.input = updated
+	return a.setFocus(FocusInput), cmd
+}

@@ -34,11 +34,18 @@ type Keymap struct {
 	PrevFolder  key.Binding
 	ShowImage   key.Binding
 	MarkMessage key.Binding
-	CopyMessage key.Binding
-	EditMessage key.Binding
-	DeleteMsg   key.Binding
-	Attach      key.Binding
-	Quit        key.Binding
+	EmojiPicker key.Binding
+	// CompleteEmoji shares its key with FocusNext on purpose. Tab means
+	// "finish what I am typing" everywhere a shell or an editor is
+	// involved, and it only reaches the composer when there is a
+	// `:shortcode` under the cursor to finish — otherwise it cycles focus
+	// as before. Rebinding either one leaves the other alone.
+	CompleteEmoji key.Binding
+	CopyMessage   key.Binding
+	EditMessage   key.Binding
+	DeleteMsg     key.Binding
+	Attach        key.Binding
+	Quit          key.Binding
 }
 
 // Default returns the built-in emacs-flavoured keymap.
@@ -62,6 +69,14 @@ func Default() Keymap {
 		OpenEditor: key.NewBinding(
 			key.WithKeys("ctrl+e"),
 			key.WithHelp("ctrl+e", "open editor"),
+		),
+		EmojiPicker: key.NewBinding(
+			key.WithKeys("alt+e"),
+			key.WithHelp("alt+e", "emoji picker"),
+		),
+		CompleteEmoji: key.NewBinding(
+			key.WithKeys("tab"),
+			key.WithHelp("tab", "complete :emoji"),
 		),
 		ToggleHelp: key.NewBinding(
 			key.WithKeys("?"),

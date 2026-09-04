@@ -104,6 +104,10 @@ type Model struct {
 	// editing is non-nil while the composer is rewriting a message that
 	// already exists rather than composing a new one. See edit.go.
 	editing *editTarget
+
+	// emoji is non-nil while a `:shortcode` completion is cycling. See
+	// emoji.go.
+	emoji *emojiCompletion
 }
 
 // inFlightDraft is the state the input pane needs to rebuild a textarea

@@ -41,6 +41,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// matching localID and silently no-ops.
 		m.inFlight = make(map[string]inFlightDraft)
 		return m, nil
+	case InsertTextMsg:
+		if typed.Text != "" {
+			m.textarea.InsertString(typed.Text)
+			m.clearEmojiCompletion()
+		}
+		return m, nil
 	case SetReplyMsg:
 		m.replyTo = typed.Msg
 		return m, nil
@@ -80,6 +86,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if cmd, handled := m.handleChord(typed); handled {
 			return m, cmd
 		}
+		// Any key that is not another completion press ends the cycle:
+		// whatever emoji is in the box is now part of the message, and a
+		// later Tab should start from what is typed rather than resume a
+		// walk the user has moved on from.
+		m.clearEmojiCompletion()
 	}
 
 	var cmd tea.Cmd
@@ -108,6 +119,12 @@ func (m *Model) handleChord(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, true
 	case key.Matches(k, m.keymap.Reply):
 		return m.requestReply(), true
+	case key.Matches(k, m.keymap.CompleteEmoji):
+		// Tab reaches the composer only when the app decided the
+		// composer wants it — see App.emojiCompletionPending. If the
+		// completion finds nothing the key is not consumed, so Tab still
+		// cycles focus when there is no shortcode under the cursor.
+		return nil, m.completeEmoji()
 	case key.Matches(k, m.keymap.OpenEditor):
 		return m.requestEditor(), true
 	case isHistoryPrev(k):

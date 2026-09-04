@@ -11,6 +11,7 @@ import (
 	"github.com/kar43lov/lazytg/internal/core/events"
 	"github.com/kar43lov/lazytg/internal/core/search"
 	"github.com/kar43lov/lazytg/internal/ui/input"
+	"github.com/kar43lov/lazytg/internal/ui/overlay"
 	"github.com/kar43lov/lazytg/internal/ui/palette"
 	"github.com/kar43lov/lazytg/internal/ui/panes/attach"
 	"github.com/kar43lov/lazytg/internal/ui/panes/chats"
@@ -178,6 +179,13 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, cmd := a.palette.Update(msg)
 		a.palette = updated
 		return a, cmd
+	case openEmojiPickerMsg:
+		a.emojiPicker = a.emojiPicker.Open()
+		return a, nil
+	case overlay.EmojiPickedMsg:
+		return a.insertEmoji(m.Char)
+	case overlay.EmojiClosedMsg:
+		return a, nil
 	case attach.OpenedMsg:
 		return a.openAttach(m)
 	case attach.ClosedMsg:
@@ -217,6 +225,12 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if a.attach.Visible {
 		updated, cmd := a.attach.Update(msg)
 		a.attach = updated
+		return a, cmd
+	}
+
+	if a.emojiPicker.Visible() {
+		updated, cmd := a.emojiPicker.Update(msg)
+		a.emojiPicker = updated
 		return a, cmd
 	}
 
@@ -1113,6 +1127,7 @@ func (a App) applySizes() App {
 	a.search = a.search.SetSize(a.width, a.height)
 	a.palette = a.palette.SetSize(a.width, a.height)
 	a.attach = a.attach.SetSize(a.width, a.height)
+	a.emojiPicker = a.emojiPicker.SetSize(a.width, a.height)
 	return a
 }
 
@@ -1175,6 +1190,8 @@ func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 			return cmd, true
 		}
 		return nil, true
+	case !a.chats.IsFilterActive() && key.Matches(k, a.keymap.EmojiPicker):
+		return cmdOpenEmojiPicker(), true
 	case attachAllowed && key.Matches(k, a.keymap.Attach):
 		if cmd, ok := a.cmdOpenAttach(); ok {
 			return cmd, true
@@ -1184,6 +1201,14 @@ func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		return cmdNextChat(), true
 	case key.Matches(k, a.keymap.PrevChat):
 		return cmdPrevChat(), true
+	case a.focus == FocusInput && key.Matches(k, a.keymap.CompleteEmoji) && a.input.EmojiPrefix() != "":
+		// Tab belongs to the composer while there is a `:shortcode` under
+		// the cursor to finish, and to the focus cycler the rest of the
+		// time. Falling through rather than handling it here keeps the
+		// decision in one place: the composer answers whether it has
+		// something to complete, and if it turns out it has not, the key
+		// goes on to do what it always did.
+		return nil, false
 	case key.Matches(k, a.keymap.FocusNext):
 		return cmdNextFocus(), true
 	case key.Matches(k, a.keymap.FocusPrev):

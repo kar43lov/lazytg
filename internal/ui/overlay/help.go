@@ -105,6 +105,8 @@ func (h Help) rows() []row {
 		{"prev folder", h.Keymap.PrevFolder},
 		{"show image inline", h.Keymap.ShowImage},
 		{"mark message", h.Keymap.MarkMessage},
+		{"emoji picker", h.Keymap.EmojiPicker},
+		{"complete :emoji", h.Keymap.CompleteEmoji},
 		{"copy message(s)", h.Keymap.CopyMessage},
 		{"edit message", h.Keymap.EditMessage},
 		{"delete message(s)", h.Keymap.DeleteMsg},

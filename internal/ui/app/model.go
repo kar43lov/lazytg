@@ -254,6 +254,10 @@ type App struct {
 	// confirm is the modal that stands in front of a deletion.
 	confirm overlay.Confirm
 
+	// emojiPicker is the browse-and-pick half of emoji entry; the
+	// composer's `:shortcode` completion is the other half.
+	emojiPicker overlay.EmojiPicker
+
 	// pendingDelete remembers what a confirmation is about while the
 	// modal is up. Held here rather than in the modal because the modal
 	// is a widget that knows about keys and text, not about messages.
@@ -378,6 +382,7 @@ func New(deps Deps) App {
 		actions:           deps.Actions,
 		confirm:           overlay.NewConfirm(),
 		imageProtocol:     graphics.Detect(nil),
+		emojiPicker:       overlay.NewEmojiPicker(deps.Keymap),
 		historyGate:       make(chan struct{}, maxConcurrentHistoryRequests),
 		inFlightDownloads: newDownloadRegistry(),
 		preSearchFocus:    -1,

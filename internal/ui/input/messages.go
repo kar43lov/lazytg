@@ -77,3 +77,10 @@ type SendFailedMsg struct {
 	ReplyToMsg *domain.Message
 	Err        error
 }
+
+// InsertTextMsg puts a string into the composer at the cursor.
+//
+// It exists for the emoji picker, which runs as an overlay and has no handle
+// on the textarea. Routed as a message rather than as a method call so the
+// composer stays the only thing that edits its own buffer.
+type InsertTextMsg struct{ Text string }
