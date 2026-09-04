@@ -470,7 +470,10 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 		tgclient.NewDeleter(client.API(), peerResolverAdapter{peers: a.Peers}),
 		tgclient.NewForwarder(client.API(), peerResolverAdapter{peers: a.Peers}),
 		tgclient.NewReactor(client.API(), peerResolverAdapter{peers: a.Peers}),
-		a.Repo, a.Bus, a.Log)
+		a.Repo, a.Bus, a.Log).
+		// Forwarding creates messages, so it goes through the same guard
+		// as text and media rather than around it.
+		WithRateLimiter(a.SendGuard)
 
 	sender := tgclient.NewSender(client.API(), peerResolverAdapter{peers: a.Peers})
 	a.Sender = coresync.NewSendService(senderAdapter{sender: sender}, outgoingStoreAdapter{repo: a.Repo}, a.Bus, a.Log, coresync.SendConfig{}).

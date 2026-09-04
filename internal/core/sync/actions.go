@@ -79,6 +79,7 @@ type ActionService struct {
 	deleter   MessageDeleter
 	forwarder MessageForwarder
 	reactor   MessageReactor
+	limiter   RateLimiter
 	store     ActionStore
 	bus       EventPublisher
 	log       *slog.Logger
@@ -121,6 +122,11 @@ func (s *ActionService) Forward(ctx context.Context, fromChatID, toChatID int64,
 	}
 	if len(ids) == 0 {
 		return nil
+	}
+	if s.limiter != nil {
+		if err := s.limiter.Wait(ctx); err != nil {
+			return fmt.Errorf("forward: %w", err)
+		}
 	}
 	return s.forwarder.Forward(ctx, fromChatID, toChatID, ids, dropAuthor)
 }
@@ -224,6 +230,23 @@ func (s *ActionService) React(ctx context.Context, chatID, messageID int64, emot
 		Reactions: reactions,
 	})
 	return nil
+}
+
+// WithRateLimiter installs the send-side throttle in front of forwarding.
+//
+// Forwarding is a send: it creates messages in another chat, and it is the
+// third way this client can do that after text and media. The guard is
+// documented as covering sends, so a path that creates messages without
+// passing through it makes the documentation wrong — which is the specific
+// failure mode this project has been bitten by before.
+//
+// Editing, deleting and reacting are deliberately not gated. They act on
+// messages that already exist, each is one request per deliberate keypress,
+// and putting a token bucket in front of "undo my reaction" would make the
+// interface feel broken without changing the traffic a human produces.
+func (s *ActionService) WithRateLimiter(limiter RateLimiter) *ActionService {
+	s.limiter = limiter
+	return s
 }
 
 func (s *ActionService) publish(ev events.Event) {

@@ -95,3 +95,33 @@ func TestApplyReactions_DoesNotMutateThePriorModel(t *testing.T) {
 		t.Fatalf("the later model holds %v", after.ReactionsOf(1))
 	}
 }
+
+// A message can carry more reactions than a line can hold, and the count is
+// the honest way to say so.
+func TestReactionRow_CapsHowManyItShows(t *testing.T) {
+	t.Parallel()
+
+	rs := make([]domain.Reaction, 20)
+	for i := range rs {
+		rs[i] = domain.Reaction{Emoticon: string(rune('А' + i)), Count: 1}
+	}
+	row := reactionRow(rs)
+	if !strings.Contains(row, "+12") {
+		t.Fatalf("no count of the hidden ones: %q", row)
+	}
+	if strings.Contains(row, string(rune('А'+maxShownReactions))) {
+		t.Fatalf("more than the cap was drawn: %q", row)
+	}
+}
+
+// The emoticon is a string on the wire, not a character: nothing stops a
+// server putting a paragraph in it. Control characters are handled by
+// safetext; length is the part it does not answer.
+func TestReactionRow_TruncatesAnAbsurdEmoticon(t *testing.T) {
+	t.Parallel()
+
+	row := reactionRow([]domain.Reaction{{Emoticon: strings.Repeat("x", 500), Count: 1}})
+	if len([]rune(row)) > 40 {
+		t.Fatalf("a 500-character reaction rendered %d runes", len([]rune(row)))
+	}
+}

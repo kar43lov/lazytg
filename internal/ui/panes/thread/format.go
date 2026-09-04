@@ -230,11 +230,22 @@ func reactionRow(rs []domain.Reaction) string {
 		return ""
 	}
 	parts := make([]string, 0, len(rs))
+	hidden := 0
 	for _, r := range rs {
 		if r.Emoticon == "" {
 			continue
 		}
-		label := safetext.CleanLine(r.Emoticon)
+		if len(parts) == maxShownReactions {
+			hidden = len(rs) - maxShownReactions
+			break
+		}
+		// Both caps are about a string somebody else chose. The count is
+		// capped because a message can carry more reactions than a line
+		// can hold, and the emoticon is truncated because the field is a
+		// string on the wire, not a character — nothing stops a server
+		// putting a paragraph in it. Control characters are already gone
+		// by then; length is the part CleanLine does not answer.
+		label := truncRunes(safetext.CleanLine(r.Emoticon), maxReactionRunes)
 		if r.Count > 1 {
 			label += " " + strconv.Itoa(r.Count)
 		}
@@ -247,8 +258,18 @@ func reactionRow(rs []domain.Reaction) string {
 	if len(parts) == 0 {
 		return ""
 	}
+	if hidden > 0 {
+		parts = append(parts, reactionStyle.Render(fmt.Sprintf(" +%d ", hidden)))
+	}
 	return strings.Join(parts, " ")
 }
+
+// maxShownReactions caps how many reactions a message shows before the rest
+// become a count, and maxReactionRunes how long one may be.
+const (
+	maxShownReactions = 8
+	maxReactionRunes  = 4
+)
 
 // mediaBadge formats a one-line marker like "[📎 report.pdf, 234 KiB]" so
 // the user can see at a glance that the message has an attachment.

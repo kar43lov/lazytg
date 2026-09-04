@@ -373,3 +373,50 @@ func TestActionService_React_OfflineSaysSo(t *testing.T) {
 		t.Fatal("reacting with no client succeeded")
 	}
 }
+
+// blockingLimiter refuses, which is how a test tells "the guard was consulted"
+// from "the guard exists".
+type blockingLimiter struct{ calls int }
+
+func (l *blockingLimiter) Wait(context.Context) error {
+	l.calls++
+	return errors.New("rate limited")
+}
+
+// Forwarding creates messages in another chat. It is the third way this
+// client can create one, and the guard is documented as covering sends — a
+// path around it makes the documentation wrong.
+func TestActionService_ForwardPassesTheSendGuard(t *testing.T) {
+	t.Parallel()
+
+	limiter := &blockingLimiter{}
+	fwd := &fakeForwarder{}
+	svc := NewActionService(nil, nil, fwd, nil, &fakeActionStore{}, nil, nil).WithRateLimiter(limiter)
+
+	if err := svc.Forward(context.Background(), 42, 99, []int64{1}, false); err == nil {
+		t.Fatal("the forward went out despite a refusing limiter")
+	}
+	if limiter.calls != 1 {
+		t.Fatalf("the limiter was consulted %d times", limiter.calls)
+	}
+	if len(fwd.calls) != 0 {
+		t.Fatal("the request reached the wire")
+	}
+}
+
+// Reacting acts on a message that already exists and is one request per
+// deliberate keypress; a token bucket in front of "undo my reaction" would
+// make the interface feel broken without changing what a human produces.
+func TestActionService_ReactIsNotRateLimited(t *testing.T) {
+	t.Parallel()
+
+	limiter := &blockingLimiter{}
+	svc := NewActionService(nil, nil, nil, &fakeReactor{}, &fakeActionStore{}, nil, nil).WithRateLimiter(limiter)
+
+	if err := svc.React(context.Background(), 42, 7, "👍"); err != nil {
+		t.Fatalf("React: %v", err)
+	}
+	if limiter.calls != 0 {
+		t.Fatalf("the limiter was consulted for a reaction")
+	}
+}
