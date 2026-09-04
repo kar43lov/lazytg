@@ -1,6 +1,7 @@
 package chats
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
@@ -30,5 +31,32 @@ func TestNewChatItem_KeepsARealTitle(t *testing.T) {
 	item := NewChatItem(domain.Chat{ID: 1, Type: domain.ChatTypePrivate, Title: "Павел Карлов"}, "")
 	if item.Name() != "Павел Карлов" {
 		t.Fatalf("Name() = %q, want the stored title", item.Name())
+	}
+}
+
+// TestNewChatItem_DoesNotLetAChatNameDriveTheTerminal covers the row a
+// user sees without opening anything. The title and the preview are both
+// written by other people, and the chats pane draws them on every frame —
+// so an escape sequence here reaches the terminal from a conversation the
+// user has never looked at.
+func TestNewChatItem_DoesNotLetAChatNameDriveTheTerminal(t *testing.T) {
+	t.Parallel()
+
+	item := NewChatItem(
+		domain.Chat{ID: 1, Type: domain.ChatTypePrivate, Title: "Ivan\x1b]52;c;cHduZWQ=\x07"},
+		"look\x1b[2J\u202eaway",
+	)
+	for _, field := range []string{item.Name(), item.Title(), item.Description()} {
+		for _, bad := range []string{"\x1b]52", "\x1b[2J", "\u202e"} {
+			if strings.Contains(field, bad) {
+				t.Fatalf("rendered field %q still carries %q", field, bad)
+			}
+		}
+	}
+	if !strings.Contains(item.Name(), "Ivan") {
+		t.Fatalf("cleaning ate the title: %q", item.Name())
+	}
+	if !strings.Contains(item.Description(), "look") {
+		t.Fatalf("cleaning ate the preview: %q", item.Description())
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/kar43lov/lazytg/internal/core/search"
+	"github.com/kar43lov/lazytg/internal/ui/safetext"
 )
 
 // snippetBoldOpen / snippetBoldClose are the markers FTS5 wraps every
@@ -97,9 +98,12 @@ func formatHit(hit search.Hit) string {
 	// than in the thread — the timestamp is the only thing telling two similar
 	// hits apart.
 	meta := fmt.Sprintf("chat=%d  %s", hit.ChatID, hit.Message.Date.Local().Format("2006-01-02 15:04"))
-	snippet := renderSnippet(hit.Snippet)
+	// A hit is one row, and its text comes from whoever wrote the
+	// message — cleaned before it reaches the terminal, see
+	// internal/ui/safetext.
+	snippet := renderSnippet(safetext.CleanLine(hit.Snippet))
 	if snippet == "" {
-		snippet = hit.Message.Text
+		snippet = safetext.CleanLine(hit.Message.Text)
 	}
 	return resultMetaStyle.Render(meta) + "  " + snippet
 }

@@ -8,6 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/ui/safetext"
 )
 
 // replyPreviewMax caps how many runes of the parent message are echoed
@@ -168,7 +169,7 @@ func formatMessageBlock(msg domain.Message, width int, replyTo *domain.Message, 
 		}
 	}
 
-	body := renderInlineMarkdown(msg.Text)
+	body := renderInlineMarkdown(safetext.Clean(msg.Text))
 	body = wrapText(body, width-2)
 	b.WriteString(body)
 	return b.String(), mediaLine
@@ -245,10 +246,13 @@ func mediaLabel(m *domain.MediaInfo) string {
 	case domain.MediaKindAnimation:
 		return "animation"
 	}
-	if m.Filename == "" {
+	// The filename is chosen by the sender and drawn into a terminal, so
+	// it is cleaned on the way to the screen — see internal/ui/safetext.
+	name := safetext.CleanLine(m.Filename)
+	if name == "" {
 		return "(no name)"
 	}
-	return m.Filename
+	return name
 }
 
 // formatDuration renders whole seconds as m:ss, or h:mm:ss once it runs
@@ -309,7 +313,7 @@ var (
 // prints UTC to a user sitting in another zone. Found on the first live smoke —
 // a message sent at 19:32 MSK rendered as [16:32].
 func renderHeader(ts time.Time, author, suffix string) string {
-	head := timeStyle.Render(fmt.Sprintf("[%s]", ts.Local().Format("15:04"))) + " " + nameStyle.Render(author)
+	head := timeStyle.Render(fmt.Sprintf("[%s]", ts.Local().Format("15:04"))) + " " + nameStyle.Render(safetext.CleanLine(author))
 	if suffix != "" {
 		head += " " + suffix
 	}
@@ -364,7 +368,7 @@ func resolveAuthor(msg domain.Message, chatID int64, private bool, names map[int
 // runes so a long quoted block does not blow up the visible row count
 // for a single reply.
 func formatReplyHint(replyTo domain.Message) string {
-	preview := truncRunes(replyTo.Text, replyPreviewMax)
+	preview := truncRunes(safetext.CleanLine(replyTo.Text), replyPreviewMax)
 	return replyStyle.Render("↳ replying to: " + preview)
 }
 

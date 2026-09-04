@@ -83,6 +83,13 @@ func (o *Opener) Command() []string { return append([]string(nil), o.command...)
 // assumed: a relative path would resolve against lazytg's working
 // directory rather than the download root, and a path that begins with a
 // dash would be read by the viewer as a flag.
+//
+// What is *not* checked is that the path lies inside the download root,
+// because today it always does: DownloadService is the only caller, and
+// it builds every path through FileStore. A second caller would change
+// that — if one appears, the check belongs here rather than in it, since
+// the argument would then be reachable from message content and this is
+// the function that hands it to a program.
 func (o *Opener) Open(ctx context.Context, path string) error {
 	if o == nil || len(o.command) == 0 {
 		return ErrNoOpener

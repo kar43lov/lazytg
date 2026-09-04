@@ -544,3 +544,47 @@ func TestFormatMessage_BadgeNamesTheKindAndDuration(t *testing.T) {
 		})
 	}
 }
+
+// TestFormatMessage_DoesNotLetTheSenderDriveTheTerminal covers the whole
+// rendered block rather than one field, because every string in it comes
+// from somebody else: the body, the filename on the badge, and the text
+// echoed in the reply hint. lazytg copies to the clipboard with OSC 52,
+// which proves the terminal honours OSC — a sequence reaching the screen
+// from a message is not a cosmetic problem.
+//
+// stripANSI removes the escapes lipgloss itself emits, so the assertion
+// is made against the raw output: what survives here would reach the
+// terminal verbatim.
+func TestFormatMessage_DoesNotLetTheSenderDriveTheTerminal(t *testing.T) {
+	t.Parallel()
+
+	msg := domain.Message{
+		ID:     1,
+		ChatID: 7,
+		FromID: 42,
+		Date:   time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC),
+		Text:   "before\x1b]52;c;cHduZWQ=\x07after",
+		Media: &domain.MediaInfo{
+			Kind:     domain.MediaKindDocument,
+			FileID:   9,
+			Filename: "photo\x1b[2J\u202egnp.dnammoc",
+			Size:     1024,
+		},
+	}
+	parent := domain.Message{ID: 0, Text: "parent\x1b[31mtext"}
+
+	out := FormatMessage(msg, 80, &parent)
+	for _, bad := range []string{"\x1b]52", "\x1b[2J", "\u202e", "\x1b[31m"} {
+		if strings.Contains(out, bad) {
+			t.Fatalf("rendered block still carries %q:\n%s", bad, out)
+		}
+	}
+	// The visible text must survive the cleaning — a filter that ate the
+	// message would pass the assertion above and be useless.
+	plain := stripANSI(out)
+	for _, want := range []string{"before", "after", "photo", "parent"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("cleaning dropped %q from the block:\n%s", want, plain)
+		}
+	}
+}
