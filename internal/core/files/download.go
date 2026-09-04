@@ -112,19 +112,17 @@ func (s *DownloadService) Download(ctx context.Context, chatID int64, chatTitle 
 		return cached, nil
 	}
 
-	finalPath := s.store.Path(chatTitle, info.Filename)
-	tmpPath := finalPath + ".partial"
-	if err := s.store.EnsureDir(finalPath); err != nil {
-		s.failure(info.FileID, fmt.Errorf("ensure dir: %w", err))
-		return "", err
-	}
-	// O_TRUNC because a stale .partial from a previous failed run would
-	// otherwise be appended to and produce a corrupt file.
-	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, s.store.FilePerm()) //nolint:gosec
+	// Reserve, not Path: Telegram filenames collide constantly (every
+	// phone video is "video.mp4"), and the dedup cache above has already
+	// established that this file id is new — so writing to an existing
+	// path would overwrite a different attachment. Reserve claims a free
+	// name and hands back the .partial handle it created exclusively.
+	finalPath, f, err := s.store.Reserve(chatTitle, info.Filename)
 	if err != nil {
-		s.failure(info.FileID, fmt.Errorf("open tmp: %w", err))
+		s.failure(info.FileID, fmt.Errorf("reserve path: %w", err))
 		return "", err
 	}
+	tmpPath := finalPath + ".partial"
 	// Enforce 0o600 on the .partial unconditionally so an in-flight
 	// download is not world-readable while bytes stream in. open()
 	// honours umask, which can widen the bits up to 0o644 — chmod the

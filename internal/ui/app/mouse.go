@@ -68,6 +68,21 @@ func (a App) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			}
 			return a, tea.SetClipboard(text)
 		}
+		// A click on the attachment badge opens the attachment — the
+		// gesture the badge advertises. It is restricted to that one
+		// line so the rest of a message with a photo in it can still be
+		// pointed at, selected and dragged like any other.
+		if target, ok := a.thread.MediaClickAt(x, y); ok {
+			a.thread = a.thread.SetCursor(target.ID)
+			if cmd, ok := a.cmdOpenCursorMedia(); ok {
+				return a, cmd
+			}
+			return a, nil
+		}
+		// A plain click puts the cursor on the message under the
+		// pointer, so the mouse and the arrow keys address the same
+		// thing: press "o" after clicking and you open what you clicked.
+		a.thread, _ = a.thread.CursorAt(x, y)
 		updated, started := a.thread.StartSelection(x, y)
 		a.thread = updated
 		// The pane's own title row starts nothing: focus moved there, and that

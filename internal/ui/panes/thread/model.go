@@ -80,6 +80,11 @@ type Model struct {
 	// arriving mid-drag becomes visible when the drag ends.
 	dragCache *renderedThread
 
+	// cursorID is the message the user has singled out — the one reply,
+	// download and open act on. Held as an id rather than an index
+	// because everything under it moves; see cursor.go.
+	cursorID int64
+
 	// authorNames maps a sender id to a display name, supplied by the app from
 	// the chat list. Private tells resolveAuthor it may treat "not the peer" as
 	// "the reader"; both are refreshed by SetDirectory when a chat is opened.
@@ -445,21 +450,34 @@ func (m Model) renderContent() (string, []blockSpan) {
 	spans := make([]blockSpan, 0, len(m.messages)+len(m.outgoing))
 	width := m.viewport.Width()
 	line := 0
-	appendBlock := func(rendered string) {
+	appendBlock := func(rendered string, id int64, mediaLine int) {
 		if b.Len() > 0 {
 			b.WriteString("\n\n")
 			line += 2
 		}
 		b.WriteString(rendered)
 		height := strings.Count(rendered, "\n") + 1
-		spans = append(spans, blockSpan{start: line, end: line + height})
+		if mediaLine >= 0 {
+			mediaLine += line
+		}
+		spans = append(spans, blockSpan{start: line, end: line + height, id: id, mediaLine: mediaLine})
 		line += height - 1
 	}
+	cursorID := m.cursorID
+	if cursorID == 0 && len(m.messages) > 0 {
+		// An unplaced cursor is drawn on the newest message rather than
+		// left invisible: the media chords already act there, and a
+		// marker that only appears after the first arrow key would make
+		// the first press look like it did something else.
+		cursorID = m.messages[len(m.messages)-1].ID
+	}
 	for _, msg := range m.messages {
-		appendBlock(formatMessageAs(msg, width, nil, resolveAuthor(msg, m.chatID, m.private, m.authorNames)))
+		rendered, mediaLine := formatMessageBlock(msg, width, nil,
+			resolveAuthor(msg, m.chatID, m.private, m.authorNames), msg.ID == cursorID)
+		appendBlock(rendered, msg.ID, mediaLine)
 	}
 	for _, out := range m.outgoing {
-		appendBlock(RenderOptimistic(out))
+		appendBlock(RenderOptimistic(out), 0, -1)
 	}
 	return b.String(), spans
 }
@@ -597,21 +615,6 @@ func (m Model) LoadJumpWindow(chatID int64, messages []domain.Message, scrollToI
 		return m
 	}
 	return m.ScrollTo(scrollToID, around)
-}
-
-// LatestMediaMessage returns the most recent message in the thread
-// that carries downloadable media, or nil when the thread is empty or
-// has no media-bearing rows. Stage 3 wires the Ctrl-D chord through
-// this helper so the app can drive a download without holding a
-// per-message cursor (cursor lands in v0.2).
-func (m Model) LatestMediaMessage() *domain.Message {
-	for i := len(m.messages) - 1; i >= 0; i-- {
-		if m.messages[i].Media != nil {
-			out := m.messages[i]
-			return &out
-		}
-	}
-	return nil
 }
 
 // loadCmd returns a tea.Cmd that fetches the next page from repo and

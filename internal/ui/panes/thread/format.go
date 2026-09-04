@@ -36,6 +36,15 @@ var nameStyle = lipgloss.NewStyle().Bold(true)
 // visually below the headline without competing with the body text.
 var replyStyle = lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("8"))
 
+// cursorMark and cursorStyle draw the per-message cursor. A glyph rather
+// than a highlighted row: the thread already uses reverse video for the
+// text selection, and two different things wearing the same paint is how
+// a user stops trusting either. Cyan (ANSI 6) survives an 8-colour
+// terminal and does not collide with the grey used for metadata.
+const cursorMark = "▸"
+
+var cursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+
 // boldStyle / italicStyle / codeStyle drive the simple-markdown inline
 // pass. Code uses dim grey on the default background — a real background
 // fill would clash with the surrounding pane lipgloss border.
@@ -58,20 +67,46 @@ func FormatMessage(msg domain.Message, width int, replyTo *domain.Message) strin
 // formatMessageAs is FormatMessage with the author label decided by the caller,
 // which is how the pane substitutes a real name for the numeric id.
 func formatMessageAs(msg domain.Message, width int, replyTo *domain.Message, author string) string {
+	block, _ := formatMessageBlock(msg, width, replyTo, author, false)
+	return block
+}
+
+// formatMessageBlock renders one message and reports which of its lines
+// carries the media badge, counting from the top of the block, or -1 when
+// there is none.
+//
+// The line number is returned rather than re-derived by the caller because
+// only this function knows the layout: whether a reply hint took a line above
+// the badge, whether the badge is there at all. A caller that counted lines
+// itself would be a second copy of the layout, and the drift would show up as
+// a click opening the wrong thing — or nothing.
+//
+// cursor draws the marker that says "this is the message the keyboard is
+// pointing at". It sits in front of the header rather than indenting the whole
+// block: the body stays where it was, so nothing about wrapping, selection
+// columns or the golden snapshots moves when the cursor passes over a message.
+func formatMessageBlock(msg domain.Message, width int, replyTo *domain.Message, author string, cursor bool) (string, int) {
 	if width < minBodyWidth {
 		width = minBodyWidth
 	}
 
 	var b strings.Builder
+	if cursor {
+		b.WriteString(cursorStyle.Render(cursorMark) + " ")
+	}
 	b.WriteString(renderHeader(msg.Date, author, ""))
 	b.WriteByte('\n')
+	line := 1
 
 	if replyTo != nil {
 		b.WriteString(formatReplyHint(*replyTo))
 		b.WriteByte('\n')
+		line++
 	}
 
+	mediaLine := -1
 	if badge := mediaBadge(msg.Media); badge != "" {
+		mediaLine = line
 		b.WriteString(badge)
 		if msg.Text != "" {
 			b.WriteByte('\n')
@@ -81,10 +116,10 @@ func formatMessageAs(msg domain.Message, width int, replyTo *domain.Message, aut
 	body := renderInlineMarkdown(msg.Text)
 	body = wrapText(body, width-2)
 	b.WriteString(body)
-	return b.String()
+	return b.String(), mediaLine
 }
 
-// mediaBadge formats a one-line marker like "[📎 report.pdf, 234 KB]" so
+// mediaBadge formats a one-line marker like "[📎 report.pdf, 234 KiB]" so
 // the user can see at a glance that the message has an attachment.
 // Returns an empty string when the message has no media; callers can
 // safely concat without nil checks.
@@ -94,22 +129,87 @@ func formatMessageAs(msg domain.Message, width int, replyTo *domain.Message, aut
 // consistent matches user mental model. The rendered prefix is grey
 // italic to signal "metadata, not body content" while the filename
 // stays in normal weight so the eye is drawn to it.
+//
+// What the badge names depends on the kind. A document or a photo has a
+// filename the sender chose, and that is the useful thing to show. A
+// voice message, a video note or a sticker does not: Telegram sends no
+// filename for those, so the name would be one lazytg invented
+// ("voice_5123.ogg"), which says less than the word "voice" and buries
+// the duration behind it. Those show the kind and how long they run.
 func mediaBadge(m *domain.MediaInfo) string {
 	if m == nil {
 		return ""
 	}
-	icon := "📎"
-	if m.Kind == domain.MediaKindPhoto {
-		icon = "🖼"
-	}
-	name := m.Filename
-	if name == "" {
-		name = "(no name)"
+	var parts []string
+	parts = append(parts, mediaLabel(m))
+	if d := formatDuration(m.Duration); d != "" {
+		parts = append(parts, d)
 	}
 	if m.Size > 0 {
-		return mediaStyle.Render("["+icon+" "+name+", "+formatBytes(m.Size)+"]") + " " + hintStyle.Render("ctrl+d to save")
+		parts = append(parts, formatBytes(m.Size))
 	}
-	return mediaStyle.Render("["+icon+" "+name+"]") + " " + hintStyle.Render("ctrl+d to save")
+	badge := mediaStyle.Render("[" + mediaIcon(m.Kind) + " " + strings.Join(parts, ", ") + "]")
+	return badge + " " + hintStyle.Render("o to open, ctrl+d to save")
+}
+
+// mediaIcon picks the glyph that opens the badge. One per kind, because
+// the icon is what the eye catches when scrolling a thread — a wall of
+// identical paperclips is the state this replaced.
+func mediaIcon(kind domain.MediaKind) string {
+	switch kind {
+	case domain.MediaKindPhoto:
+		return "🖼"
+	case domain.MediaKindVideo:
+		return "🎬"
+	case domain.MediaKindVideoNote:
+		return "⏺"
+	case domain.MediaKindVoice:
+		return "🎤"
+	case domain.MediaKindAudio:
+		return "🎵"
+	case domain.MediaKindSticker:
+		return "🙂"
+	case domain.MediaKindAnimation:
+		return "🎞"
+	default:
+		return "📎"
+	}
+}
+
+// mediaLabel returns what the badge should call this attachment: the
+// sender's filename where one exists, and the kind where the filename
+// would be one lazytg made up.
+func mediaLabel(m *domain.MediaInfo) string {
+	switch m.Kind {
+	case domain.MediaKindVideoNote:
+		return "video note"
+	case domain.MediaKindVoice:
+		return "voice"
+	case domain.MediaKindSticker:
+		return "sticker"
+	case domain.MediaKindAnimation:
+		return "animation"
+	}
+	if m.Filename == "" {
+		return "(no name)"
+	}
+	return m.Filename
+}
+
+// formatDuration renders whole seconds as m:ss, or h:mm:ss once it runs
+// past an hour. Zero returns an empty string so the caller can leave the
+// field out entirely rather than print "0:00" against a PDF.
+func formatDuration(seconds int) string {
+	if seconds <= 0 {
+		return ""
+	}
+	h := seconds / 3600
+	m := (seconds % 3600) / 60
+	s := seconds % 60
+	if h > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", h, m, s)
+	}
+	return fmt.Sprintf("%d:%02d", m, s)
 }
 
 // formatBytes renders n as a base-2 size string ("234 KiB", "1.4 MiB").

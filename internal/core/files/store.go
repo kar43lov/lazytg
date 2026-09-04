@@ -139,6 +139,61 @@ func (s *FileStore) Exists(path string) (bool, error) {
 // one place.
 func (s *FileStore) FilePerm() os.FileMode { return filePerm }
 
+// reserveAttempts caps how many "name (n)" variants Reserve will try
+// before giving up. A chat with a thousand identically-named files is
+// not a case worth an unbounded loop, and failing loudly beats spinning.
+const reserveAttempts = 1000
+
+// Reserve picks a free destination for a new download and claims it by
+// creating the matching .partial file exclusively. It returns the final
+// path the caller should rename to, and the open handle to write into.
+//
+// It exists because Telegram's filenames are not unique and are not
+// chosen by the user: every video sent from a phone arrives as
+// "video.mp4", and eight of them in one chat all resolved to the same
+// path. Nothing noticed — the dedup cache is keyed by file id, so a
+// different video is a cache miss and streams happily over the previous
+// one, after which the cache holds two file ids pointing at one file and
+// serves the wrong bytes for the older of them. Observed on a real
+// mirror: eight attachments, one name, one path.
+//
+// So a colliding name gets a " (2)" suffix, browser-style, and the claim
+// is made with O_EXCL rather than by checking first and creating after:
+// two downloads started in the same instant would otherwise both see the
+// name free and both take it. A stale .partial left by a killed process
+// also holds its name, which costs one suffix rather than risking a
+// truncation of bytes another process is still writing.
+func (s *FileStore) Reserve(chatTitle, filename string) (string, *os.File, error) {
+	base := s.Path(chatTitle, filename)
+	if err := s.EnsureDir(base); err != nil {
+		return "", nil, err
+	}
+	dir, name := filepath.Split(base)
+	ext := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, ext)
+
+	for i := 1; i <= reserveAttempts; i++ {
+		candidate := base
+		if i > 1 {
+			candidate = filepath.Join(dir, fmt.Sprintf("%s (%d)%s", stem, i, ext))
+		}
+		if taken, err := s.Exists(candidate); err != nil {
+			return "", nil, err
+		} else if taken {
+			continue
+		}
+		f, err := os.OpenFile(candidate+".partial", os.O_CREATE|os.O_EXCL|os.O_WRONLY, filePerm) //nolint:gosec
+		if err != nil {
+			if errors.Is(err, os.ErrExist) {
+				continue
+			}
+			return "", nil, fmt.Errorf("filestore: open tmp for %q: %w", candidate, err)
+		}
+		return candidate, f, nil
+	}
+	return "", nil, fmt.Errorf("filestore: no free name for %q after %d attempts", base, reserveAttempts)
+}
+
 // sanitizeName replaces every path-special character (/, \, null) and
 // every leading/trailing dot or whitespace with '_'. Empty strings are
 // returned as empty so the caller can pick a fallback. Path traversal

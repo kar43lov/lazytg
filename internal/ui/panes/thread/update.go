@@ -494,7 +494,19 @@ func findOutgoing(list []OutgoingMessage, localID string) (OutgoingMessage, bool
 // row offsets so concurrent applyIncoming (live messages landing
 // between initial load and a scroll) cannot shift the "skip N rows"
 // boundary and produce gaps in displayed history.
+// The line keys move the message cursor rather than the viewport. The
+// pane's unit is a message, not a row: everything the user does here
+// names one — reply to it, save its attachment, open it — so a cursor
+// that walked rows would leave them nothing to name. Page keys, the
+// configurable scroll chords and the wheel still scroll, because those
+// are for covering distance rather than for pointing at something.
 func (m Model) handleKey(k tea.KeyPressMsg) (Model, tea.Cmd) {
+	switch k.String() {
+	case "up", "k":
+		return m.MoveCursor(-1).paginateAfterScroll(nil, false)
+	case "down", "j":
+		return m.MoveCursor(1).paginateAfterScroll(nil, true)
+	}
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(k)
 	return m.paginateAfterScroll(cmd, isScrollDownKey(k))

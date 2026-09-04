@@ -142,28 +142,32 @@ func isFileReferenceExpired(err error) bool {
 }
 
 // buildFileLocation maps a domain.MediaInfo into a gotd
-// InputFileLocationClass. Document and Photo are the only variants
-// supported in v0.1; future variants (encrypted file, secure file)
-// would land here as additional cases.
+// InputFileLocationClass.
+//
+// The split is photo versus everything else, because that is the split
+// MTProto itself makes: a photo is addressed by InputPhotoFileLocation,
+// and a video, voice message, sticker or plain file is a document. It is
+// deliberately not a switch over every MediaKind — the kinds exist to
+// tell the reader what an attachment is, and a new one added there would
+// otherwise fall into a default branch and stop downloading.
 func buildFileLocation(info domain.MediaInfo) (tg.InputFileLocationClass, error) {
-	switch info.Kind {
-	case domain.MediaKindDocument:
-		return &tg.InputDocumentFileLocation{
-			ID:            info.FileID,
-			AccessHash:    info.AccessHash,
-			FileReference: info.FileReference,
-			ThumbSize:     info.ThumbSize,
-		}, nil
-	case domain.MediaKindPhoto:
+	if info.Kind == "" {
+		return nil, fmt.Errorf("downloader: media kind is empty")
+	}
+	if info.Kind.IsPhoto() {
 		return &tg.InputPhotoFileLocation{
 			ID:            info.FileID,
 			AccessHash:    info.AccessHash,
 			FileReference: info.FileReference,
 			ThumbSize:     info.ThumbSize,
 		}, nil
-	default:
-		return nil, fmt.Errorf("downloader: unsupported media kind %q", info.Kind)
 	}
+	return &tg.InputDocumentFileLocation{
+		ID:            info.FileID,
+		AccessHash:    info.AccessHash,
+		FileReference: info.FileReference,
+		ThumbSize:     info.ThumbSize,
+	}, nil
 }
 
 // progressWriter wraps an io.Writer to count bytes and call back the
@@ -205,15 +209,17 @@ func MediaFromMessage(m *tg.Message) *domain.MediaInfo {
 		if !ok {
 			return nil
 		}
+		kind, duration := classifyDocument(doc)
 		return &domain.MediaInfo{
-			Kind:          domain.MediaKindDocument,
+			Kind:          kind,
 			FileID:        doc.ID,
 			AccessHash:    doc.AccessHash,
 			FileReference: doc.FileReference,
 			DC:            doc.DCID,
-			Filename:      documentFilename(doc),
+			Filename:      documentFilename(doc, kind),
 			Size:          doc.Size,
 			MimeType:      doc.MimeType,
+			Duration:      duration,
 		}
 	case *tg.MessageMediaPhoto:
 		photo, ok := v.Photo.(*tg.Photo)
@@ -235,16 +241,86 @@ func MediaFromMessage(m *tg.Message) *domain.MediaInfo {
 	return nil
 }
 
-// documentFilename pulls the user-facing filename from a Document's
-// attribute list. Documents typically carry a DocumentAttributeFilename
-// alongside type-specific attributes (audio, video, sticker). Returns a
-// generic "document_<id>.bin" fallback when no attribute provides one
-// so the on-disk name is at least recognisable per file.
-func documentFilename(doc *tg.Document) string {
+// classifyDocument reads a Document's attribute list and reports what
+// the attachment actually is, plus its duration in whole seconds (zero
+// for kinds that have none).
+//
+// The attributes are a set, not a tag: a round video message carries
+// DocumentAttributeVideo with RoundMessage set, a voice message carries
+// DocumentAttributeAudio with Voice set, and a GIF carries
+// DocumentAttributeAnimated *alongside* the video attribute. So the
+// scan collects what it finds and decides afterwards, most specific
+// first — animated-plus-video is an animation, not a video, and a
+// sticker is a sticker even though it also carries a filename.
+func classifyDocument(doc *tg.Document) (domain.MediaKind, int) {
+	var (
+		video     *tg.DocumentAttributeVideo
+		audio     *tg.DocumentAttributeAudio
+		sticker   bool
+		animation bool
+	)
 	for _, attr := range doc.Attributes {
-		if a, ok := attr.(*tg.DocumentAttributeFilename); ok {
+		switch a := attr.(type) {
+		case *tg.DocumentAttributeVideo:
+			video = a
+		case *tg.DocumentAttributeAudio:
+			audio = a
+		case *tg.DocumentAttributeSticker:
+			sticker = true
+		case *tg.DocumentAttributeAnimated:
+			animation = true
+		}
+	}
+	switch {
+	case sticker:
+		return domain.MediaKindSticker, 0
+	case video != nil && video.RoundMessage:
+		return domain.MediaKindVideoNote, int(video.Duration)
+	case animation:
+		duration := 0
+		if video != nil {
+			duration = int(video.Duration)
+		}
+		return domain.MediaKindAnimation, duration
+	case video != nil:
+		return domain.MediaKindVideo, int(video.Duration)
+	case audio != nil && audio.Voice:
+		return domain.MediaKindVoice, audio.Duration
+	case audio != nil:
+		return domain.MediaKindAudio, audio.Duration
+	default:
+		return domain.MediaKindDocument, 0
+	}
+}
+
+// documentFilename pulls the user-facing filename from a Document's
+// attribute list.
+//
+// The fallback is per kind rather than one generic name, because the
+// kinds without a filename attribute are exactly the ones a user meets
+// most often: Telegram sends no name for a voice message, a video note
+// or a sticker, and "document_5123.bin" tells the reader nothing and
+// gives the system opener no extension to dispatch on. A name built
+// from the kind carries both.
+func documentFilename(doc *tg.Document, kind domain.MediaKind) string {
+	for _, attr := range doc.Attributes {
+		if a, ok := attr.(*tg.DocumentAttributeFilename); ok && a.FileName != "" {
 			return a.FileName
 		}
+	}
+	switch kind {
+	case domain.MediaKindVideoNote:
+		return fmt.Sprintf("video_note_%d.mp4", doc.ID)
+	case domain.MediaKindVideo:
+		return fmt.Sprintf("video_%d.mp4", doc.ID)
+	case domain.MediaKindAnimation:
+		return fmt.Sprintf("animation_%d.mp4", doc.ID)
+	case domain.MediaKindVoice:
+		return fmt.Sprintf("voice_%d.ogg", doc.ID)
+	case domain.MediaKindAudio:
+		return fmt.Sprintf("audio_%d.mp3", doc.ID)
+	case domain.MediaKindSticker:
+		return fmt.Sprintf("sticker_%d.webp", doc.ID)
 	}
 	return fmt.Sprintf("document_%d.bin", doc.ID)
 }

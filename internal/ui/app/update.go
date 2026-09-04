@@ -135,6 +135,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.applySearchJumpLoaded(m)
 	case thread.DownloadRequestedMsg:
 		return a.handleDownloadRequest(m)
+	case thread.OpenRequestedMsg:
+		return a.handleOpenRequest(m)
 	case uisearch.OpenedMsg:
 		return a.openSearch()
 	case uisearch.ClosedMsg:
@@ -342,16 +344,21 @@ func (a App) handleChatSelected(msg chats.ChatSelectedMsg) (tea.Model, tea.Cmd) 
 }
 
 // handleReplyRequest is the app-level resolver for the input pane's
-// RequestReplyMsg → SetReplyMsg dance. We inspect the thread for its
-// most recent message and arm it as the reply target. When the thread
-// is empty (e.g. user pressed Reply before any history loaded) the
-// request is silently dropped.
+// RequestReplyMsg → SetReplyMsg dance. It arms the message under the
+// thread cursor as the reply target. When the thread is empty (e.g. user
+// pressed Reply before any history loaded) the request is silently
+// dropped.
+//
+// This used to take the newest message unconditionally, which was fine
+// only while there was no way to point at another one: answering the
+// message above meant quoting the wrong one and noticing after sending.
+// An untouched cursor still resolves to the newest message, so replying
+// to the last thing said costs the same single keypress it always did.
 func (a App) handleReplyRequest() (tea.Model, tea.Cmd) {
-	msgs := a.thread.Messages()
-	if len(msgs) == 0 {
+	target, ok := a.thread.CursorMessage()
+	if !ok {
 		return a, nil
 	}
-	target := msgs[len(msgs)-1]
 	updatedInput, cmd := a.input.Update(input.SetReplyMsg{Msg: &target})
 	a.input = updatedInput
 	return a, cmd
@@ -902,6 +909,64 @@ func (a App) handleDownloadRequest(req thread.DownloadRequestedMsg) (tea.Model, 
 	return a, nil
 }
 
+// handleOpenRequest downloads the attachment if it is not already on
+// disk and then hands the resulting path to the system viewer.
+//
+// The download comes first because there is nothing to open otherwise,
+// and it is free when the file is already there: DownloadService's dedup
+// cache returns the cached path without touching the network, which is
+// what makes pressing "o" twice cheap.
+//
+// Errors are logged rather than raised into the UI. A viewer that
+// refuses to start is a local configuration problem, and the bus events
+// the download itself publishes already put a failure in the status bar
+// — the case that matters most, since without bytes there is nothing to
+// show.
+func (a App) handleOpenRequest(req thread.OpenRequestedMsg) (tea.Model, tea.Cmd) {
+	if a.downloader == nil {
+		if a.log != nil {
+			a.log.Debug("open: no downloader wired, ignoring gesture")
+		}
+		return a, nil
+	}
+	if a.opener == nil {
+		// Downloading and then not showing anything would look broken.
+		// Fall back to the plain download, which at least saves the file
+		// and reports itself in the status bar.
+		return a.handleDownloadRequest(thread.DownloadRequestedMsg(req))
+	}
+	if a.inFlightDownloads != nil && !a.inFlightDownloads.reserve(req.Media.FileID) {
+		if a.log != nil {
+			a.log.Debug("open: download already in flight, ignoring gesture",
+				"file_id", req.Media.FileID)
+		}
+		return a, nil
+	}
+	dl, opener, log, registry := a.downloader, a.opener, a.log, a.inFlightDownloads
+	fileID := req.Media.FileID
+	go func() {
+		if registry != nil {
+			defer registry.release(fileID)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), downloadTimeout)
+		defer cancel()
+		path, err := dl.Download(ctx, req.ChatID, req.ChatTitle, req.Media)
+		if err != nil {
+			if log != nil {
+				log.Warn("open: download failed",
+					"chat_id", req.ChatID, "message_id", req.MessageID, "err", err)
+			}
+			return
+		}
+		// The viewer outlives this context — cancelling it on the way out
+		// of the download would kill the window the user just opened.
+		if err := opener.Open(context.Background(), path); err != nil && log != nil {
+			log.Warn("open: viewer failed to start", "path", path, "err", err)
+		}
+	}()
+	return a, nil
+}
+
 // chatTitle looks up the current title for the given chat id by
 // scanning the chats pane's loaded items. Returns ok=false when the
 // list is empty or the id isn't present (the latter happens when the
@@ -1015,6 +1080,11 @@ func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 	// 3 v0.1: the chord operates on the latest media-bearing message
 	// in the visible thread; per-message cursor lands in v0.2.
 	downloadAllowed := a.focus != FocusInput && !a.chats.IsFilterActive()
+	// The OpenMedia chord defaults to a bare "o", so it is only live
+	// where nothing is typing: the thread pane. Anywhere else the same
+	// key belongs to the composer or to the chats filter, and a client
+	// that swallows a letter is worse than one without the shortcut.
+	openAllowed := a.focus == FocusThread && !a.chats.IsFilterActive()
 	// Attach chord (Ctrl-U) is allowed from any non-filter focus —
 	// even the input pane, because Ctrl-U "delete to start of line"
 	// in emacs is uncommon enough that hijacking it for "attach
@@ -1030,7 +1100,12 @@ func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 	case paletteAllowed && key.Matches(k, a.keymap.OpenPalette):
 		return cmdOpenPalette(), true
 	case downloadAllowed && key.Matches(k, a.keymap.Download):
-		if cmd, ok := a.cmdDownloadLatestMedia(); ok {
+		if cmd, ok := a.cmdDownloadCursorMedia(); ok {
+			return cmd, true
+		}
+		return nil, true
+	case openAllowed && key.Matches(k, a.keymap.OpenMedia):
+		if cmd, ok := a.cmdOpenCursorMedia(); ok {
 			return cmd, true
 		}
 		return nil, true
@@ -1069,29 +1144,57 @@ func (a App) cmdOpenAttach() (tea.Cmd, bool) {
 	}, true
 }
 
-// cmdDownloadLatestMedia inspects the thread for its most recent
-// message with Media. If found, it returns a tea.Cmd that emits a
-// thread.DownloadRequestedMsg the app routes into the wired
-// FileDownloader. If no media-bearing message exists, returns
-// (nil, false) so the caller can treat the chord as consumed-but-noop
-// instead of falling through and beeping.
-func (a App) cmdDownloadLatestMedia() (tea.Cmd, bool) {
-	target := a.thread.LatestMediaMessage()
-	if target == nil || target.Media == nil {
+// cmdDownloadCursorMedia asks the thread which attachment the user
+// means — the one under the cursor, or the nearest one above it — and
+// returns a tea.Cmd emitting a thread.DownloadRequestedMsg for it. When
+// the thread holds no attachment at all it returns (nil, false) so the
+// caller can treat the chord as consumed-but-noop instead of beeping.
+//
+// Before the cursor existed this always took the newest attachment,
+// which made every earlier one unreachable. An untouched cursor still
+// resolves to the newest, so the chord behaves as it always did until
+// the user moves it.
+func (a App) cmdDownloadCursorMedia() (tea.Cmd, bool) {
+	target, media, title, ok := a.cursorMediaTarget()
+	if !ok {
 		return nil, false
 	}
-	chatID := target.ChatID
-	title, _ := a.chatTitle(chatID)
-	media := *target.Media
-	messageID := target.ID
 	return func() tea.Msg {
 		return thread.DownloadRequestedMsg{
-			ChatID:    chatID,
-			MessageID: messageID,
+			ChatID:    target.ChatID,
+			MessageID: target.ID,
 			ChatTitle: title,
 			Media:     media,
 		}
 	}, true
+}
+
+// cmdOpenCursorMedia is cmdDownloadCursorMedia's twin for the open
+// gesture.
+func (a App) cmdOpenCursorMedia() (tea.Cmd, bool) {
+	target, media, title, ok := a.cursorMediaTarget()
+	if !ok {
+		return nil, false
+	}
+	return func() tea.Msg {
+		return thread.OpenRequestedMsg{
+			ChatID:    target.ChatID,
+			MessageID: target.ID,
+			ChatTitle: title,
+			Media:     media,
+		}
+	}, true
+}
+
+// cursorMediaTarget resolves the attachment a media chord should act on
+// and the chat title the download path needs for its on-disk layout.
+func (a App) cursorMediaTarget() (domain.Message, domain.MediaInfo, string, bool) {
+	target, ok := a.thread.MediaTarget()
+	if !ok || target.Media == nil {
+		return domain.Message{}, domain.MediaInfo{}, "", false
+	}
+	title, _ := a.chatTitle(target.ChatID)
+	return target, *target.Media, title, true
 }
 
 // applyScrollKey checks whether the key matches the configurable

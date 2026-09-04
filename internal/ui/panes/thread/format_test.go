@@ -398,26 +398,12 @@ func TestFormatBytes(t *testing.T) {
 	}
 }
 
-func TestLatestMediaMessage(t *testing.T) {
-	t.Parallel()
-	m := New()
-	if got := m.LatestMediaMessage(); got != nil {
-		t.Fatalf("empty: expected nil, got %+v", got)
-	}
-	// applyLoaded the model with messages including one media row.
-	m.messages = []domain.Message{
-		{ID: 1, ChatID: 1, Date: fixedDate(), Text: "first"},
-		{ID: 2, ChatID: 1, Date: fixedDate(), Media: &domain.MediaInfo{Kind: domain.MediaKindDocument, FileID: 99, Filename: "a.bin"}},
-		{ID: 3, ChatID: 1, Date: fixedDate(), Text: "after-media"},
-	}
-	got := m.LatestMediaMessage()
-	if got == nil {
-		t.Fatalf("expected media message, got nil")
-	}
-	if got.ID != 2 || got.Media == nil || got.Media.FileID != 99 {
-		t.Fatalf("wrong media row: %+v", got)
-	}
-}
+// The thread used to expose LatestMediaMessage for the Ctrl-D chord.
+// MediaTarget replaced it: with an untouched cursor the two agree, and
+// with a moved cursor only MediaTarget answers the question the user is
+// actually asking. Keeping both would have left two functions deciding
+// "which attachment" — the setup where one of them quietly goes wrong.
+// Coverage moved to cursor_test.go.
 
 // TestResolveAuthor covers the sender naming the first live session made
 // unavoidable: every line, including the reader's own, was labelled
@@ -484,5 +470,77 @@ func TestSetDirectory_NamesRenderedMessages(t *testing.T) {
 	}
 	if strings.Contains(view, "user-862242381") {
 		t.Errorf("raw numeric id still rendered:\n%s", view)
+	}
+}
+
+// The badge names what an attachment is, not how it travels. A video
+// note used to render as "[📎 document_5123.bin]" — the icon, the label
+// and the duration are the three things that tell a reader whether the
+// thing above is worth opening.
+func TestFormatMessage_BadgeNamesTheKindAndDuration(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		media domain.MediaInfo
+		want  []string
+		avoid []string
+	}{
+		{
+			name: "video note",
+			media: domain.MediaInfo{
+				Kind: domain.MediaKindVideoNote, FileID: 1,
+				Filename: "video_note_1.mp4", Size: 1258291, Duration: 7,
+			},
+			// The invented filename is noise next to "video note, 0:07".
+			want:  []string{"⏺ video note", "0:07", "1.2 MiB"},
+			avoid: []string{"video_note_1.mp4"},
+		},
+		{
+			name: "voice message",
+			media: domain.MediaInfo{
+				Kind: domain.MediaKindVoice, FileID: 2,
+				Filename: "voice_2.ogg", Size: 30720, Duration: 42,
+			},
+			want:  []string{"🎤 voice", "0:42"},
+			avoid: []string{"voice_2.ogg"},
+		},
+		{
+			name: "long video keeps the sender's filename",
+			media: domain.MediaInfo{
+				Kind: domain.MediaKindVideo, FileID: 3,
+				Filename: "holiday.mp4", Size: 5242880, Duration: 3725,
+			},
+			want: []string{"🎬 holiday.mp4", "1:02:05"},
+		},
+		{
+			name: "a document has no duration cell",
+			media: domain.MediaInfo{
+				Kind: domain.MediaKindDocument, FileID: 4,
+				Filename: "report.pdf", Size: 1024,
+			},
+			want:  []string{"📎 report.pdf"},
+			avoid: []string{"0:00"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := domain.Message{ID: 1, ChatID: 1, FromID: 100, Date: fixedDate(), Media: &tc.media}
+			out := stripANSI(FormatMessage(msg, 60, nil))
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("badge %q is missing %q", out, want)
+				}
+			}
+			for _, avoid := range tc.avoid {
+				if strings.Contains(out, avoid) {
+					t.Errorf("badge %q should not contain %q", out, avoid)
+				}
+			}
+			if !strings.Contains(out, "o to open") {
+				t.Errorf("badge %q does not advertise the open gesture", out)
+			}
+		})
 	}
 }

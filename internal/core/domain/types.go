@@ -112,16 +112,47 @@ type Message struct {
 // human-readable.
 type MediaKind string
 
-// MediaKind values cover the v0.1 supported media variants. Stickers,
-// audio and video are all transported as documents in the MTProto wire
-// format and therefore fall under MediaKindDocument.
+// MediaKind values name what the attachment is to a reader, not how it
+// travels. Everything except a photo is a document on the wire, so the
+// download path keys off IsPhoto rather than off a specific kind — but a
+// thread that renders "video note, 0:07" where it used to render
+// "document_5123.bin" is the difference between a legible conversation
+// and a list of opaque blobs, and a client cannot tell a round video
+// message from an ordinary video without reading the attributes.
+//
+// Rows written before migration 0011 carry "document" for all of these;
+// they keep working and simply render as a generic attachment until the
+// message is fetched again.
 const (
-	// MediaKindDocument is any non-photo attachment (file, voice,
-	// video, sticker, animated webp, etc.).
+	// MediaKindDocument is an attachment with no more specific kind —
+	// a file the sender attached, an archive, a PDF.
 	MediaKindDocument MediaKind = "document"
 	// MediaKindPhoto is a still photo attachment.
 	MediaKindPhoto MediaKind = "photo"
+	// MediaKindVideo is an ordinary video file.
+	MediaKindVideo MediaKind = "video"
+	// MediaKindVideoNote is the round video message Telegram clients
+	// call a "video message" and Russian-speaking users call кружочек:
+	// DocumentAttributeVideo with RoundMessage set.
+	MediaKindVideoNote MediaKind = "video_note"
+	// MediaKindVoice is a voice message: DocumentAttributeAudio with
+	// Voice set.
+	MediaKindVoice MediaKind = "voice"
+	// MediaKindAudio is a music track — audio that is not a voice
+	// message.
+	MediaKindAudio MediaKind = "audio"
+	// MediaKindSticker is a sticker (static or animated).
+	MediaKindSticker MediaKind = "sticker"
+	// MediaKindAnimation is a GIF — MP4 without sound, marked animated.
+	MediaKindAnimation MediaKind = "animation"
 )
+
+// IsPhoto reports whether the kind is transported as a photo rather than
+// as a document. It is the only distinction the download path needs: an
+// InputPhotoFileLocation for a photo, an InputDocumentFileLocation for
+// everything else. Callers must not switch on the specific kind for
+// this — a new kind added above would then silently download as nothing.
+func (k MediaKind) IsPhoto() bool { return k == MediaKindPhoto }
 
 // MediaInfo is the persisted metadata required to render a media message
 // in the thread pane and to download the underlying file via gotd.
@@ -136,6 +167,11 @@ const (
 //
 // ThumbSize is the optional photo size selector ("x", "y", …) passed
 // into InputPhotoFileLocation; empty for documents (always full file).
+//
+// Duration is the playing time in whole seconds for the kinds that have
+// one (video, video note, voice, audio) and zero everywhere else. It is
+// what lets the badge say how long a voice message is before the user
+// spends a download finding out. See migration 0011.
 type MediaInfo struct {
 	Kind          MediaKind
 	FileID        int64
@@ -146,6 +182,7 @@ type MediaInfo struct {
 	Size          int64
 	MimeType      string
 	ThumbSize     string
+	Duration      int
 }
 
 // Peer is the resolved MTProto access metadata for a chat. AccessHash is

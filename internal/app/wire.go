@@ -546,7 +546,11 @@ func (a *App) RunBackground(ctx context.Context) <-chan struct{} {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := a.Degradation.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			// The detector loops until the context ends, so it never
+			// returns a nil error — staticcheck proves it, and the
+			// discarded `err != nil` guard read as if it might. What is
+			// worth logging is an exit for any other reason.
+			if err := a.Degradation.Run(ctx); !errors.Is(err, context.Canceled) {
 				a.Log.Warn("degradation: run exited", "err", err)
 			}
 		}()
