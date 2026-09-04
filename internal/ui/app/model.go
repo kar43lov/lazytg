@@ -19,6 +19,7 @@ import (
 	"github.com/kar43lov/lazytg/internal/core/domain"
 	"github.com/kar43lov/lazytg/internal/core/events"
 	"github.com/kar43lov/lazytg/internal/core/search"
+	"github.com/kar43lov/lazytg/internal/ui/graphics"
 	"github.com/kar43lov/lazytg/internal/ui/input"
 	"github.com/kar43lov/lazytg/internal/ui/keymap"
 	"github.com/kar43lov/lazytg/internal/ui/overlay"
@@ -244,6 +245,12 @@ type App struct {
 	// nil means offline.
 	actions MessageActions
 
+	// imageProtocol is what the terminal can draw, detected once at
+	// construction. ProtocolNone — the ordinary case on a plain xterm or
+	// inside tmux — makes the inline gesture say so rather than painting
+	// base64 into the user's screen.
+	imageProtocol graphics.Protocol
+
 	// confirm is the modal that stands in front of a deletion.
 	confirm overlay.Confirm
 
@@ -370,6 +377,7 @@ func New(deps Deps) App {
 		backfiller:        deps.Backfiller,
 		actions:           deps.Actions,
 		confirm:           overlay.NewConfirm(),
+		imageProtocol:     graphics.Detect(nil),
 		historyGate:       make(chan struct{}, maxConcurrentHistoryRequests),
 		inFlightDownloads: newDownloadRegistry(),
 		preSearchFocus:    -1,

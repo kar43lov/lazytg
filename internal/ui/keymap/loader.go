@@ -54,6 +54,7 @@ func bindingFields(km *Keymap) map[string]*key.Binding {
 		"open_media":   &km.OpenMedia,
 		"next_folder":  &km.NextFolder,
 		"prev_folder":  &km.PrevFolder,
+		"show_image":   &km.ShowImage,
 		"mark_message": &km.MarkMessage,
 		"copy_message": &km.CopyMessage,
 		"edit_message": &km.EditMessage,

@@ -32,6 +32,7 @@ type Keymap struct {
 	OpenMedia   key.Binding
 	NextFolder  key.Binding
 	PrevFolder  key.Binding
+	ShowImage   key.Binding
 	MarkMessage key.Binding
 	CopyMessage key.Binding
 	EditMessage key.Binding
@@ -143,6 +144,13 @@ func Default() Keymap {
 		PrevFolder: key.NewBinding(
 			key.WithKeys("["),
 			key.WithHelp("[", "prev folder"),
+		),
+		// "i" for inline, next to "o" for open — the two answers to "let me
+		// see it": one draws the picture here, the other hands the file to
+		// whatever the system uses.
+		ShowImage: key.NewBinding(
+			key.WithKeys("i"),
+			key.WithHelp("i", "show image inline"),
 		),
 		MarkMessage: key.NewBinding(
 			key.WithKeys(" "),

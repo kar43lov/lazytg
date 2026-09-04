@@ -323,5 +323,11 @@ func (m Model) dropSelection() Model {
 	m.sel = nil
 	m.dragCache = nil
 	m.cursorID = 0
+	m.marked = nil
+	// Drawn images go for a third reason, and the sharpest one: a picture
+	// is not part of the text grid. The terminal placed it at a position,
+	// and a body that now describes a different conversation would have
+	// last chat's photos sitting on top of this one's messages.
+	m.inline = nil
 	return m
 }

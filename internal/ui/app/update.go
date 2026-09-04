@@ -188,6 +188,8 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.cmdSubmitEdit(m)
 	case messageActionsResultMsg:
 		return a.applyActionResult(m), nil
+	case inlineImageReadyMsg:
+		return a.applyInlineImage(m), nil
 	case events.MessageEdited:
 		return a.applyMessageEdited(m.ChatID, m.MessageID, m.Text), nil
 	case chats.SetFoldersMsg:
@@ -365,6 +367,9 @@ func (a App) handleChatSelected(msg chats.ChatSelectedMsg) (tea.Model, tea.Cmd) 
 
 	var cmds []tea.Cmd
 
+	if wipe := a.clearDrawnImagesCmd(); wipe != nil {
+		cmds = append(cmds, wipe)
+	}
 	updatedThread, cmd := a.thread.OpenChat(msg.ChatID)
 	a.thread = updatedThread
 	if cmd != nil {
@@ -627,6 +632,9 @@ func (a App) handleSearchJump(msg uisearch.JumpMsg) (tea.Model, tea.Cmd) {
 			MessageID: messageID,
 			Around:    jumpAround,
 		}
+		if wipe := a.clearDrawnImagesCmd(); wipe != nil {
+			cmds = append(cmds, wipe)
+		}
 		updatedThread, openCmd := a.thread.OpenChat(chatID)
 		a.thread = updatedThread
 		if openCmd != nil {
@@ -837,9 +845,13 @@ func (a App) handlePaletteSelected(msg palette.SelectedMsg) (tea.Model, tea.Cmd)
 	a.pendingScroll = nil
 	a.onChatOpened(chatID)
 
+	wipe := a.clearDrawnImagesCmd()
 	updatedThread, cmd := a.thread.OpenChat(chatID)
 	a.thread = updatedThread
 	cmds := []tea.Cmd{}
+	if wipe != nil {
+		cmds = append(cmds, wipe)
+	}
 	if cmd != nil {
 		cmds = append(cmds, cmd)
 	}

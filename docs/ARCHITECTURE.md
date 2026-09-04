@@ -59,6 +59,7 @@ All packages below ship in the v0.1 branch (Stages 1–3 complete). Stage labels
 | `internal/ui/{search,attach}`    | 3     | Stage 3 overlays (search results + jump, attach file picker).                                                                       | `internal/core` (interfaces)            | `gotd/td`                                |
 | `internal/ui/palette`            | 3     | Command palette L1 (chat switcher with frecency + Unicode-fold).                                                                    | `internal/core` (interfaces)            | `gotd/td`                                |
 | `internal/ui/{input,statusbar,keymap,overlay}` | 2 | Input editor (textarea + emacs bindings + history), status bar, configurable keymap, help overlay.                       | `internal/core` (interfaces)            | `gotd/td`                                |
+| `internal/ui/graphics`           | 4     | Kitty graphics protocol: terminal detection from the environment, scaling a photo into a cell box, and the escapes that draw and delete it. Decides what a terminal *can* do, never *when* to draw. | stdlib only                             | everything else                          |
 | `internal/ui/safetext`           | 3     | Strips terminal control and bidi characters out of anything written by somebody else, on the way to the screen. Every pane that draws a server-supplied string calls it.               | stdlib only                             | everything else                          |
 
 ### The bus drops, so subscribers must not block

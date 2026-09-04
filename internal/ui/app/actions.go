@@ -275,6 +275,8 @@ func (a App) applyMessageActionKey(k tea.KeyPressMsg) (App, tea.Cmd, bool) {
 		return a.cmdEditTarget()
 	case key.Matches(k, a.keymap.DeleteMsg):
 		return a.cmdDeleteTargets()
+	case key.Matches(k, a.keymap.ShowImage):
+		return a.cmdToggleInlineImage()
 	}
 	return a, nil, false
 }

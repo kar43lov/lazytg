@@ -85,6 +85,10 @@ type Model struct {
 	// because everything under it moves; see cursor.go.
 	cursorID int64
 
+	// inline holds pictures drawn under messages, keyed by message id.
+	// See inline.go.
+	inline map[int64]inlineImage
+
 	// marked holds the ids the user has picked out for an action that
 	// takes several — copying a run of messages, deleting them. Ids for
 	// the same reason as the cursor; see marks.go.
@@ -520,6 +524,12 @@ func (m Model) renderContent() (string, []blockSpan) {
 		rendered, mediaLine := formatMessageBlockMarked(msg, width, nil,
 			resolveAuthor(msg, m.chatID, m.private, m.authorNames),
 			msg.ID == cursorID, m.marked[msg.ID])
+		// A drawn picture is appended to its message's block so it moves
+		// with the message and is covered by the same span — a click on it
+		// means that message, which is what the user is pointing at.
+		if block, rows := m.imageBlock(msg.ID); rows > 0 {
+			rendered += "\n" + block
+		}
 		appendBlock(rendered, msg.ID, mediaLine)
 	}
 	for _, out := range m.outgoing {
