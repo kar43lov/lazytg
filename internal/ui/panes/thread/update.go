@@ -220,13 +220,15 @@ func (m Model) applyIncoming(ev events.MessageReceived) (Model, tea.Cmd) {
 		delete(m.pendingServerIDs, ev.MessageID)
 	}
 	m.messages = insertByDate(m.messages, domain.Message{
-		ID:       ev.MessageID,
-		ChatID:   ev.ChatID,
-		FromID:   ev.FromID,
-		Date:     ev.Date,
-		Text:     ev.Text,
-		Media:    ev.Media,
-		Outgoing: ev.Outgoing,
+		ID:        ev.MessageID,
+		ChatID:    ev.ChatID,
+		FromID:    ev.FromID,
+		Date:      ev.Date,
+		Text:      ev.Text,
+		Media:     ev.Media,
+		ReplyTo:   ev.ReplyTo,
+		Reactions: ev.Reactions,
+		Outgoing:  ev.Outgoing,
 	})
 	m.recomputeOldestID()
 	m.viewport.SetContent(m.renderAll())

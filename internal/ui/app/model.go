@@ -304,6 +304,10 @@ type App struct {
 	// selection, cleared when the palette closes with nothing chosen.
 	pendingForward *pendingForward
 
+	// jumpStack is the trail of places a reply-following jump started
+	// from, newest last. See jump.go.
+	jumpStack []jumpOrigin
+
 	// typing is who is composing something in the chat on screen, keyed by
 	// the person, with the moment their indicator goes stale. See typing.go.
 	typing map[int64]typingState

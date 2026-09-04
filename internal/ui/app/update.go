@@ -403,7 +403,7 @@ func (a App) handleChatSelected(msg chats.ChatSelectedMsg) (tea.Model, tea.Cmd) 
 	if wipe := a.clearDrawnImagesCmd(); wipe != nil {
 		cmds = append(cmds, wipe)
 	}
-	a = a.clearTyping()
+	a = a.clearTyping().clearJumpTrail()
 	updatedThread, cmd := a.thread.OpenChat(msg.ChatID)
 	a.thread = updatedThread
 	if cmd != nil {
@@ -764,6 +764,12 @@ func (a App) applySearchJumpLoaded(msg searchJumpLoadedMsg) (tea.Model, tea.Cmd)
 		return a, loadCmd
 	}
 	a.thread = a.thread.LoadJumpWindow(msg.ChatID, msg.Messages, msg.MessageID, jumpAround)
+	// The cursor lands on what was jumped to. Scrolling it into view is
+	// not the same thing: every gesture in the thread acts on the cursor,
+	// so a jump that leaves it behind means the next key acts on a message
+	// that is no longer on screen — and following a chain of replies needs
+	// the cursor to have arrived before the next press.
+	a.thread = a.thread.SetCursor(msg.MessageID)
 	a.pendingScroll = nil
 	// Names, but not focus: a jump lands the user on a specific message to
 	// read, so the thread keeps the cursor. Only the chat-picking paths move
@@ -886,7 +892,7 @@ func (a App) handlePaletteSelected(msg palette.SelectedMsg) (tea.Model, tea.Cmd)
 	a.onChatOpened(chatID)
 
 	wipe := a.clearDrawnImagesCmd()
-	a = a.clearTyping()
+	a = a.clearTyping().clearJumpTrail()
 	updatedThread, cmd := a.thread.OpenChat(chatID)
 	a.thread = updatedThread
 	cmds := []tea.Cmd{}

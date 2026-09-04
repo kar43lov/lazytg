@@ -40,6 +40,16 @@ type MessageReceived struct {
 	// a 1:1 dialog, where Telegram sends no from_id, and leaving the unread
 	// counter alone for messages the reader wrote.
 	Outgoing bool
+	// ReplyTo is the message this one answers, or 0. Carried because the
+	// pane renders the quoted line from it and the "go to what this
+	// answers" gesture needs it: without the field a reply that arrived
+	// live had no parent until the chat was reopened and the row came back
+	// from storage with one.
+	ReplyTo int64
+	// Reactions is what the message already carries. Almost always empty on
+	// arrival — a message is reacted to after it lands — but a message
+	// pulled in by gap recovery can arrive with them.
+	Reactions []domain.Reaction
 }
 
 func (MessageReceived) eventMarker() {}

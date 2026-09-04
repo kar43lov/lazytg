@@ -235,3 +235,26 @@ func applyCursorSelection(m Model, content string, spans []blockSpan) string {
 	}
 	return applySelection(content, spans, *m.sel)
 }
+
+// Has reports whether a message id is currently rendered.
+//
+// Callers use it to tell "the cursor did not move" from "the message is not
+// on this page", which are two different answers and need two different
+// responses: one is a no-op, the other is a reason to go and load it.
+func (m Model) Has(id int64) bool {
+	for _, msg := range m.messages {
+		if msg.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// FocusMessage puts the cursor on a message and scrolls it into view,
+// reporting whether the message was there to focus.
+func (m Model) FocusMessage(id int64) (Model, bool) {
+	if !m.Has(id) {
+		return m, false
+	}
+	return m.SetCursor(id), true
+}

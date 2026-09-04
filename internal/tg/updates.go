@@ -186,6 +186,8 @@ func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass) {
 		Media:     MediaFromMessage(m),
 		ChatType:  chatTypeFromPeer(m.PeerID),
 		Outgoing:  m.Out,
+		ReplyTo:   replyToOf(m),
+		Reactions: ReactionsFromMessage(m),
 	})
 }
 

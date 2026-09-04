@@ -107,6 +107,8 @@ func (h Help) rows() []row {
 		{"mark message", h.Keymap.MarkMessage},
 		{"forward message", h.Keymap.ForwardMessage},
 		{"react to message", h.Keymap.ReactMessage},
+		{"go to replied", h.Keymap.JumpToReply},
+		{"jump back", h.Keymap.JumpBack},
 		{"emoji picker", h.Keymap.EmojiPicker},
 		{"complete :emoji", h.Keymap.CompleteEmoji},
 		{"copy message(s)", h.Keymap.CopyMessage},

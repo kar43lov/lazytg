@@ -206,13 +206,15 @@ func (s *LiveService) persist(ctx context.Context, ev events.MessageReceived) {
 		}
 	}
 	if err := s.store.SaveMessage(ctx, domain.Message{
-		ID:       ev.MessageID,
-		ChatID:   ev.ChatID,
-		FromID:   ev.FromID,
-		Date:     ev.Date,
-		Text:     ev.Text,
-		Media:    ev.Media,
-		Outgoing: ev.Outgoing,
+		ID:        ev.MessageID,
+		ChatID:    ev.ChatID,
+		FromID:    ev.FromID,
+		Date:      ev.Date,
+		Text:      ev.Text,
+		Media:     ev.Media,
+		Outgoing:  ev.Outgoing,
+		ReplyTo:   ev.ReplyTo,
+		Reactions: ev.Reactions,
 	}); err != nil {
 		s.log.Error("live: save message failed",
 			"chat_id", ev.ChatID, "message_id", ev.MessageID, "err", err)

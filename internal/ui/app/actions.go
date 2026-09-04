@@ -275,6 +275,10 @@ func (a App) applyMessageActionKey(k tea.KeyPressMsg) (App, tea.Cmd, bool) {
 		return a.cmdEditTarget()
 	case key.Matches(k, a.keymap.DeleteMsg):
 		return a.cmdDeleteTargets()
+	case key.Matches(k, a.keymap.JumpToReply):
+		return a.cmdJumpToParent()
+	case key.Matches(k, a.keymap.JumpBack):
+		return a.cmdJumpBack()
 	case key.Matches(k, a.keymap.ReactMessage):
 		return a.cmdReactToCursor()
 	case key.Matches(k, a.keymap.ForwardMessage):

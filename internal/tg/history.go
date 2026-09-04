@@ -96,14 +96,7 @@ func decodeHistory(res tg.MessagesMessagesClass, chatID int64, limit int) []doma
 }
 
 func convertMessage(m *tg.Message, chatID int64) domain.Message {
-	var replyTo int64
-	if rt, ok := m.GetReplyTo(); ok {
-		if hdr, ok := rt.(*tg.MessageReplyHeader); ok {
-			if id, ok := hdr.GetReplyToMsgID(); ok {
-				replyTo = int64(id)
-			}
-		}
-	}
+	replyTo := replyToOf(m)
 	return domain.Message{
 		ID:        int64(m.ID),
 		ChatID:    chatID,
@@ -115,6 +108,32 @@ func convertMessage(m *tg.Message, chatID int64) domain.Message {
 		Outgoing:  m.Out,
 		Reactions: ReactionsFromMessage(m),
 	}
+}
+
+// replyToOf names the message m answers, or 0.
+//
+// Pulled out of the history converter because the live path needs the same
+// answer: a reply that arrived as an update had no parent until the chat was
+// reopened, so the quoted line and the "go to what this answers" gesture
+// both went missing on exactly the messages a user is most likely to try
+// them on — the ones that just came in.
+func replyToOf(m *tg.Message) int64 {
+	if m == nil {
+		return 0
+	}
+	rt, ok := m.GetReplyTo()
+	if !ok {
+		return 0
+	}
+	hdr, ok := rt.(*tg.MessageReplyHeader)
+	if !ok {
+		return 0
+	}
+	id, ok := hdr.GetReplyToMsgID()
+	if !ok {
+		return 0
+	}
+	return int64(id)
 }
 
 // senderOf names the sender of m, filling in what the wire format leaves out.

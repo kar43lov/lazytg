@@ -36,6 +36,8 @@ type Keymap struct {
 	MarkMessage    key.Binding
 	ForwardMessage key.Binding
 	ReactMessage   key.Binding
+	JumpToReply    key.Binding
+	JumpBack       key.Binding
 	EmojiPicker    key.Binding
 	// CompleteEmoji shares its key with FocusNext on purpose. Tab means
 	// "finish what I am typing" everywhere a shell or an editor is
@@ -79,6 +81,14 @@ func Default() Keymap {
 		ReactMessage: key.NewBinding(
 			key.WithKeys("r"),
 			key.WithHelp("r", "react to message"),
+		),
+		JumpToReply: key.NewBinding(
+			key.WithKeys("p"),
+			key.WithHelp("p", "go to the replied message"),
+		),
+		JumpBack: key.NewBinding(
+			key.WithKeys("ctrl+o"),
+			key.WithHelp("ctrl+o", "back where you jumped from"),
 		),
 		EmojiPicker: key.NewBinding(
 			key.WithKeys("alt+e"),

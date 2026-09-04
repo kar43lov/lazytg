@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -33,7 +34,9 @@ func TestBus_FanOutDeliversToAllSubscribers(t *testing.T) {
 			if !ok {
 				t.Fatalf("subscriber %d: expected MessageReceived, got %T", i, got)
 			}
-			if gotMsg != want {
+			// reflect.DeepEqual rather than ==: the event carries a
+			// reaction slice, which is not comparable.
+			if !reflect.DeepEqual(gotMsg, want) {
 				t.Fatalf("subscriber %d: got %+v, want %+v", i, gotMsg, want)
 			}
 		case <-time.After(time.Second):

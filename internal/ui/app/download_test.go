@@ -104,6 +104,11 @@ func injectMessages(m thread.Model, msgs []domain.Message) thread.Model {
 			// editing refuses somebody else's message, and the author
 			// label in a 1:1 dialog has nothing else to go on.
 			Outgoing: msg.Outgoing,
+			// The reply pointer rides along for the same reason as the
+			// direction: the pane renders the quoted line from it, and a
+			// fixture that drops it hides every defect in that path.
+			ReplyTo:   msg.ReplyTo,
+			Reactions: msg.Reactions,
 		}
 		updated, _ := m.Update(ev)
 		m = updated

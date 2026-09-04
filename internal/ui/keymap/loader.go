@@ -58,6 +58,8 @@ func bindingFields(km *Keymap) map[string]*key.Binding {
 		"mark_message":    &km.MarkMessage,
 		"forward_message": &km.ForwardMessage,
 		"react_message":   &km.ReactMessage,
+		"jump_to_reply":   &km.JumpToReply,
+		"jump_back":       &km.JumpBack,
 		"emoji_picker":    &km.EmojiPicker,
 		"complete_emoji":  &km.CompleteEmoji,
 		"copy_message":    &km.CopyMessage,
