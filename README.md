@@ -32,6 +32,7 @@ Think `lazygit` ergonomics, but for Telegram conversations: keyboard-driven, sin
 - ⚡ **p95 ≈ 47 ms** on a 100k-message synthetic corpus, measured on an M4 (`make bench` gates at the 100 ms product SLA; the CI gate is looser because a shared runner is ~2.4× slower — see [docs/PERFORMANCE.md](docs/PERFORMANCE.md)).
 - 🔐 **Local-first** — sessions in an `age`-encrypted file whose passphrase lives in the OS keyring, permissions audit refuses `0644` secrets.
 - 🛡️ **Built-in ban-risk floor** — 10 msg/sec send rate-limit guard covers both text and media; not user-tunable upward.
+- 🧼 **Nothing a stranger sends can drive your terminal** — message text, chat titles, author names, filenames and search snippets are stripped of escape sequences and bidi overrides before they are drawn, so a filename cannot rewrite your clipboard or disguise a `.command` as a `.png`.
 - ⌨️ **Emacs/readline keymap by default**, fully overridable through `keymap.toml` (vim-style modal bindings deferred to v0.2).
 - 📥📤 **First-class file transfer** — a per-message cursor picks the attachment, `Ctrl+D` saves it, `o` (or a click on its badge) opens it in the system viewer, `Ctrl+U` attaches a file, all with progress in the status bar. Photos, videos, voice messages and round video messages are named and timed in the thread rather than shown as anonymous blobs.
 - 🧭 **Command palette (`Ctrl+Space`)** with frecency-ranked chat switcher and Unicode-fuzzy matching ("Алёна" === "Алена").
@@ -41,7 +42,7 @@ Think `lazygit` ergonomics, but for Telegram conversations: keyboard-driven, sin
 
 ## Status
 
-**Alpha — release-candidate.** All four stages of the [v0.1.0 roadmap](docs/plans/lazytg-v0.1.0.md) have shipped (foundation, TUI, search/files/security, release pipeline). `runTUI` now opens the MTProto session before building the UI and syncs the dialog list, so the TUI reads live Telegram data; every failure path (no session, no network, revoked authorisation, connect timeout) degrades to the cached-only view rather than refusing to start. Four live runs against a real account have happened (18-19.08.2026): the basic path, a connection cut with every interface down, and two runs of ordinary use. Every one of them found defects no test had — see CHANGELOG `Known gaps` for what is still open and `docs/MANUAL_SMOKE.md` for the checklist those runs corrected.
+**Alpha — release-candidate.** All four stages of the [v0.1.0 roadmap](docs/plans/lazytg-v0.1.0.md) have shipped (foundation, TUI, search/files/security, release pipeline). `runTUI` now opens the MTProto session before building the UI and syncs the dialog list, so the TUI reads live Telegram data; every failure path (no session, no network, revoked authorisation, connect timeout) degrades to the cached-only view rather than refusing to start. Five live runs against a real account have happened (18-19.08.2026 and 04.09.2026): the basic path, a connection cut with every interface down, two runs of ordinary use, and one over attachments. Every one of them found defects no test had — the last one found two attachments overwriting each other on disk, which no report would have surfaced because the symptom is the cache quietly serving the wrong file. See CHANGELOG `Known gaps` for what is still open and `docs/MANUAL_SMOKE.md` for the checklist those runs corrected.
 
 Current capabilities:
 
@@ -55,7 +56,7 @@ Current capabilities:
 - Two-way sync with your other devices: opening a chat marks it read on Telegram, and messages or chats deleted elsewhere disappear here too — including from the search index.
 - Dialog sync on start (`messages.getDialogs`, paced and capped at 5 pages / 500 chats by design) plus history backfill when a chat is opened.
 - Local search (FTS5 trigram) with operators `from:@user`, `in:#chat`, `before:`/`after:`, `has:file`, `"phrase"`, `-exclusion` (`docs/SEARCH.md`).
-- Search overlay (`/`), command palette (Ctrl+Space), file download (Ctrl+D), file upload (Ctrl+U).
+- Search overlay (`/`), command palette (Ctrl+Space), a message cursor with per-message download (Ctrl+D) and open-in-viewer (`o`), file upload (Ctrl+U).
 - DB-size monitor + permissions audit + 10 msg/s send rate-limit guard (covers both text and media sends).
 
 ### Keybindings (TUI)
