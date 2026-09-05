@@ -200,11 +200,21 @@ func (p EmojiPicker) remember(char string) EmojiPicker {
 // double-width in every terminal font, and the third column is the gap that
 // keeps two of them from reading as one.
 func (p EmojiPicker) cols() int {
-	w := p.boxWidth() - 2
+	w := p.innerWidth()
 	if w < 3 {
 		return 1
 	}
 	return w / 3
+}
+
+// innerWidth is the room a line of content actually has. boxWidth is the
+// outer measure — lipgloss counts the border and the padding inside it — so
+// text laid out against boxWidth minus the border alone overflows by the
+// padding, and lipgloss wraps the overflow onto a line of its own: a grid
+// sized for twenty emoji drew nineteen and orphaned the twentieth on the
+// next row, every row. Seen live on 05.09.2026.
+func (p EmojiPicker) innerWidth() int {
+	return p.boxWidth() - 4
 }
 
 func (p EmojiPicker) boxWidth() int {
@@ -294,11 +304,15 @@ func (p EmojiPicker) header() string {
 		parts = append(parts, " "+c+" ")
 	}
 	line := strings.Join(parts, "")
-	if lipgloss.Width(line) > p.boxWidth()-2 {
+	if lipgloss.Width(line) > p.innerWidth() {
 		line = "[" + cats[active] + "]"
 	}
 	return line
 }
+
+// pickerHint is the key legend under the grid. Kept under the narrowest box
+// this picker draws so it never wraps onto a second line.
+const pickerHint = "type to search · ←↑↓→ · tab category · enter · esc"
 
 func (p EmojiPicker) footer(entries []emoji.Entry, cursor int) string {
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
@@ -310,8 +324,8 @@ func (p EmojiPicker) footer(entries []emoji.Entry, cursor int) string {
 	if e.Category != recentCategory {
 		name = fmt.Sprintf("%s  :%s:", e.Name, e.Code)
 	}
-	return dim.Render(truncate(name, p.boxWidth()-2)) + "\n" +
-		dim.Render("type to search · ←↑↓→ · tab category · enter insert · esc close")
+	return dim.Render(truncate(name, p.innerWidth())) + "\n" +
+		dim.Render(truncate(pickerHint, p.innerWidth()))
 }
 
 func clampIndex(i, n int) int {

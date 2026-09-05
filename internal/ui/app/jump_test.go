@@ -201,12 +201,15 @@ func TestQuickChatKey_SaysWhenThereIsNoSuchChat(t *testing.T) {
 }
 
 // The composer is where digits are typed.
-func TestQuickChatKey_StaysOutOfTheComposer(t *testing.T) {
+// Opening a chat moves the focus into the composer, so a shortcut that
+// refused to fire from there worked exactly once per session: alt+2 opened a
+// chat, alt+4 afterwards did nothing. Seen live on 05.09.2026.
+func TestQuickChatKey_WorksFromTheComposer(t *testing.T) {
 	t.Parallel()
 
 	a := newAppForJumps(t)
 	a = a.setFocus(FocusInput)
-	if _, _, handled := a.applyQuickChatKey(keyChord('3', tea.ModAlt)); handled {
-		t.Fatal("the shortcut fired while the user was typing")
+	if _, _, handled := a.applyQuickChatKey(keyChord('2', tea.ModAlt)); !handled {
+		t.Fatal("alt+2 was ignored because the composer had the focus")
 	}
 }

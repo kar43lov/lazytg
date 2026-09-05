@@ -344,8 +344,15 @@ func (a App) insertEmoji(char string) (tea.Model, tea.Cmd) {
 // digit would be nine near-identical entries in the file and in the help, to
 // express one rule. The modifier is what a user would want to change, and
 // that is a smaller thing to add later than nine bindings are to remove.
+//
+// Live from the composer as well, like alt+n and alt+p: opening a chat puts
+// the focus there, so a shortcut that stops at the composer works exactly
+// once — the first live run pressed alt+2, then alt+4, and the second one
+// went nowhere. Alt+digit is not something a person types, so nothing is
+// swallowed. The chat-list filter is the one place it stays out of: there
+// the digit may well be part of what is being searched for.
 func (a App) applyQuickChatKey(k tea.KeyPressMsg) (App, tea.Cmd, bool) {
-	if a.focus == FocusInput || a.chats.IsFilterActive() {
+	if a.chats.IsFilterActive() {
 		return a, nil, false
 	}
 	if k.Mod != tea.ModAlt {

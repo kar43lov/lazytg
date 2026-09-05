@@ -853,7 +853,11 @@ func (a App) openPalette() (tea.Model, tea.Cmd) {
 	if a.prePaletteFocus < 0 {
 		a.prePaletteFocus = a.focus
 	}
-	updated, cmd := a.palette.Open()
+	placeholder := "switch chat…"
+	if a.pendingForward != nil {
+		placeholder = "forward to…"
+	}
+	updated, cmd := a.palette.SetPlaceholder(placeholder).Open()
 	a.palette = updated
 	return a, cmd
 }

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kar43lov/lazytg/internal/ui/keymap"
 )
@@ -201,5 +203,34 @@ func TestEmojiPicker_ArrowsStayInsideTheGrid(t *testing.T) {
 	}
 	if p.cursor != 0 {
 		t.Fatalf("cursor at %d after walking off the left edge", p.cursor)
+	}
+}
+
+// A grid that is one cell too wide for the box does not overflow the border:
+// lipgloss wraps the last emoji of every row onto a row of its own, and the
+// picker shows nineteen across, then one, then nineteen. Every full row has
+// to carry exactly as many emoji as the picker believes fit.
+func TestEmojiPicker_RowsHoldExactlyTheColumnsItCounts(t *testing.T) {
+	t.Parallel()
+
+	p := NewEmojiPicker(keymap.Default()).Open().SetSize(140, 42)
+	cols := p.cols()
+	if cols < 2 {
+		t.Fatalf("cols = %d, the check needs a real grid", cols)
+	}
+	lines := strings.Split(ansi.Strip(p.View()), "\n")
+	// Line 0 is the border, 1 the category header, 2 blank; the grid
+	// starts at 3 and the first two rows are full for any category with
+	// more than 2*cols entries, which Smileys has.
+	for _, i := range []int{3, 4} {
+		fields := strings.Fields(strings.Trim(lines[i], "│ "))
+		if len(fields) != cols {
+			t.Fatalf("row %d holds %d emoji, picker counted %d columns:\n%s", i, len(fields), cols, lines[i])
+		}
+	}
+	for i, l := range lines {
+		if w := lipgloss.Width(l); w != p.boxWidth() {
+			t.Fatalf("line %d is %d wide, box is %d:\n%s", i, w, p.boxWidth(), l)
+		}
 	}
 }

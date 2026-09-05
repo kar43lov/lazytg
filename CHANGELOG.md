@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`i` had to be built against the fact that a picture is not part of the text grid.** The terminal anchors it where the escape was written, and repainting those cells with spaces does not remove it. So every image carries an id derived from its message id and its escape opens by deleting that id's own placements — without which a thread that scrolls (or merely repaints a line when the cursor moves) leaves a copy behind and the photo multiplies down the pane. Closing one picture sends the delete for its id, switching chats sends the delete for all of them, and both go out through `tea.Raw` rather than through a frame, because a frame can only paint cells. `q=2` on every sequence stops the terminal acknowledging each draw back up stdin, where the TUI's input parser would have to swallow it.
 
+### Fixed
+
+- **`Alt+1` … `Alt+9` worked exactly once.** Opening a chat puts the focus into the composer, and the shortcut refused to fire from there — so `Alt+2` opened a chat and `Alt+4` a moment later did nothing, with no notice. Found on the first scripted run of the branch, in the first minute. The guard was a leftover from the bare-digit design it replaced: an alt-chord is not something a person types, so there is nothing to swallow, and `Alt+N`/`Alt+P` had been global from the start. The chat-list filter is the one place it still stays out of, where a digit may be part of the search.
+- **The emoji picker orphaned the last emoji of every row.** The grid counted columns against the box width minus the border, but lipgloss keeps the padding inside that width too, so twenty emoji were laid out where nineteen fit and the twentieth wrapped onto a row of its own — nineteen, one, nineteen, one, down the whole panel. The key legend under the grid wrapped for the same reason. One inner-width measure now drives all three.
+- **The chat picker said "switch chat…" while a forward was waiting on it.** It is the same list, opened for a different act, and the prompt now says which.
+
 ## [0.1.0-alpha.2] - 2026-09-04
 
 Everything below came out of live runs against a real account rather than out of the test suite — two ordinary sessions, one over attachments, and the security pass that followed. The pattern is now consistent enough to state plainly: coverage in `core` sits around 81% and catches logic, but not what happens between the process and the server, and least of all what happens when a fixture fills in a field the server never sends.
