@@ -247,14 +247,14 @@ func TestConvertMessage_SavedMessagesAreYours(t *testing.T) {
 	m := &tg.Message{ID: 1, PeerID: &tg.PeerUser{UserID: 8385}, Date: 1, Message: "note to self"}
 	m.FromID = &tg.PeerUser{UserID: 8385}
 	m.Flags.Set(8)
-	if got := convertMessage(m, 8385, self); !got.Outgoing {
+	if got := convertMessage(m, 8385, self, nil); !got.Outgoing {
 		t.Fatalf("a message in the self chat is not the account's: %+v", got)
 	}
-	if got := convertMessage(m, 8385, nil); got.Outgoing {
+	if got := convertMessage(m, 8385, nil, nil); got.Outgoing {
 		t.Fatalf("without the id, the flag alone decided: %+v", got)
 	}
 	other := &tg.Message{ID: 2, PeerID: &tg.PeerUser{UserID: 42}, Date: 1, Message: "from a friend"}
-	if got := convertMessage(other, 42, self); got.Outgoing {
+	if got := convertMessage(other, 42, self, nil); got.Outgoing {
 		t.Fatalf("a message in another chat became the account's: %+v", got)
 	}
 }

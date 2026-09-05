@@ -112,9 +112,11 @@ func injectMessages(m thread.Model, msgs []domain.Message) thread.Model {
 			Reactions: msg.Reactions,
 			// Formatting and the link behind words live in the entities;
 			// a fixture without them hides every path that reads them.
-			Entities: msg.Entities,
-			EditDate: msg.EditDate,
-			Buttons:  msg.Buttons,
+			Entities:  msg.Entities,
+			EditDate:  msg.EditDate,
+			Buttons:   msg.Buttons,
+			Forwarded: msg.Forwarded,
+			Pinned:    msg.Pinned,
 		}
 		updated, _ := m.Update(ev)
 		m = updated

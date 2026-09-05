@@ -177,7 +177,7 @@ func (s *Sender) announce(ctx context.Context, updates tg.UpdatesClass, peer dom
 		header.SetReplyToMsgID(replyTo)
 		m.SetReplyTo(header)
 	}
-	s.echo.publishMessage(m, false)
+	s.echo.publishMessage(m, false, nil)
 }
 
 // peerToWire names a chat the way a message's peer_id does.

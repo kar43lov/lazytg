@@ -67,6 +67,10 @@ func (s *recordingStore) SetPresence(_ context.Context, userID int64, online boo
 
 // IncrementUnread satisfies coresync.LiveStore and records which chats had
 // their badge raised, which is what the unread tests assert on.
+func (s *recordingStore) SetPinnedMessages(_ context.Context, chatID int64, ids []int64, pinned bool) error {
+	return s.fact(fmt.Sprintf("pinned %d=%v/%v", chatID, ids, pinned))
+}
+
 func (s *recordingStore) SetReadOutbox(_ context.Context, chatID, maxID int64) error {
 	return s.fact(fmt.Sprintf("read-outbox %d=%d", chatID, maxID))
 }
@@ -689,6 +693,7 @@ func TestLiveService_PersistsEntities(t *testing.T) {
 	bus.Publish(events.MessageReceived{
 		ChatID: 1, MessageID: 100, Text: "hello", FromID: 7,
 		Date: time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC), Entities: want, Buttons: keys,
+		Forwarded: &domain.Forward{From: "News"}, Pinned: true,
 	})
 
 	deadline := time.After(time.Second)
@@ -699,6 +704,9 @@ func TestLiveService_PersistsEntities(t *testing.T) {
 			}
 			if len(got[0].Buttons) != 1 || got[0].Buttons[0][0].Text != "Go" {
 				t.Fatalf("saved message lost its keyboard: %+v", got[0].Buttons)
+			}
+			if got[0].Forwarded == nil || got[0].Forwarded.From != "News" || !got[0].Pinned {
+				t.Fatalf("saved message lost its origin or pin: %+v", got[0])
 			}
 			break
 		}
@@ -760,8 +768,9 @@ func TestLiveService_RecordsTheListFacts(t *testing.T) {
 	bus.Publish(events.ChatUnreadMark{ChatID: 42, Unread: true})
 	bus.Publish(events.PeerPresence{UserID: 42, Online: true})
 	bus.Publish(events.ChatReadOutbox{ChatID: 42, MaxID: 17})
-	waitFor(t, "six facts to be recorded", func() bool { return len(store.factsSnapshot()) == 6 })
-	want := []string{"unread 42=0", "pinned 42=true", "muted 42=" + fmt.Sprint(until.Unix()), "mark 42=true", "presence 42=true/-62135596800", "read-outbox 42=17"}
+	bus.Publish(events.MessagesPinned{ChatID: 42, IDs: []int64{5}, Pinned: true})
+	waitFor(t, "seven facts to be recorded", func() bool { return len(store.factsSnapshot()) == 7 })
+	want := []string{"unread 42=0", "pinned 42=true", "muted 42=" + fmt.Sprint(until.Unix()), "mark 42=true", "presence 42=true/-62135596800", "read-outbox 42=17", "pinned 42=[5]/true"}
 	if got := store.factsSnapshot(); fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("recorded %v, want %v", got, want)
 	}

@@ -194,6 +194,11 @@ func formatMessageBlockKeys(msg domain.Message, width int, replyTo *domain.Messa
 	b.WriteString(renderHeader(msg.Date, author, headerSuffix(msg, readMax)))
 	b.WriteByte('\n')
 	line := 1
+	if origin := forwardedLine(msg.Forwarded); origin != "" {
+		b.WriteString(origin)
+		b.WriteByte('\n')
+		line++
+	}
 
 	if replyTo != nil {
 		b.WriteString(formatReplyHint(*replyTo))
@@ -462,6 +467,21 @@ var (
 // yourself, where every message is yours and nobody else reads it.
 const noTicks int64 = -1
 
+// pinnedMark sits in the header of a pinned message.
+const pinnedMark = "📌"
+
+// forwardedLine is what every client draws above forwarded words: who
+// wrote them. The name is somebody else's string and is cleaned like one.
+func forwardedLine(f *domain.Forward) string {
+	if f == nil {
+		return ""
+	}
+	if name := safetext.CleanLine(f.From); name != "" {
+		return timeStyle.Render("↪ forwarded from " + truncRunes(name, 60))
+	}
+	return timeStyle.Render("↪ forwarded")
+}
+
 // readStyle paints the second tick, the one that says the message was
 // read. Blue, the way the official clients draw it.
 var readStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
@@ -477,7 +497,10 @@ func renderHeader(ts time.Time, author, suffix string) string {
 // headerSuffix is what follows the author in the header: the tick or two
 // on a message you sent, then "edited" when it applies.
 func headerSuffix(msg domain.Message, readMax int64) string {
-	parts := make([]string, 0, 2)
+	parts := make([]string, 0, 3)
+	if msg.Pinned {
+		parts = append(parts, pinnedMark)
+	}
 	if t := ticks(msg, readMax); t != "" {
 		parts = append(parts, t)
 	}

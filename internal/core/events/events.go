@@ -61,7 +61,11 @@ type MessageReceived struct {
 	// Buttons is the keyboard a bot put under the message. Carried on an
 	// edit too: replacing the keyboard is how most bots answer a press.
 	Buttons [][]domain.Button
-	Edited  bool
+	// Forwarded is where the message came from when somebody forwarded
+	// it; Pinned is the flag the pinned bar is drawn from.
+	Forwarded *domain.Forward
+	Pinned    bool
+	Edited    bool
 	// EditDate is when the rewrite happened; zero for a message never
 	// edited.
 	EditDate time.Time
@@ -441,6 +445,15 @@ type ChatReadInbox struct {
 }
 
 func (ChatReadInbox) eventMarker() {}
+
+// MessagesPinned says messages of a chat were pinned, or unpinned.
+type MessagesPinned struct {
+	ChatID int64
+	IDs    []int64
+	Pinned bool
+}
+
+func (MessagesPinned) eventMarker() {}
 
 // DraftChanged carries a draft the server holds for a chat — typed on
 // another device, or read from the dialog page at start. Text is markup;

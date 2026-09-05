@@ -263,6 +263,13 @@ func TestService_JumpContext_CarriesEntities(t *testing.T) {
 			Text:     "msg",
 			Entities: es,
 			Buttons:  keys,
+			Forwarded: func() *domain.Forward {
+				if i == 3 {
+					return &domain.Forward{From: "News"}
+				}
+				return nil
+			}(),
+			Pinned: i == 3,
 		}); err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -281,5 +288,8 @@ func TestService_JumpContext_CarriesEntities(t *testing.T) {
 	}
 	if keys := msgs[target].Buttons; len(keys) != 1 || keys[0][0].Text != "Go" {
 		t.Fatalf("jumped-to message lost its keyboard: %+v", keys)
+	}
+	if f := msgs[target].Forwarded; f == nil || f.From != "News" || !msgs[target].Pinned {
+		t.Fatalf("jumped-to message lost its origin or pin: %+v", msgs[target])
 	}
 }

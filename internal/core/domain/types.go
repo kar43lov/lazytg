@@ -143,6 +143,11 @@ type Message struct {
 	// Buttons is the keyboard a bot put under the message, rows of keys;
 	// nil for the ordinary message that has none.
 	Buttons [][]Button
+	// Forwarded is where the message came from when somebody forwarded
+	// it; nil for a message written where it stands.
+	Forwarded *Forward
+	// Pinned is the flag every client draws a bar from.
+	Pinned bool
 }
 
 // Reaction is one emoji on a message, with how many people used it.

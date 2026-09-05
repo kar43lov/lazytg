@@ -742,9 +742,10 @@ const messageUpsertSQL = `
             id, chat_id, from_id, date, text, reply_to, raw_blob,
             media_kind, media_id, media_access_hash, media_file_reference,
             media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-            media_duration, outgoing, reactions, media_waveform, entities, edit_date, buttons
+            media_duration, outgoing, reactions, media_waveform, entities, edit_date, buttons,
+            forward, pinned
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chat_id, id) DO UPDATE SET
             from_id              = excluded.from_id,
             date                 = excluded.date,
@@ -766,7 +767,9 @@ const messageUpsertSQL = `
             media_waveform       = excluded.media_waveform,
             entities             = excluded.entities,
             edit_date            = excluded.edit_date,
-            buttons              = excluded.buttons
+            buttons              = excluded.buttons,
+            forward              = excluded.forward,
+            pinned               = excluded.pinned
     `
 
 // messageInsertArgs builds the positional argument slice for
@@ -823,7 +826,7 @@ func messageInsertArgs(m domain.Message) []any {
 		encodeReactions(m.Reactions),
 		mediaWave,
 		domain.EncodeEntities(m.Entities),
-		unixOrZero(m.EditDate), domain.EncodeButtons(m.Buttons),
+		unixOrZero(m.EditDate), domain.EncodeButtons(m.Buttons), domain.EncodeForward(m.Forwarded), boolToInt(m.Pinned),
 	}
 }
 
@@ -904,7 +907,7 @@ const messageSelectColumns = `
         SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                media_kind, media_id, media_access_hash, media_file_reference,
                media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-               media_duration, outgoing, reactions, media_waveform, entities, edit_date, buttons
+               media_duration, outgoing, reactions, media_waveform, entities, edit_date, buttons, forward, pinned
     `
 
 // ErrMessageNotFound is returned by Message when the mirror holds no such
@@ -965,12 +968,14 @@ func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 			entities  sql.NullString
 			editDate  int64
 			buttons   sql.NullString
+			forward   sql.NullString
+			pinned    int
 		)
 		if err := rows.Scan(
 			&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &raw,
 			&mediaKind, &mediaID, &mediaAH, &mediaRef,
 			&mediaDC, &mediaName, &mediaSize, &mediaMime, &mediaThSz,
-			&mediaDur, &m.Outgoing, &reactions, &mediaWave, &entities, &editDate, &buttons,
+			&mediaDur, &m.Outgoing, &reactions, &mediaWave, &entities, &editDate, &buttons, &forward, &pinned,
 		); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
@@ -998,6 +1003,8 @@ func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 		m.Entities = domain.DecodeEntities(entities.String)
 		m.EditDate = timeOrZero(editDate)
 		m.Buttons = domain.DecodeButtons(buttons.String)
+		m.Forwarded = domain.DecodeForward(forward.String)
+		m.Pinned = pinned != 0
 		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -1189,6 +1196,23 @@ func (r *Repo) SaveChatIfMissing(ctx context.Context, c domain.Chat) error {
 	)
 	if err != nil {
 		return fmt.Errorf("insert chat if missing: %w", err)
+	}
+	return nil
+}
+
+// SetPinnedMessages flags, or unflags, the given messages of a chat as
+// pinned. Rows the mirror does not hold are simply not there to flag.
+func (r *Repo) SetPinnedMessages(ctx context.Context, chatID int64, ids []int64, pinned bool) error {
+	if r.readOnly.Load() {
+		return ErrReadOnly
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	for _, id := range ids {
+		if _, err := r.db.ExecContext(ctx, `UPDATE messages SET pinned = ? WHERE chat_id = ? AND id = ?`, boolToInt(pinned), chatID, id); err != nil {
+			return fmt.Errorf("set pinned %d/%d: %w", chatID, id, err)
+		}
 	}
 	return nil
 }

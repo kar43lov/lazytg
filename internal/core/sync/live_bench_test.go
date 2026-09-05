@@ -150,9 +150,10 @@ func waitForDrain(b *testing.B, rec *latencyStore, target int) {
 }
 
 // The list-fact setters satisfy LiveStore; the benchmark never sends them.
-func (s *stampedStore) SetUnread(context.Context, int64, int) error               { return nil }
-func (s *stampedStore) SetPinned(context.Context, int64, bool) error              { return nil }
-func (s *stampedStore) SetMutedUntil(context.Context, int64, time.Time) error     { return nil }
-func (s *stampedStore) SetUnreadMark(context.Context, int64, bool) error          { return nil }
-func (s *stampedStore) SetPresence(context.Context, int64, bool, time.Time) error { return nil }
-func (s *stampedStore) SetReadOutbox(context.Context, int64, int64) error         { return nil }
+func (s *stampedStore) SetUnread(context.Context, int64, int) error                   { return nil }
+func (s *stampedStore) SetPinned(context.Context, int64, bool) error                  { return nil }
+func (s *stampedStore) SetMutedUntil(context.Context, int64, time.Time) error         { return nil }
+func (s *stampedStore) SetUnreadMark(context.Context, int64, bool) error              { return nil }
+func (s *stampedStore) SetPresence(context.Context, int64, bool, time.Time) error     { return nil }
+func (s *stampedStore) SetReadOutbox(context.Context, int64, int64) error             { return nil }
+func (s *stampedStore) SetPinnedMessages(context.Context, int64, []int64, bool) error { return nil }

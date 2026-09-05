@@ -34,6 +34,8 @@ type LiveStore interface {
 	// SetReadOutbox moves the other side's read pointer forward; a value
 	// below the stored one is kept out, because updates arrive unordered.
 	SetReadOutbox(ctx context.Context, chatID, maxID int64) error
+	// SetPinnedMessages flags or unflags messages the mirror holds.
+	SetPinnedMessages(ctx context.Context, chatID int64, ids []int64, pinned bool) error
 	SetPresence(ctx context.Context, userID int64, online bool, lastSeen time.Time) error
 	// EnsureChat creates the parent chats row when the peer is unknown and
 	// leaves an existing row untouched. Without it a message from a chat
@@ -150,6 +152,10 @@ func (s *LiveService) drain(ctx context.Context, ch <-chan events.Event) error {
 				s.applyChatFact(ctx, typed.ChatID, "unread mark", s.store.SetUnreadMark(ctx, typed.ChatID, typed.Unread))
 			case events.ChatReadOutbox:
 				s.applyChatFact(ctx, typed.ChatID, "read outbox", s.store.SetReadOutbox(ctx, typed.ChatID, typed.MaxID))
+			case events.MessagesPinned:
+				if err := s.store.SetPinnedMessages(ctx, typed.ChatID, typed.IDs, typed.Pinned); err != nil {
+					s.log.Warn("live: pinned flag not recorded", "chat_id", typed.ChatID, "err", err)
+				}
 			case events.PeerPresence:
 				s.applyChatFact(ctx, typed.UserID, "presence", s.store.SetPresence(ctx, typed.UserID, typed.Online, typed.LastSeen))
 			}
@@ -240,6 +246,8 @@ func (s *LiveService) persist(ctx context.Context, ev events.MessageReceived) {
 		EditDate:  ev.EditDate,
 		Reactions: ev.Reactions,
 		Buttons:   ev.Buttons,
+		Forwarded: ev.Forwarded,
+		Pinned:    ev.Pinned,
 	}); err != nil {
 		s.log.Error("live: save message failed",
 			"chat_id", ev.ChatID, "message_id", ev.MessageID, "err", err)

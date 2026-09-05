@@ -239,7 +239,7 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.applyInlineImage(m), nil
 	case events.MessageEdited:
 		return a.applyMessageEdited(m), nil
-	case events.ChatReadOutbox:
+	case events.ChatReadOutbox, events.MessagesPinned:
 		updated, cmd := a.thread.Update(m)
 		a.thread = updated
 		return a, cmd

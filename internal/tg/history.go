@@ -90,11 +90,12 @@ func decodeHistory(res tg.MessagesMessagesClass, chatID int64, limit int, self *
 		return nil
 	}
 	raw := mod.GetMessages()
+	dir := directoryOf(mod.GetUsers(), mod.GetChats())
 	out := make([]domain.Message, 0, len(raw))
 	for _, mc := range raw {
 		switch m := mc.(type) {
 		case *tg.Message:
-			out = append(out, convertMessage(m, chatID, self))
+			out = append(out, convertMessage(m, chatID, self, dir))
 		case *tg.MessageService:
 			out = append(out, convertService(m, chatID, self))
 		}
@@ -103,7 +104,7 @@ func decodeHistory(res tg.MessagesMessagesClass, chatID int64, limit int, self *
 	return out
 }
 
-func convertMessage(m *tg.Message, chatID int64, self *Self) domain.Message {
+func convertMessage(m *tg.Message, chatID int64, self *Self, dir nameDirectory) domain.Message {
 	replyTo := replyToOf(m)
 	return domain.Message{
 		ID:        int64(m.ID),
@@ -118,6 +119,8 @@ func convertMessage(m *tg.Message, chatID int64, self *Self) domain.Message {
 		Entities:  EntitiesFromMessage(m),
 		EditDate:  editDateOf(m),
 		Buttons:   ButtonsFromMessage(m),
+		Forwarded: forwardOf(m, dir),
+		Pinned:    m.Pinned,
 	}
 }
 

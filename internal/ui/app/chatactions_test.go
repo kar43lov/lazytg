@@ -432,3 +432,24 @@ func TestBotButton_OtherKinds(t *testing.T) {
 		t.Fatalf("a non-callback key reached the bot: %+v", actions.presses)
 	}
 }
+
+// A pin update reaches the thread and moves its bar.
+func TestMessagesPinned_ReachesTheThread(t *testing.T) {
+	t.Parallel()
+
+	threadModel := thread.New()
+	threadModel = injectMessages(threadModel, []domain.Message{
+		{ID: 1, ChatID: 42, Date: time.Now(), Text: "rules"},
+		{ID: 2, ChatID: 42, Date: time.Now().Add(time.Second), Text: "chatter", Forwarded: &domain.Forward{From: "News"}},
+	})
+	a := New(Deps{Keymap: keymap.Default(), Thread: &threadModel})
+	model, _ := a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	model, _ = model.(App).Update(events.MessagesPinned{ChatID: 42, IDs: []int64{1}, Pinned: true})
+	a = model.(App)
+	if a.thread.PinnedMessageID() != 1 {
+		t.Fatalf("pinned id = %d", a.thread.PinnedMessageID())
+	}
+	if !strings.Contains(a.View().Content, "forwarded from News") {
+		t.Fatal("the fixture dropped the origin")
+	}
+}

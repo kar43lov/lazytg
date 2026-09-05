@@ -344,8 +344,9 @@ func (m Model) SetSize(width, height int) Model {
 	if w < minViewportWidth {
 		w = minViewportWidth
 	}
-	// Reserve one row for the header.
-	h := height - 1
+	// Reserve one row for the header, and one for the pinned bar while
+	// there is something pinned to show.
+	h := height - 1 - m.barRows()
 	if h < minViewportHeight {
 		h = minViewportHeight
 	}

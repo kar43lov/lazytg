@@ -31,5 +31,8 @@ func (m Model) View() string {
 	if body == "" {
 		return header
 	}
+	if bar := m.pinnedBar(); bar != "" {
+		return strings.Join([]string{header, bar, body}, "\n")
+	}
 	return strings.Join([]string{header, body}, "\n")
 }

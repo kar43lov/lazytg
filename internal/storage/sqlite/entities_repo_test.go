@@ -188,3 +188,46 @@ func TestMessageButtons_RoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestMessageOriginAndPinned_RoundTrip(t *testing.T) {
+	t.Parallel()
+	repo, ctx := openTestRepo(t)
+	if err := repo.SaveChat(ctx, domain.Chat{ID: 5, Type: domain.ChatTypeGroup, Title: "g"}); err != nil {
+		t.Fatalf("SaveChat: %v", err)
+	}
+	at := time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC)
+	if err := repo.SaveMessage(ctx, domain.Message{ID: 1, ChatID: 5, Date: time.Now(), Text: "fwd", Forwarded: &domain.Forward{From: "News", FromID: 500, Date: at}}); err != nil {
+		t.Fatalf("SaveMessage: %v", err)
+	}
+	if err := repo.SaveMessage(ctx, domain.Message{ID: 2, ChatID: 5, Date: time.Now(), Text: "plain"}); err != nil {
+		t.Fatalf("SaveMessage: %v", err)
+	}
+	if err := repo.SetPinnedMessages(ctx, 5, []int64{2, 77}, true); err != nil {
+		t.Fatalf("SetPinnedMessages: %v", err)
+	}
+	msgs, err := repo.GetMessages(ctx, 5, 10, 0)
+	if err != nil || len(msgs) != 2 {
+		t.Fatalf("GetMessages: %v %v", msgs, err)
+	}
+	for _, m := range msgs {
+		switch m.ID {
+		case 1:
+			if m.Forwarded == nil || m.Forwarded.From != "News" || m.Forwarded.FromID != 500 || !m.Forwarded.Date.Equal(at) || m.Pinned {
+				t.Fatalf("forwarded row = %+v", m)
+			}
+		case 2:
+			if m.Forwarded != nil || !m.Pinned {
+				t.Fatalf("pinned row = %+v", m)
+			}
+		}
+	}
+	if err := repo.SetPinnedMessages(ctx, 5, []int64{2}, false); err != nil {
+		t.Fatalf("unpin: %v", err)
+	}
+	msgs, _ = repo.GetMessages(ctx, 5, 10, 0)
+	for _, m := range msgs {
+		if m.Pinned {
+			t.Fatalf("still pinned: %+v", m)
+		}
+	}
+}

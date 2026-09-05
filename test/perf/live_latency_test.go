@@ -291,9 +291,10 @@ func BenchmarkLiveUpdateLatency(b *testing.B) {
 }
 
 // The list-fact setters satisfy LiveStore; the latency probe never sends them.
-func (s *inMemoryStore) SetUnread(context.Context, int64, int) error               { return nil }
-func (s *inMemoryStore) SetPinned(context.Context, int64, bool) error              { return nil }
-func (s *inMemoryStore) SetMutedUntil(context.Context, int64, time.Time) error     { return nil }
-func (s *inMemoryStore) SetUnreadMark(context.Context, int64, bool) error          { return nil }
-func (s *inMemoryStore) SetPresence(context.Context, int64, bool, time.Time) error { return nil }
-func (s *inMemoryStore) SetReadOutbox(context.Context, int64, int64) error         { return nil }
+func (s *inMemoryStore) SetUnread(context.Context, int64, int) error                   { return nil }
+func (s *inMemoryStore) SetPinned(context.Context, int64, bool) error                  { return nil }
+func (s *inMemoryStore) SetMutedUntil(context.Context, int64, time.Time) error         { return nil }
+func (s *inMemoryStore) SetUnreadMark(context.Context, int64, bool) error              { return nil }
+func (s *inMemoryStore) SetPresence(context.Context, int64, bool, time.Time) error     { return nil }
+func (s *inMemoryStore) SetReadOutbox(context.Context, int64, int64) error             { return nil }
+func (s *inMemoryStore) SetPinnedMessages(context.Context, int64, []int64, bool) error { return nil }

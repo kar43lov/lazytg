@@ -57,6 +57,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.applyDeleted(typed)
 	case events.ChatReadOutbox:
 		return m.applyReadOutbox(typed)
+	case events.MessagesPinned:
+		return m.applyPinned(typed)
 	case events.OutgoingMessageStateChanged:
 		return m.applyOutgoingState(typed)
 	case tea.KeyPressMsg:
@@ -84,6 +86,9 @@ func (m Model) applyLoaded(msg messagesLoadedMsg) (Model, tea.Cmd) {
 	}
 	m.messages = msg.messages
 	m.hasMore = msg.hasMore
+	if m.barRows() > 0 {
+		m = m.relayout()
+	}
 	// Initial load lands at the chat's tail by definition (offset=0
 	// orders by date desc), so forward pagination is meaningless.
 	m.hasNewer = false
@@ -777,5 +782,7 @@ func messageFromEvent(ev events.MessageReceived) domain.Message {
 		EditDate:  ev.EditDate,
 		Outgoing:  ev.Outgoing,
 		Buttons:   ev.Buttons,
+		Forwarded: ev.Forwarded,
+		Pinned:    ev.Pinned,
 	}
 }

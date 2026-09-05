@@ -127,8 +127,21 @@ func (d *UpdatesDispatcher) HandlerFunc() telegram.UpdateHandlerFunc {
 // (UpdatesCombined, Updates, UpdateShortMessage, …) into individual
 // UpdateClass elements and dispatch each one.
 func (d *UpdatesDispatcher) handle(ctx context.Context, u tg.UpdatesClass) error {
+	dir := containerDirectory(u)
 	for _, single := range flattenUpdates(u) {
-		d.dispatch(ctx, single)
+		d.dispatch(ctx, single, dir)
+	}
+	return nil
+}
+
+// containerDirectory names the users and chats an update container came
+// with — what a forwarded message needs to say who wrote it.
+func containerDirectory(u tg.UpdatesClass) nameDirectory {
+	switch c := u.(type) {
+	case *tg.Updates:
+		return directoryOf(c.Users, c.Chats)
+	case *tg.UpdatesCombined:
+		return directoryOf(c.Users, c.Chats)
 	}
 	return nil
 }
@@ -136,16 +149,20 @@ func (d *UpdatesDispatcher) handle(ctx context.Context, u tg.UpdatesClass) error
 // dispatch routes a single update into the bus. Unknown variants are
 // dropped after a debug log — the server may add new types over time and
 // silently ignoring them is the right default for an unofficial client.
-func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass) {
+func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass, dir nameDirectory) {
 	switch upd := u.(type) {
 	case *tg.UpdateNewMessage:
-		d.publishMessage(upd.Message, false)
+		d.publishMessage(upd.Message, false, dir)
 	case *tg.UpdateNewChannelMessage:
-		d.publishMessage(upd.Message, false)
+		d.publishMessage(upd.Message, false, dir)
 	case *tg.UpdateEditMessage:
-		d.publishMessage(upd.Message, true)
+		d.publishMessage(upd.Message, true, dir)
 	case *tg.UpdateEditChannelMessage:
-		d.publishMessage(upd.Message, true)
+		d.publishMessage(upd.Message, true, dir)
+	case *tg.UpdatePinnedMessages:
+		d.publish(events.MessagesPinned{ChatID: chatIDFromPeer(upd.Peer), IDs: intsToInt64(upd.Messages), Pinned: upd.Pinned})
+	case *tg.UpdatePinnedChannelMessages:
+		d.publish(events.MessagesPinned{ChatID: upd.ChannelID, IDs: intsToInt64(upd.Messages), Pinned: upd.Pinned})
 	case *tg.UpdateDeleteMessages:
 		// No peer in this variant, by design on Telegram's side: message ids
 		// are unique across all private chats and basic groups for one
@@ -211,7 +228,15 @@ func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass) {
 // message, changed. Telegram also sends an edit update when a reaction
 // lands on a message; the reactions come along on the message here, which
 // is fine, and the row is replaced rather than appended by every consumer.
-func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass, edited bool) {
+func intsToInt64(in []int) []int64 {
+	out := make([]int64, 0, len(in))
+	for _, v := range in {
+		out = append(out, int64(v))
+	}
+	return out
+}
+
+func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass, edited bool, dir nameDirectory) {
 	m, ok := mc.(*tg.Message)
 	if !ok {
 		if svc, isService := mc.(*tg.MessageService); isService {
@@ -244,6 +269,8 @@ func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass, edited bool) {
 		Edited:    edited,
 		EditDate:  editDateOf(m),
 		Buttons:   ButtonsFromMessage(m),
+		Forwarded: forwardOf(m, dir),
+		Pinned:    m.Pinned,
 	})
 }
 
