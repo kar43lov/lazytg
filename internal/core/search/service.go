@@ -20,6 +20,9 @@ type Hit struct {
 	Snippet string
 	ChatID  int64
 	Score   float64
+	// Remote marks a hit the server returned rather than the local
+	// index; the overlay labels it so the user knows which answered.
+	Remote bool
 }
 
 // Service serves search queries against the FTS5 index. It composes

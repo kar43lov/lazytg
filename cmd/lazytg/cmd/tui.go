@@ -113,6 +113,9 @@ func runTUI(cmd *cobra.Command, _ []string) error {
 	// quiet no-op" so a logged-out session does not crash on Ctrl-D
 	// or Ctrl-U.
 	searchModel := uisearch.New(runtime.SearchSvc, 0, logger)
+	if runtime.RemoteSearch != nil {
+		searchModel = searchModel.WithRemote(runtime.RemoteSearch)
+	}
 	paletteModel := palette.New(runtime.Frecency, runtime.Repo, logger)
 
 	// runtime.Client is set by AttachClient and nowhere else, so it is the

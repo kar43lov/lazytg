@@ -24,14 +24,14 @@ covered by tests only.
 | Media & files | 14 | 8 | 2 | 3 | 1 |
 | Acting on messages | 12 | 9 | 0 | 3 | 0 |
 | Groups & channels | 12 | 2 | 1 | 7 | 2 |
-| Search | 6 | 4 | 0 | 2 | 0 |
+| Search | 6 | 5 | 0 | 1 | 0 |
 | Notifications | 6 | 4 | 0 | 2 | 0 |
 | Privacy & security | 9 | 4 | 0 | 3 | 2 |
 | Calls & live | 5 | 1 | 0 | 0 | 4 |
 | Bots & payments | 7 | 2 | 0 | 2 | 3 |
 | Stickers, emoji, GIFs | 6 | 2 | 1 | 2 | 1 |
 | Stories, premium, misc | 8 | 0 | 0 | 2 | 6 |
-| **Total** | **138** | **76** | **9** | **33** | **20** |
+| **Total** | **138** | **77** | **9** | **32** | **20** |
 
 Roughly: half of TD is here, a quarter is reachable and worth doing, the
 rest is either video/voice (no terminal plays it) or product surface
@@ -171,7 +171,7 @@ rest is either video/voice (no terminal plays it) or product surface
 | Jump to a result in context | ✅ | |
 | Per-chat and global | ✅ | |
 | Fuzzy chat name search | ✅ | Palette, Unicode-folded. |
-| Server-side search past the mirror | ⬜ | `messages.search`; the whole pitch is not depending on it, but a fallback for chats never opened would help. |
+| Server-side search past the mirror | ✅ | Tab in the overlay: one `messages.searchGlobal` per press, hits mirrored locally, same query syntax minus the local-only filters. |
 | Filters (media, links, files) | ⬜ | Local index knows the kinds; a `kind:` prefix in the query syntax. |
 
 ## Notifications
@@ -257,7 +257,7 @@ ban-risk. Each is one focused PR.
 5. **Mentions completion** (`@` in the composer) — needs the member list, which also unlocks the member view.
 6. **Topics** in forum supergroups — the two-pane layout has room for a topic strip.
 7. ~~Desktop notifications (opt-in)~~ — shipped.
-8. **Server-side search fallback** — for the chats never opened here.
+8. ~~Server-side search fallback~~ — shipped as Tab in the overlay.
 
 Anything not in this file is out of scope until it is added here; the
 permanently-out list is in `CLAUDE.md` → "Что НЕ делаем никогда".

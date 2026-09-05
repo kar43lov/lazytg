@@ -29,6 +29,10 @@ const DefaultLimit = 50
 // the overlay forever.
 const queryTimeout = 5 * time.Second
 
+// remoteTimeout bounds one server search; the network is slower than
+// SQLite and a flood wait is reported, not waited out.
+const remoteTimeout = 20 * time.Second
+
 // Service is the gotd-/storage-free contract the overlay needs from
 // the search pipeline. *search.Service satisfies it via its Search
 // method; tests swap in a fake that records the call and produces a
@@ -49,8 +53,14 @@ type Model struct {
 
 	input    textinput.Model
 	service  Service
+	remote   Service
 	debounce time.Duration
 	log      *slog.Logger
+
+	// remoteShown says the hits on screen came from the server;
+	// remoteLoading that a server search is in flight.
+	remoteShown   bool
+	remoteLoading bool
 
 	// queryGeneration is incremented every time the input value
 	// changes. The debounce tick captures the generation it was
@@ -100,6 +110,19 @@ func New(service Service, debounce time.Duration, log *slog.Logger) Model {
 		log:      log,
 	}
 }
+
+// WithRemote installs the server-side fallback the Tab key asks. Without
+// it the key does nothing and the hint does not mention it.
+func (m Model) WithRemote(remote Service) Model {
+	m.remote = remote
+	return m
+}
+
+// RemoteShown reports whether the hits on screen came from the server.
+func (m Model) RemoteShown() bool { return m.remoteShown }
+
+// RemoteLoading reports whether a server search is in flight.
+func (m Model) RemoteLoading() bool { return m.remoteLoading }
 
 // SetSize records the surrounding terminal dimensions so View can
 // position the modal. The overlay does not propagate this into the
@@ -208,6 +231,30 @@ func (m Model) runSearch(query string) tea.Cmd {
 		defer cancel()
 		hits, err := svc.Search(ctx, query, limit)
 		return ResultsMsg{Hits: hits, Err: err}
+	}
+}
+
+// runRemote asks the server for the current query: one request per
+// press of the key, never on a timer, never on typing. The answer
+// carries the generation so applyResults can drop it if the user
+// typed on while waiting.
+func (m Model) runRemote() (Model, tea.Cmd) {
+	if m.remote == nil {
+		return m, nil
+	}
+	query := trimSpace(m.input.Value())
+	if query == "" || m.remoteLoading {
+		return m, nil
+	}
+	m.remoteLoading = true
+	m.err = nil
+	svc := m.remote
+	gen := m.queryGeneration
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), remoteTimeout)
+		defer cancel()
+		hits, err := svc.Search(ctx, query, search.DefaultRemoteLimit)
+		return ResultsMsg{Hits: hits, Err: err, Remote: true, Generation: gen}
 	}
 }
 

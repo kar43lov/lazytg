@@ -133,6 +133,10 @@ type App struct {
 	ReindexSvc *search.ReindexService
 	LazyIndex  *search.LazyTrigger
 	SearchSvc  *search.Service
+	// RemoteSearch is the server-side fallback of the overlay, set by
+	// AttachClient; nil while logged out, and the overlay's Tab then
+	// does nothing.
+	RemoteSearch *search.RemoteService
 
 	// Frecency feeds the command palette (top chats by recency × visit
 	// count) and is updated on every palette-driven chat switch.
@@ -429,6 +433,11 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 
 	historyFetcher := tgclient.NewHistoryFetcher(client.API()).WithSelf(client.Self())
 	a.HistoryFetcher = historyFetcher
+	// The server-side search: one messages.searchGlobal per press of
+	// Tab in the overlay, hits mirrored so the next local search has
+	// them.
+	a.RemoteSearch = search.NewRemoteService(
+		tgclient.NewSearcher(client.API(), client.Self()), a.Repo, a.Peers, a.Log)
 
 	a.History = coresync.NewHistoryService(historyFetcher, peerLookupAdapter{peers: a.Peers}, a.Repo, a.Bus, a.Log)
 	a.Read = coresync.NewReadService(

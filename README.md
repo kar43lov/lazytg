@@ -79,7 +79,7 @@ Current capabilities:
 - Two-way sync with your other devices: opening a chat marks it read on Telegram, and messages or chats deleted elsewhere disappear here too — including from the search index.
 - Dialog sync on start (`messages.getDialogs`, paced and capped at 5 pages / 500 chats by design) plus history backfill when a chat is opened.
 - Local search (FTS5 trigram) with operators `from:@user`, `in:#chat`, `before:`/`after:`, `has:file`, `"phrase"`, `-exclusion` (`docs/SEARCH.md`).
-- Search overlay (`/`), command palette (Ctrl+Space), a message cursor with per-message download (Ctrl+D) and open-in-viewer (`o`), file upload (Ctrl+U).
+- Search overlay (`/`; Tab asks the server for what the mirror lacks), command palette (Ctrl+Space), a message cursor with per-message download (Ctrl+D) and open-in-viewer (`o`), file upload (Ctrl+U).
 - Message actions on the cursor or on a marked set: copy, edit your own, delete for yourself or for everyone, forward to another chat (`Space`, `y`, `e`, `d`, `f`).
 - The account's Telegram folders as tabs over the chat list (`[` / `]`), including chat-list folders (shared links), which are matched by their explicit membership only.
 - Typing indicators for the open chat, expiring on their own after six seconds because Telegram's "stopped" notification is not reliably sent.
@@ -99,7 +99,7 @@ Current capabilities:
 | Alt+Enter       | newline in input (the composer grows to 4 rows) |
 | Ctrl+R          | reply to focused message              |
 | Ctrl+E          | open `$EDITOR` with current draft     |
-| `/`             | open search overlay                   |
+| `/`             | open search overlay (Tab inside asks the server) |
 | Ctrl+Space      | command palette (chat switcher L1)    |
 | ↑ / ↓ (k / j)   | move the message cursor in the thread |
 | Space           | mark / unmark the message at the cursor |

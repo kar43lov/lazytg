@@ -1,12 +1,14 @@
 package search
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 
 	"github.com/kar43lov/lazytg/internal/core/search"
+	coresync "github.com/kar43lov/lazytg/internal/core/sync"
 	"github.com/kar43lov/lazytg/internal/ui/safetext"
 )
 
@@ -50,14 +52,22 @@ func (m Model) View(width, height int) string {
 
 	switch {
 	case m.err != nil:
-		body.WriteString(resultMetaStyle.Render(fmt.Sprintf("error: %v", m.err)))
+		body.WriteString(resultMetaStyle.Render("error: " + describeErr(m.err)))
+	case m.remoteLoading && len(m.hits) == 0:
+		body.WriteString(resultMetaStyle.Render("Asking the server…"))
 	case m.loading && len(m.hits) == 0:
 		body.WriteString(resultMetaStyle.Render("Searching…"))
+	case len(m.hits) == 0 && m.remoteShown:
+		body.WriteString(resultMetaStyle.Render("the server found nothing"))
 	case len(m.hits) == 0:
 		hint := overlayHintStyle.Render("type to search; Enter to jump, Esc to close")
 		body.WriteString(hint)
 	default:
 		body.WriteString(m.renderResults())
+	}
+	if hint := m.remoteHint(); hint != "" {
+		body.WriteByte('\n')
+		body.WriteString(overlayHintStyle.Render(hint))
 	}
 
 	box := overlayBoxStyle.Render(body.String())
@@ -65,6 +75,38 @@ func (m Model) View(width, height int) string {
 		return box
 	}
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
+}
+
+// remoteHint is the one line that tells the user the server can be
+// asked, and when it was. Nothing is said without a remote service:
+// the key would do nothing.
+func (m Model) remoteHint() string {
+	if m.remote == nil || trimSpace(m.input.Value()) == "" {
+		return ""
+	}
+	switch {
+	case m.remoteLoading:
+		return "asking the server…"
+	case m.remoteShown:
+		return "from the server; type to search locally again"
+	case m.loading:
+		return ""
+	case len(m.hits) == 0 && m.err == nil:
+		return "no local matches — Tab asks the server"
+	default:
+		return "Tab asks the server"
+	}
+}
+
+// describeErr turns the errors a search can end with into one line a
+// person can act on. A flood wait names its length: the user pressed
+// the key, and the answer is when to press it again.
+func describeErr(err error) string {
+	var flood *coresync.FloodWaitError
+	if errors.As(err, &flood) {
+		return "the server asks to wait " + flood.RetryAfter.String()
+	}
+	return err.Error()
 }
 
 // renderResults renders every hit with the cursor row styled. The
@@ -98,6 +140,9 @@ func formatHit(hit search.Hit) string {
 	// than in the thread — the timestamp is the only thing telling two similar
 	// hits apart.
 	meta := fmt.Sprintf("chat=%d  %s", hit.ChatID, hit.Message.Date.Local().Format("2006-01-02 15:04"))
+	if hit.Remote {
+		meta = "server  " + meta
+	}
 	// A hit is one row, and its text comes from whoever wrote the
 	// message — cleaned before it reaches the terminal, see
 	// internal/ui/safetext.
