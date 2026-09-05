@@ -3,8 +3,10 @@ package sync
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
 	"github.com/kar43lov/lazytg/internal/core/events"
@@ -449,5 +451,148 @@ func TestActionService_Edit_TurnsMarkupIntoSpans(t *testing.T) {
 	ev, ok := bus.events[0].(events.MessageEdited)
 	if !ok || ev.Text != "after all" || !reflect.DeepEqual(ev.Entities, want) || ev.EditDate.IsZero() {
 		t.Fatalf("published %+v, want the spans and the date", bus.events[0])
+	}
+}
+
+type fakeDialogs struct {
+	calls []string
+	err   error
+}
+
+func (f *fakeDialogs) Mute(_ context.Context, chatID int64, until time.Time) error {
+	f.calls = append(f.calls, fmt.Sprintf("mute %d %d", chatID, until.Unix()))
+	return f.err
+}
+
+func (f *fakeDialogs) Pin(_ context.Context, chatID int64, pinned bool) error {
+	f.calls = append(f.calls, fmt.Sprintf("pin %d %v", chatID, pinned))
+	return f.err
+}
+
+func (f *fakeDialogs) MarkUnread(_ context.Context, chatID int64, unread bool) error {
+	f.calls = append(f.calls, fmt.Sprintf("unread %d %v", chatID, unread))
+	return f.err
+}
+
+type fakeChatState struct {
+	newest []domain.Message
+	writes []string
+}
+
+func (f *fakeChatState) GetMessages(_ context.Context, _ int64, _, _ int) ([]domain.Message, error) {
+	return f.newest, nil
+}
+func (f *fakeChatState) SetUnread(_ context.Context, id int64, n int) error {
+	f.writes = append(f.writes, fmt.Sprintf("unread %d=%d", id, n))
+	return nil
+}
+func (f *fakeChatState) SetPinned(_ context.Context, id int64, p bool) error {
+	f.writes = append(f.writes, fmt.Sprintf("pinned %d=%v", id, p))
+	return nil
+}
+func (f *fakeChatState) SetMutedUntil(_ context.Context, id int64, u time.Time) error {
+	f.writes = append(f.writes, fmt.Sprintf("muted %d=%d", id, u.Unix()))
+	return nil
+}
+func (f *fakeChatState) SetUnreadMark(_ context.Context, id int64, m bool) error {
+	f.writes = append(f.writes, fmt.Sprintf("mark %d=%v", id, m))
+	return nil
+}
+
+type fakeReadMarker struct{ calls []string }
+
+func (f *fakeReadMarker) MarkRead(_ context.Context, chatID, maxID int64) error {
+	f.calls = append(f.calls, fmt.Sprintf("read %d<=%d", chatID, maxID))
+	return nil
+}
+
+// Each chat-level action is one server call, then one local write, then a
+// reload of the list — and the server goes first, so a refused change
+// leaves the list telling the truth.
+func TestActionService_ChatActions_ServerFirstThenMirror(t *testing.T) {
+	t.Parallel()
+
+	dialogs := &fakeDialogs{}
+	state := &fakeChatState{newest: []domain.Message{{ID: 90, ChatID: 7}}}
+	marker := &fakeReadMarker{}
+	bus := &recordingBus{}
+	svc := NewActionService(nil, nil, nil, nil, &fakeActionStore{}, bus, nil).WithDialogs(dialogs, marker, state)
+	ctx := context.Background()
+	forever := time.Date(2038, 1, 19, 3, 14, 7, 0, time.UTC)
+
+	if err := svc.Mute(ctx, 7, forever); err != nil {
+		t.Fatalf("Mute: %v", err)
+	}
+	if err := svc.Pin(ctx, 7, true); err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	if err := svc.MarkUnread(ctx, 7); err != nil {
+		t.Fatalf("MarkUnread: %v", err)
+	}
+	if err := svc.MarkRead(ctx, 7, true); err != nil {
+		t.Fatalf("MarkRead: %v", err)
+	}
+	wantCalls := fmt.Sprint([]string{"mute 7 " + fmt.Sprint(forever.Unix()), "pin 7 true", "unread 7 true", "unread 7 false"})
+	if got := fmt.Sprint(dialogs.calls); got != wantCalls {
+		t.Fatalf("server calls %s, want %s", got, wantCalls)
+	}
+	if got := fmt.Sprint(marker.calls); got != "[read 7<=90]" {
+		t.Fatalf("read receipts %s", got)
+	}
+	wantWrites := fmt.Sprint([]string{"muted 7=" + fmt.Sprint(forever.Unix()), "pinned 7=true", "mark 7=true", "unread 7=0", "mark 7=false"})
+	if got := fmt.Sprint(state.writes); got != wantWrites {
+		t.Fatalf("mirror writes %s, want %s", got, wantWrites)
+	}
+	if len(bus.events) != 5 {
+		t.Fatalf("bus = %+v, want five DialogUpdated", bus.events)
+	}
+}
+
+func TestActionService_ChatActions_RefusedChangeLeavesTheMirrorAlone(t *testing.T) {
+	t.Parallel()
+
+	dialogs := &fakeDialogs{err: errors.New("CHAT_ID_INVALID")}
+	state := &fakeChatState{}
+	svc := NewActionService(nil, nil, nil, nil, &fakeActionStore{}, &recordingBus{}, nil).WithDialogs(dialogs, &fakeReadMarker{}, state)
+	if err := svc.Pin(context.Background(), 7, true); err == nil {
+		t.Fatal("a refused pin reported success")
+	}
+	if len(state.writes) != 0 {
+		t.Fatalf("mirror written after a refusal: %v", state.writes)
+	}
+}
+
+// MarkRead on an empty chat has no receipt to send and only the dot to
+// clear; on one without the dot, only the receipt.
+func TestActionService_MarkRead_SendsOnlyWhatIsNeeded(t *testing.T) {
+	t.Parallel()
+
+	dialogs := &fakeDialogs{}
+	marker := &fakeReadMarker{}
+	svc := NewActionService(nil, nil, nil, nil, &fakeActionStore{}, &recordingBus{}, nil).WithDialogs(dialogs, marker, &fakeChatState{})
+	if err := svc.MarkRead(context.Background(), 7, true); err != nil {
+		t.Fatalf("MarkRead: %v", err)
+	}
+	if len(marker.calls) != 0 || fmt.Sprint(dialogs.calls) != "[unread 7 false]" {
+		t.Fatalf("empty chat: receipts %v, calls %v", marker.calls, dialogs.calls)
+	}
+
+	dialogs2 := &fakeDialogs{}
+	marker2 := &fakeReadMarker{}
+	svc2 := NewActionService(nil, nil, nil, nil, &fakeActionStore{}, &recordingBus{}, nil).WithDialogs(dialogs2, marker2, &fakeChatState{newest: []domain.Message{{ID: 3}}})
+	if err := svc2.MarkRead(context.Background(), 7, false); err != nil {
+		t.Fatalf("MarkRead: %v", err)
+	}
+	if len(dialogs2.calls) != 0 || fmt.Sprint(marker2.calls) != "[read 7<=3]" {
+		t.Fatalf("no dot: receipts %v, calls %v", marker2.calls, dialogs2.calls)
+	}
+}
+
+func TestActionService_ChatActions_NotConnected(t *testing.T) {
+	t.Parallel()
+
+	svc := NewActionService(nil, nil, nil, nil, &fakeActionStore{}, &recordingBus{}, nil)
+	if err := svc.Mute(context.Background(), 7, time.Time{}); err == nil {
+		t.Fatal("mute without a connection reported success")
 	}
 }

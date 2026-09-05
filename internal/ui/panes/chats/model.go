@@ -169,7 +169,21 @@ func (m Model) SetSize(width, height int) Model {
 		listHeight = minListHeight
 	}
 	m.list.SetSize(w, listHeight)
+	if len(m.chats) > 0 {
+		// The rows carry their width, so a resize lays them out again.
+		m.list.SetItems(listItems(m.visibleChats(m.chats), m.rowWidth()))
+	}
 	return m
+}
+
+// ItemByID finds a chat in the loaded list.
+func (m Model) ItemByID(id int64) (ChatItem, bool) {
+	for _, it := range m.chats {
+		if it.ID() == id {
+			return it, true
+		}
+	}
+	return ChatItem{}, false
 }
 
 // SetFocus toggles whether the pane is focused. The list itself does not

@@ -61,6 +61,11 @@ type MessageActions interface {
 	Delete(ctx context.Context, chatID int64, ids []int64, revoke bool) error
 	Forward(ctx context.Context, fromChatID, toChatID int64, ids []int64, dropAuthor bool) error
 	React(ctx context.Context, chatID, messageID int64, emoticon string) error
+	// The chat-level actions, taken from the list without opening the chat.
+	Mute(ctx context.Context, chatID int64, until time.Time) error
+	Pin(ctx context.Context, chatID int64, pinned bool) error
+	MarkUnread(ctx context.Context, chatID int64) error
+	MarkRead(ctx context.Context, chatID int64, marked bool) error
 }
 
 // FileUploader is the gotd-free contract App.handleAttachSubmit uses

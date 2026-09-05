@@ -164,6 +164,28 @@ func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass) {
 		d.publishTyping(upd.ChannelID, chatIDFromPeer(upd.FromID), upd.Action, time.Now())
 	case *tg.UpdateMessageReactions:
 		d.publishReactions(upd)
+	case *tg.UpdateReadHistoryInbox:
+		d.publish(events.ChatReadInbox{ChatID: chatIDFromPeer(upd.Peer), MaxID: int64(upd.MaxID), StillUnread: upd.StillUnreadCount})
+	case *tg.UpdateReadChannelInbox:
+		d.publish(events.ChatReadInbox{ChatID: upd.ChannelID, MaxID: int64(upd.MaxID), StillUnread: upd.StillUnreadCount})
+	case *tg.UpdateDialogPinned:
+		if id := dialogPeerID(upd.Peer); id != 0 {
+			d.publish(events.ChatPinned{ChatID: id, Pinned: upd.Pinned})
+		}
+	case *tg.UpdateDialogUnreadMark:
+		if id := dialogPeerID(upd.Peer); id != 0 {
+			d.publish(events.ChatUnreadMark{ChatID: id, Unread: upd.Unread})
+		}
+	case *tg.UpdateNotifySettings:
+		// Only a setting on one chat is a fact about that chat. The
+		// class-wide defaults (all users, all groups) are a policy this
+		// client does not model; a chat inherits nothing from them here.
+		if np, ok := upd.Peer.(*tg.NotifyPeer); ok {
+			d.publish(events.ChatMuted{ChatID: chatIDFromPeer(np.Peer), Until: muteUntilOf(upd.NotifySettings)})
+		}
+	case *tg.UpdateUserStatus:
+		online, lastSeen := presenceOf(upd.Status)
+		d.publish(events.PeerPresence{UserID: upd.UserID, Online: online, LastSeen: lastSeen})
 	default:
 		d.log.Debug("update: unhandled type", "type", u.TypeName())
 	}
@@ -354,4 +376,34 @@ func shortChatToUpdateMessage(s *tg.UpdateShortChatMessage) tg.UpdateClass {
 	m.PeerID = &tg.PeerChat{ChatID: s.ChatID}
 	m.SetFromID(&tg.PeerUser{UserID: s.FromID})
 	return &tg.UpdateNewMessage{Message: m, Pts: s.Pts, PtsCount: s.PtsCount}
+}
+
+// publish is the one place list-fact events leave the dispatcher; a zero
+// chat id names nothing and is dropped here rather than in every consumer.
+func (d *UpdatesDispatcher) publish(ev events.Event) {
+	switch typed := ev.(type) {
+	case events.ChatReadInbox:
+		if typed.ChatID == 0 {
+			return
+		}
+	case events.ChatMuted:
+		if typed.ChatID == 0 {
+			return
+		}
+	case events.PeerPresence:
+		if typed.UserID == 0 {
+			return
+		}
+	}
+	d.bus.Publish(ev)
+}
+
+// dialogPeerID names the chat a dialog-level update is about, or 0 for the
+// archive folder pseudo-peer.
+func dialogPeerID(p tg.DialogPeerClass) int64 {
+	dp, ok := p.(*tg.DialogPeer)
+	if !ok {
+		return 0
+	}
+	return chatIDFromPeer(dp.Peer)
 }

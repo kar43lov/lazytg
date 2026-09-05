@@ -213,6 +213,8 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.cmdSubmitEdit(m)
 	case messageActionsResultMsg:
 		return a.applyActionResult(m), nil
+	case chatActionMsg:
+		return a.applyChatAction(m), nil
 	case forwardResultMsg:
 		return a.applyForwardResult(m), nil
 	case inlineImageReadyMsg:
@@ -272,6 +274,9 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return updated, cmd
 		}
 		if updated, cmd, handled := a.applyQuickChatKey(k); handled {
+			return updated, cmd
+		}
+		if updated, cmd, handled := a.applyChatActionKey(k); handled {
 			return updated, cmd
 		}
 		if updated, cmd, handled := a.applyMessageActionKey(k); handled {

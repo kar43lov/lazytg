@@ -45,6 +45,7 @@ Think `lazygit` ergonomics, but for Telegram conversations: keyboard-driven, sin
 - ✏️ **"typing…" in the status line** — what the other side is doing right now, in Telegram's own words ("recording a voice message…"), for the chat you are reading. Received only: lazytg never announces your own typing.
 - 🅱️ **Formatting, both ways** — bold, italic, strikethrough, code, code blocks, spoilers and links behind words render the way Telegram's own clients draw them, with the host of a hidden link shown beside the words so "click here" cannot point somewhere it does not say. The composer takes Telegram Desktop's markup (`**bold**`, `__italic__`, `~~strike~~`, `||spoiler||`, `` `code` ``, ```` ```lang ```` blocks, `[text](url)`), and `e` hands a formatted message back to you as markup. A spoiler shows itself when the cursor is on its message.
 - 📌 **Saved Messages from day one** — the chat with yourself is in the list whether or not you have written there yet, named the way every official client names it.
+- 🔕 **The chat list knows what the phone knows** — the time of the last message on the right, the unread count, the by-hand unread dot, the bell of a muted chat, and a person's `online` / `last seen` in the status line; reading a chat on the phone clears its count here, and a mute or a pin made there shows here. From the list, `m` mutes, `p` pins, `u` marks read or unread — one request each, without opening the chat.
 - ✏️ **Edits from your other devices land here** — a message rewritten on the phone is rewritten in the thread, in place, marked `edited`, without moving you or counting as new.
 - 💬 **Reactions, both ways** — what people put on your messages shows under them with counts and yours boxed; `r` sets or clears your own through the emoji picker.
 - 😀 **Emoji without leaving the keyboard** — type `:rocket` and press Tab, press it again to walk the other matches; `Alt+E` opens a picker with categories, search and what you used last.
@@ -102,6 +103,7 @@ Current capabilities:
 | Ctrl+O          | back to where you jumped from         |
 | `i`             | draw the photo at the cursor inside the thread |
 | `[` / `]`       | previous / next Telegram folder       |
+| `m` / `p` / `u` (in the chat list) | mute or unmute, pin or unpin, mark read or unread |
 | Tab (in the composer) | complete the `:shortcode` you are typing, again to cycle |
 | Alt+E           | emoji picker                          |
 | Ctrl+D          | save the attachment at the cursor     |

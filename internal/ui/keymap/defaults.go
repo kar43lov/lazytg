@@ -50,6 +50,12 @@ type Keymap struct {
 	DeleteMsg     key.Binding
 	Attach        key.Binding
 	Quit          key.Binding
+	// The three chat-list chords: live only while the list has the focus
+	// and its filter is closed, so a bare letter is safe there for the
+	// same reason it is in the thread.
+	MuteChat     key.Binding
+	PinChat      key.Binding
+	ToggleUnread key.Binding
 }
 
 // Default returns the built-in emacs-flavoured keymap.
@@ -206,6 +212,21 @@ func Default() Keymap {
 		Quit: key.NewBinding(
 			key.WithKeys("ctrl+c", "ctrl+q"),
 			key.WithHelp("ctrl+c", "quit"),
+		),
+		// Chat-list chords. "p" is also "go to the replied message" in the
+		// thread; the two never share a focus, and pin is what "p" means
+		// in every list that has pinning.
+		MuteChat: key.NewBinding(
+			key.WithKeys("m"),
+			key.WithHelp("m", "mute / unmute chat"),
+		),
+		PinChat: key.NewBinding(
+			key.WithKeys("p"),
+			key.WithHelp("p", "pin / unpin chat"),
+		),
+		ToggleUnread: key.NewBinding(
+			key.WithKeys("u"),
+			key.WithHelp("u", "mark chat read / unread"),
 		),
 	}
 }

@@ -473,7 +473,13 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 		a.Repo, a.Bus, a.Log).
 		// Forwarding creates messages, so it goes through the same guard
 		// as text and media rather than around it.
-		WithRateLimiter(a.SendGuard)
+		WithRateLimiter(a.SendGuard).
+		// The chat-level actions: one request per keypress over a chat
+		// that already exists, so none of them creates a message.
+		WithDialogs(
+			tgclient.NewDialogActor(client.API(), peerResolverAdapter{peers: a.Peers}),
+			tgclient.NewReader(client.API(), peerResolverAdapter{peers: a.Peers}),
+			a.Repo)
 
 	// Preserve a dispatcher installed before attach. The cmd layer has to
 	// build one ahead of the client (gotd takes the update handler at

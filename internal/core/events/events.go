@@ -425,3 +425,49 @@ type FileUploadWarning struct {
 }
 
 func (FileUploadWarning) eventMarker() {}
+
+// The chat-list facts, each on its own event because each arrives on its
+// own update and says nothing about the rest of the row.
+
+// ChatReadInbox says the account read a chat up to MaxID somewhere — on the
+// phone, usually — and how many messages are still unread after that.
+type ChatReadInbox struct {
+	ChatID      int64
+	MaxID       int64
+	StillUnread int
+}
+
+func (ChatReadInbox) eventMarker() {}
+
+// ChatPinned says a chat was pinned to, or unpinned from, the top.
+type ChatPinned struct {
+	ChatID int64
+	Pinned bool
+}
+
+func (ChatPinned) eventMarker() {}
+
+// ChatMuted says when a chat's notifications resume; the zero time unmutes.
+type ChatMuted struct {
+	ChatID int64
+	Until  time.Time
+}
+
+func (ChatMuted) eventMarker() {}
+
+// ChatUnreadMark says the by-hand unread dot was set or cleared.
+type ChatUnreadMark struct {
+	ChatID int64
+	Unread bool
+}
+
+func (ChatUnreadMark) eventMarker() {}
+
+// PeerPresence says whether a person is online now, or when they were last.
+type PeerPresence struct {
+	UserID   int64
+	Online   bool
+	LastSeen time.Time
+}
+
+func (PeerPresence) eventMarker() {}

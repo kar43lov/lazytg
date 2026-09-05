@@ -48,6 +48,25 @@ type ActionStore interface {
 	SetReactions(ctx context.Context, chatID, messageID int64, rs []domain.Reaction) error
 }
 
+// DialogActions is the gotd-free contract for what a person does to a chat
+// from the list. Satisfied by *internal/tg.DialogActor in production.
+type DialogActions interface {
+	Mute(ctx context.Context, chatID int64, until time.Time) error
+	Pin(ctx context.Context, chatID int64, pinned bool) error
+	MarkUnread(ctx context.Context, chatID int64, unread bool) error
+}
+
+// ChatStateStore is where the list facts land once the server has agreed.
+// The same setters the live path uses, so the row looks the same whichever
+// side changed it.
+type ChatStateStore interface {
+	GetMessages(ctx context.Context, chatID int64, limit, offset int) ([]domain.Message, error)
+	SetUnread(ctx context.Context, chatID int64, count int) error
+	SetPinned(ctx context.Context, chatID int64, pinned bool) error
+	SetMutedUntil(ctx context.Context, chatID int64, until time.Time) error
+	SetUnreadMark(ctx context.Context, chatID int64, marked bool) error
+}
+
 // ErrNotEditable is returned when the user asks to edit a message the client
 // can tell up front they cannot: one somebody else wrote. It exists as a
 // sentinel so the UI can say why rather than surfacing an RPC error the user
@@ -85,6 +104,12 @@ type ActionService struct {
 	store     ActionStore
 	bus       EventPublisher
 	log       *slog.Logger
+
+	// The chat-level actions. Nil until WithDialogs, which is how an
+	// offline build behaves: the keys say "not connected".
+	dialogs DialogActions
+	marker  ReadMarker
+	chats   ChatStateStore
 }
 
 // EventPublisher is the slice of events.Bus this service needs.
@@ -262,4 +287,86 @@ func (s *ActionService) publish(ev events.Event) {
 		return
 	}
 	s.bus.Publish(ev)
+}
+
+// WithDialogs enables the chat-level actions: mute, pin, mark unread and
+// mark read. marker is the same read-receipt sender the ReadService uses,
+// chats is where the facts land locally once the server has agreed.
+func (s *ActionService) WithDialogs(dialogs DialogActions, marker ReadMarker, chats ChatStateStore) *ActionService {
+	s.dialogs = dialogs
+	s.marker = marker
+	s.chats = chats
+	return s
+}
+
+// Mute silences a chat until the given time; the zero time unmutes.
+func (s *ActionService) Mute(ctx context.Context, chatID int64, until time.Time) error {
+	if s == nil || s.dialogs == nil {
+		return errors.New("mute: not connected")
+	}
+	if err := s.dialogs.Mute(ctx, chatID, until); err != nil {
+		return err
+	}
+	s.recordChatFact(ctx, chatID, "mute", s.chats.SetMutedUntil(ctx, chatID, until))
+	return nil
+}
+
+// Pin puts a chat at the top of the list, or takes it back out.
+func (s *ActionService) Pin(ctx context.Context, chatID int64, pinned bool) error {
+	if s == nil || s.dialogs == nil {
+		return errors.New("pin: not connected")
+	}
+	if err := s.dialogs.Pin(ctx, chatID, pinned); err != nil {
+		return err
+	}
+	s.recordChatFact(ctx, chatID, "pin", s.chats.SetPinned(ctx, chatID, pinned))
+	return nil
+}
+
+// MarkUnread puts the by-hand dot on a chat, the way a person flags a
+// conversation to come back to.
+func (s *ActionService) MarkUnread(ctx context.Context, chatID int64) error {
+	if s == nil || s.dialogs == nil {
+		return errors.New("mark unread: not connected")
+	}
+	if err := s.dialogs.MarkUnread(ctx, chatID, true); err != nil {
+		return err
+	}
+	s.recordChatFact(ctx, chatID, "unread mark", s.chats.SetUnreadMark(ctx, chatID, true))
+	return nil
+}
+
+// MarkRead acknowledges everything in a chat without opening it: the read
+// receipt up to the newest message the mirror holds, and the by-hand dot
+// cleared when it was set. Two requests at most, and the second only when
+// there is a dot to clear.
+func (s *ActionService) MarkRead(ctx context.Context, chatID int64, marked bool) error {
+	if s == nil || s.dialogs == nil || s.marker == nil {
+		return errors.New("mark read: not connected")
+	}
+	newest, err := s.chats.GetMessages(ctx, chatID, 1, 0)
+	if err != nil {
+		return fmt.Errorf("mark read: newest message: %w", err)
+	}
+	if len(newest) > 0 {
+		if err := s.marker.MarkRead(ctx, chatID, newest[0].ID); err != nil {
+			return err
+		}
+		s.recordChatFact(ctx, chatID, "read", s.chats.SetUnread(ctx, chatID, 0))
+	}
+	if marked {
+		if err := s.dialogs.MarkUnread(ctx, chatID, false); err != nil {
+			return err
+		}
+		s.recordChatFact(ctx, chatID, "unread mark", s.chats.SetUnreadMark(ctx, chatID, false))
+	}
+	return nil
+}
+
+func (s *ActionService) recordChatFact(_ context.Context, chatID int64, what string, err error) {
+	if err != nil {
+		s.log.Warn("actions: server accepted the "+what+" but the mirror was not updated", "chat_id", chatID, "err", err)
+		return
+	}
+	s.publish(events.DialogUpdated{ChatID: chatID})
 }

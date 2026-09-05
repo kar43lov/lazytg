@@ -289,3 +289,10 @@ func BenchmarkLiveUpdateLatency(b *testing.B) {
 	<-done
 	b.ReportMetric(float64(live.LastIngestLatency().Microseconds()), "last_us/op")
 }
+
+// The list-fact setters satisfy LiveStore; the latency probe never sends them.
+func (s *inMemoryStore) SetUnread(context.Context, int64, int) error               { return nil }
+func (s *inMemoryStore) SetPinned(context.Context, int64, bool) error              { return nil }
+func (s *inMemoryStore) SetMutedUntil(context.Context, int64, time.Time) error     { return nil }
+func (s *inMemoryStore) SetUnreadMark(context.Context, int64, bool) error          { return nil }
+func (s *inMemoryStore) SetPresence(context.Context, int64, bool, time.Time) error { return nil }

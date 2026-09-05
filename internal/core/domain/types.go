@@ -78,11 +78,28 @@ type Chat struct {
 	LastMessageDate time.Time
 	UnreadCount     int
 	Pinned          bool
+	// MutedUntil is when notifications resume, zero when the chat is not
+	// muted. Telegram's "forever" is a date in 2038. See migration 0015.
+	MutedUntil time.Time
+	// UnreadMark is the dot a user puts on a chat by hand to come back to
+	// it; it is separate from the count, and a chat can carry it with zero
+	// unread messages.
+	UnreadMark bool
+	// Online and LastSeen describe the other party of a private chat.
+	// LastSeen is zero when Telegram does not say, which is what it reports
+	// for people who hide it.
+	Online   bool
+	LastSeen time.Time
 
 	// LastMessagePreview is the text of the chat's newest cached message,
 	// filled by the read path only (GetChats) and ignored on write. It is a
 	// display convenience, not part of the stored chat row.
 	LastMessagePreview string
+}
+
+// Muted reports whether notifications for the chat are off at now.
+func (c Chat) Muted(now time.Time) bool {
+	return !c.MutedUntil.IsZero() && c.MutedUntil.After(now)
 }
 
 // Message is a stored message belonging to a Chat. RawBlob holds the

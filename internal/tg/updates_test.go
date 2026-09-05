@@ -233,3 +233,49 @@ func TestUpdatesDispatcher_SavedMessagesArriveAsOutgoing(t *testing.T) {
 		t.Fatalf("published %+v, want Outgoing for the self chat", got)
 	}
 }
+
+// Reading a chat on the phone, pinning it, muting it, marking it unread,
+// and a person coming online: five updates the dispatcher used to drop,
+// each now a fact about one chat.
+func TestUpdatesDispatcher_PublishesTheListFacts(t *testing.T) {
+	t.Parallel()
+	bus, ch := newTestBus(t)
+	d := NewUpdatesDispatcher(bus, nil)
+
+	ns := tg.PeerNotifySettings{}
+	ns.SetMuteUntil(2147483647)
+	upd := &tg.Updates{Updates: []tg.UpdateClass{
+		&tg.UpdateReadHistoryInbox{Peer: &tg.PeerUser{UserID: 42}, MaxID: 10, StillUnreadCount: 2},
+		&tg.UpdateReadChannelInbox{ChannelID: 77, MaxID: 5, StillUnreadCount: 0},
+		&tg.UpdateDialogPinned{Pinned: true, Peer: &tg.DialogPeer{Peer: &tg.PeerChat{ChatID: 9}}},
+		&tg.UpdateDialogUnreadMark{Unread: true, Peer: &tg.DialogPeer{Peer: &tg.PeerUser{UserID: 42}}},
+		&tg.UpdateNotifySettings{Peer: &tg.NotifyPeer{Peer: &tg.PeerUser{UserID: 42}}, NotifySettings: ns},
+		&tg.UpdateNotifySettings{Peer: &tg.NotifyUsers{}, NotifySettings: ns},
+		&tg.UpdateUserStatus{UserID: 42, Status: &tg.UserStatusOnline{Expires: 1}},
+		&tg.UpdateDialogPinned{Pinned: true, Peer: &tg.DialogPeerFolder{FolderID: 1}},
+	}}
+	if err := d.HandlerFunc().Handle(context.Background(), upd); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	got := []events.Event{receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch)}
+	expectNone(t, ch)
+
+	if r, ok := got[0].(events.ChatReadInbox); !ok || r.ChatID != 42 || r.MaxID != 10 || r.StillUnread != 2 {
+		t.Fatalf("read inbox = %+v", got[0])
+	}
+	if r, ok := got[1].(events.ChatReadInbox); !ok || r.ChatID != 77 || r.StillUnread != 0 {
+		t.Fatalf("channel read inbox = %+v", got[1])
+	}
+	if p, ok := got[2].(events.ChatPinned); !ok || p.ChatID != 9 || !p.Pinned {
+		t.Fatalf("pinned = %+v", got[2])
+	}
+	if m, ok := got[3].(events.ChatUnreadMark); !ok || m.ChatID != 42 || !m.Unread {
+		t.Fatalf("unread mark = %+v", got[3])
+	}
+	if m, ok := got[4].(events.ChatMuted); !ok || m.ChatID != 42 || m.Until.Year() != 2038 {
+		t.Fatalf("muted = %+v", got[4])
+	}
+	if p, ok := got[5].(events.PeerPresence); !ok || p.UserID != 42 || !p.Online {
+		t.Fatalf("presence = %+v", got[5])
+	}
+}

@@ -184,10 +184,26 @@ func truncateTabs(labels []string, width int) string {
 }
 
 // listItems converts the visible slice into what bubbles/list consumes.
-func listItems(items []ChatItem) []list.Item {
+//
+// width is what the delegate will give each row: the list's width less the
+// two columns of padding the default delegate puts in front of a title.
+func listItems(items []ChatItem, width int) []list.Item {
 	out := make([]list.Item, len(items))
 	for i, it := range items {
-		out[i] = it
+		out[i] = it.withWidth(width)
 	}
 	return out
 }
+
+// rowWidth is the room a row has inside the list.
+func (m Model) rowWidth() int {
+	w := m.list.Width() - rowPadding
+	if w < 0 {
+		return 0
+	}
+	return w
+}
+
+// rowPadding is the default delegate's left padding on a title, which it
+// takes out of the width before truncating.
+const rowPadding = 2

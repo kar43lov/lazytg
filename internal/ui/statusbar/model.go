@@ -109,10 +109,13 @@ func (d Download) Total() int64 { return d.total }
 type Model struct {
 	AccountAlias string
 	ChatTitle    string
-	UnreadTotal  int
-	ConnState    string
-	StorageMode  string
-	FloodWait    time.Duration
+	// Presence is what the other party of the open private chat is doing
+	// — "online", or when they were last — shown after the title.
+	Presence    string
+	UnreadTotal int
+	ConnState   string
+	StorageMode string
+	FloodWait   time.Duration
 
 	// DBSizeMB, when > 0, renders an inline "⚠ DB N.N GB" warning chip
 	// next to the storage cell. The chip stays visible until the
@@ -196,6 +199,9 @@ func (m Model) renderLeft(budget int) string {
 	chat := m.ChatTitle
 	if chat == "" {
 		chat = "-"
+	}
+	if m.Presence != "" {
+		chat = chat + " · " + m.Presence
 	}
 	if m.Typing != "" {
 		// Somebody writing to you right now outranks the chat title,

@@ -570,15 +570,20 @@ func (r *Repo) SaveChat(ctx context.Context, c domain.Chat) error {
 		return ErrReadOnly
 	}
 	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO chats (id, type, title, username, last_message_date, unread_count, pinned)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO chats (id, type, title, username, last_message_date, unread_count, pinned,
+                           muted_until, unread_mark, online, last_seen)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             type              = excluded.type,
             title             = excluded.title,
             username          = excluded.username,
             last_message_date = excluded.last_message_date,
             unread_count      = excluded.unread_count,
-            pinned            = excluded.pinned
+            pinned            = excluded.pinned,
+            muted_until       = excluded.muted_until,
+            unread_mark       = excluded.unread_mark,
+            online            = excluded.online,
+            last_seen         = excluded.last_seen
     `,
 		c.ID,
 		string(c.Type),
@@ -587,6 +592,10 @@ func (r *Repo) SaveChat(ctx context.Context, c domain.Chat) error {
 		nullableUnix(c.LastMessageDate),
 		c.UnreadCount,
 		boolToInt(c.Pinned),
+		unixOrZero(c.MutedUntil),
+		boolToInt(c.UnreadMark),
+		boolToInt(c.Online),
+		unixOrZero(c.LastSeen),
 	)
 	if err != nil {
 		return fmt.Errorf("save chat %d: %w", c.ID, err)
@@ -608,6 +617,7 @@ func (r *Repo) GetChats(ctx context.Context) ([]domain.Chat, error) {
 	// not bytes, so this cannot split a rune.
 	rows, err := r.db.QueryContext(ctx, `
         SELECT c.id, c.type, c.title, c.username, c.last_message_date, c.unread_count, c.pinned,
+               c.muted_until, c.unread_mark, c.online, c.last_seen,
                (SELECT substr(m.text, 1, 200) FROM messages m
                  WHERE m.chat_id = c.id
                  ORDER BY m.date DESC, m.id DESC
@@ -629,11 +639,20 @@ func (r *Repo) GetChats(ctx context.Context) ([]domain.Chat, error) {
 			username sql.NullString
 			lastDate sql.NullInt64
 			pinned   int
+			muted    int64
+			mark     int
+			online   int
+			lastSeen int64
 			preview  sql.NullString
 		)
-		if err := rows.Scan(&c.ID, &typ, &title, &username, &lastDate, &c.UnreadCount, &pinned, &preview); err != nil {
+		if err := rows.Scan(&c.ID, &typ, &title, &username, &lastDate, &c.UnreadCount, &pinned,
+			&muted, &mark, &online, &lastSeen, &preview); err != nil {
 			return nil, fmt.Errorf("scan chat: %w", err)
 		}
+		c.MutedUntil = timeOrZero(muted)
+		c.UnreadMark = mark != 0
+		c.Online = online != 0
+		c.LastSeen = timeOrZero(lastSeen)
 		c.LastMessagePreview = preview.String
 		c.Type = domain.ChatType(typ)
 		c.Title = title.String
@@ -1108,4 +1127,49 @@ func timeOrZero(unix int64) time.Time {
 		return time.Time{}
 	}
 	return time.Unix(unix, 0).UTC()
+}
+
+// The four setters below each change one fact about a dialog and nothing
+// else, because each arrives on its own update that says nothing about the
+// rest of the row — rewriting the row from a pin toggle would zero the
+// unread count the sync wrote a minute earlier.
+
+// SetPinned records whether the chat is pinned to the top.
+func (r *Repo) SetPinned(ctx context.Context, chatID int64, pinned bool) error {
+	return r.setChatField(ctx, `UPDATE chats SET pinned = ? WHERE id = ?`, boolToInt(pinned), chatID)
+}
+
+// SetMutedUntil records when notifications resume; the zero time unmutes.
+func (r *Repo) SetMutedUntil(ctx context.Context, chatID int64, until time.Time) error {
+	return r.setChatField(ctx, `UPDATE chats SET muted_until = ? WHERE id = ?`, unixOrZero(until), chatID)
+}
+
+// SetUnread replaces the unread count with what the server reports.
+func (r *Repo) SetUnread(ctx context.Context, chatID int64, count int) error {
+	if count < 0 {
+		count = 0
+	}
+	return r.setChatField(ctx, `UPDATE chats SET unread_count = ? WHERE id = ?`, count, chatID)
+}
+
+// SetUnreadMark records the by-hand unread dot.
+func (r *Repo) SetUnreadMark(ctx context.Context, chatID int64, marked bool) error {
+	return r.setChatField(ctx, `UPDATE chats SET unread_mark = ? WHERE id = ?`, boolToInt(marked), chatID)
+}
+
+// SetPresence records whether the other party of a private chat is online
+// and when they were last seen. A chat that is not a person is simply not
+// updated: the row is addressed by the user's id, which is the chat's.
+func (r *Repo) SetPresence(ctx context.Context, userID int64, online bool, lastSeen time.Time) error {
+	return r.setChatField(ctx, `UPDATE chats SET online = ?, last_seen = ? WHERE id = ?`, boolToInt(online), unixOrZero(lastSeen), userID)
+}
+
+func (r *Repo) setChatField(ctx context.Context, query string, args ...any) error {
+	if r.readOnly.Load() {
+		return ErrReadOnly
+	}
+	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("update chat: %w", err)
+	}
+	return nil
 }

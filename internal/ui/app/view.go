@@ -88,6 +88,7 @@ func (a App) renderBody() string {
 	inputView := inputStyle(a.focus == FocusInput).
 		Width(a.width).
 		Render(a.input.View())
+	a.status.Presence = a.presenceLabel()
 	statusView := a.status.View(a.width)
 
 	return lipgloss.JoinVertical(lipgloss.Left, upper, inputView, statusView)

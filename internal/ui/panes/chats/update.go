@@ -74,7 +74,7 @@ func (m Model) applyLoaded(items []ChatItem) (Model, tea.Cmd) {
 
 	m.chats = items
 	visible := m.visibleChats(items)
-	cmd := m.list.SetItems(listItems(visible))
+	cmd := m.list.SetItems(listItems(visible, m.rowWidth()))
 
 	if wantID != 0 {
 		for i, it := range visible {

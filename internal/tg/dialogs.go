@@ -162,6 +162,8 @@ func resolveDialog(
 	chat := domain.Chat{
 		UnreadCount: dlg.UnreadCount,
 		Pinned:      dlg.Pinned,
+		UnreadMark:  dlg.UnreadMark,
+		MutedUntil:  muteUntilOf(dlg.NotifySettings),
 	}
 	var peer domain.Peer
 
@@ -174,6 +176,7 @@ func resolveDialog(
 		chat.ID = p.UserID
 		chat.Type = domain.ChatTypePrivate
 		chat.Title = userTitle(u)
+		chat.Online, chat.LastSeen = presenceOf(u.Status)
 		if u.Self {
 			// The dialog with yourself. Every official client names it
 			// rather than showing the account's own name twice.
@@ -343,4 +346,30 @@ func (d *DialogsFetcher) SelfDialog(ctx context.Context) (domain.Chat, domain.Pe
 	chat := domain.Chat{ID: u.ID, Type: domain.ChatTypePrivate, Title: SavedMessagesTitle, Username: u.Username}
 	peer := domain.Peer{ID: u.ID, Type: domain.ChatTypePrivate, AccessHash: u.AccessHash}
 	return chat, peer, nil
+}
+
+// muteUntilOf reads when notifications resume off a dialog's settings. Zero
+// when the dialog is not muted, and a date in 2038 for "forever", stored as
+// it comes so a later unmute from the server and a local one agree.
+func muteUntilOf(ns tg.PeerNotifySettings) time.Time {
+	until, ok := ns.GetMuteUntil()
+	if !ok || until <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(int64(until), 0).UTC()
+}
+
+// presenceOf reads a user's status: online now, or when they were last —
+// zero when Telegram says only "recently" or nothing, which is what it says
+// for people who hide it, and the list shows nothing rather than guessing.
+func presenceOf(status tg.UserStatusClass) (online bool, lastSeen time.Time) {
+	switch s := status.(type) {
+	case *tg.UserStatusOnline:
+		return true, time.Time{}
+	case *tg.UserStatusOffline:
+		if s.WasOnline > 0 {
+			return false, time.Unix(int64(s.WasOnline), 0).UTC()
+		}
+	}
+	return false, time.Time{}
 }

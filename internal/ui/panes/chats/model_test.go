@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/lipgloss/v2"
+
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 
@@ -333,30 +335,44 @@ func TestSetFocusUpdatesHeader(t *testing.T) {
 func TestChatItemFormat(t *testing.T) {
 	t.Parallel()
 
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.Local)
 	cases := []struct {
-		name   string
-		chat   domain.Chat
-		expect string
+		name        string
+		chat        domain.Chat
+		title, desc string
 	}{
 		{
-			name:   "plain",
-			chat:   domain.Chat{ID: 1, Title: "Bob"},
-			expect: "Bob",
+			name:  "plain",
+			chat:  domain.Chat{ID: 1, Title: "Bob"},
+			title: "Bob",
 		},
 		{
-			name:   "unread",
-			chat:   domain.Chat{ID: 2, Title: "Alice", UnreadCount: 7},
-			expect: "Alice (7)",
+			name:  "unread badge sits on the second row",
+			chat:  domain.Chat{ID: 2, Title: "Alice", UnreadCount: 7},
+			title: "Alice",
+			desc:  "  (7)",
 		},
 		{
-			name:   "pinned",
-			chat:   domain.Chat{ID: 3, Title: "News", Pinned: true},
-			expect: "[📌] News",
+			name:  "pinned",
+			chat:  domain.Chat{ID: 3, Title: "News", Pinned: true},
+			title: "📌 News",
 		},
 		{
-			name:   "pinned+unread",
-			chat:   domain.Chat{ID: 4, Title: "Team", Pinned: true, UnreadCount: 3},
-			expect: "[📌] Team (3)",
+			name:  "pinned, unread and muted",
+			chat:  domain.Chat{ID: 4, Title: "Team", Pinned: true, UnreadCount: 3, MutedUntil: now.Add(time.Hour)},
+			title: "📌 Team",
+			desc:  "  (3) 🔕",
+		},
+		{
+			name:  "the by-hand dot",
+			chat:  domain.Chat{ID: 5, Title: "Later", UnreadMark: true},
+			title: "Later",
+			desc:  "  ●",
+		},
+		{
+			name:  "time of the last message",
+			chat:  domain.Chat{ID: 6, Title: "Bob", LastMessageDate: now.Add(-time.Hour)},
+			title: "Bob  11:00",
 		},
 	}
 	for _, tc := range cases {
@@ -364,13 +380,58 @@ func TestChatItemFormat(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			it := NewChatItem(tc.chat, "")
-			if got := it.Title(); got != tc.expect {
-				t.Fatalf("Title(): want %q, got %q", tc.expect, got)
+			it.now = now
+			if got := it.Title(); got != tc.title {
+				t.Fatalf("Title(): want %q, got %q", tc.title, got)
+			}
+			if got := it.Description(); got != tc.desc {
+				t.Fatalf("Description(): want %q, got %q", tc.desc, got)
 			}
 			if got := it.FilterValue(); got != tc.chat.Title {
 				t.Fatalf("FilterValue(): want raw title %q, got %q", tc.chat.Title, got)
 			}
 		})
+	}
+}
+
+// With a width the row is laid out in two columns: name left, time right,
+// the name giving way when both do not fit.
+func TestChatItem_ColumnsAtWidth(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.Local)
+	it := NewChatItem(domain.Chat{ID: 1, Title: "Иван Егошин", LastMessageDate: now.Add(-time.Minute), UnreadCount: 2}, "а тебе в одно место").withWidth(24)
+	it.now = now
+	if got := it.Title(); got != "Иван Егошин        11:59" || lipgloss.Width(got) != 24 {
+		t.Fatalf("Title() = %q (%d cells)", got, lipgloss.Width(got))
+	}
+	if got := it.Description(); got != "а тебе в одно место  (2)" || lipgloss.Width(got) != 24 {
+		t.Fatalf("Description() = %q (%d cells)", got, lipgloss.Width(got))
+	}
+	long := NewChatItem(domain.Chat{ID: 2, Title: "Мадина турагентство Ташкент SKY FLY", LastMessageDate: now}, "").withWidth(24)
+	long.now = now
+	if got := long.Title(); lipgloss.Width(got) != 24 || !strings.HasSuffix(got, " 12:00") || !strings.Contains(got, "…") {
+		t.Fatalf("a long name did not give way to the time: %q", got)
+	}
+}
+
+func TestChatTimeLabel(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.Local) // a Saturday
+	cases := map[string]string{
+		"today":     chatTimeLabel(now.Add(-3*time.Hour), now),
+		"yesterday": chatTimeLabel(now.Add(-24*time.Hour), now),
+		"weekday":   chatTimeLabel(now.Add(-3*24*time.Hour), now),
+		"this year": chatTimeLabel(now.Add(-30*24*time.Hour), now),
+		"older":     chatTimeLabel(now.Add(-400*24*time.Hour), now),
+		"unknown":   chatTimeLabel(time.Time{}, now),
+	}
+	want := map[string]string{"today": "09:00", "yesterday": "Yesterday", "weekday": "Wed", "this year": "06.08", "older": "01.08.25", "unknown": ""}
+	for k, v := range want {
+		if cases[k] != v {
+			t.Errorf("%s: got %q, want %q", k, cases[k], v)
+		}
 	}
 }
 

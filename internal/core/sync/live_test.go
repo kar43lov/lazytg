@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -27,6 +28,41 @@ type recordingStore struct {
 	unread        []int64
 	unreadErr     error
 	reactions     []reactionWrite
+	facts         []string
+}
+
+// The list-fact setters record what they were asked, as one line each.
+func (s *recordingStore) fact(line string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.facts = append(s.facts, line)
+	return nil
+}
+
+func (s *recordingStore) factsSnapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.facts...)
+}
+
+func (s *recordingStore) SetUnread(_ context.Context, chatID int64, count int) error {
+	return s.fact(fmt.Sprintf("unread %d=%d", chatID, count))
+}
+
+func (s *recordingStore) SetPinned(_ context.Context, chatID int64, pinned bool) error {
+	return s.fact(fmt.Sprintf("pinned %d=%v", chatID, pinned))
+}
+
+func (s *recordingStore) SetMutedUntil(_ context.Context, chatID int64, until time.Time) error {
+	return s.fact(fmt.Sprintf("muted %d=%d", chatID, until.Unix()))
+}
+
+func (s *recordingStore) SetUnreadMark(_ context.Context, chatID int64, marked bool) error {
+	return s.fact(fmt.Sprintf("mark %d=%v", chatID, marked))
+}
+
+func (s *recordingStore) SetPresence(_ context.Context, userID int64, online bool, lastSeen time.Time) error {
+	return s.fact(fmt.Sprintf("presence %d=%v/%d", userID, online, lastSeen.Unix()))
 }
 
 // IncrementUnread satisfies coresync.LiveStore and records which chats had
@@ -693,6 +729,45 @@ func TestLiveService_StoresAnEditWithoutRaisingTheBadge(t *testing.T) {
 		t.Fatalf("badges raised for %v, want only 43", got)
 	}
 
+	cancel()
+	<-done
+}
+
+// The list facts arrive one per update and each lands on its own column,
+// then the chat list is told to reload.
+func TestLiveService_RecordsTheListFacts(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	store := &recordingStore{}
+	svc := NewLiveService(store, bus, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+	watch := bus.Subscribe(ctx)
+
+	until := time.Date(2038, 1, 19, 3, 14, 7, 0, time.UTC)
+	bus.Publish(events.ChatReadInbox{ChatID: 42, MaxID: 10, StillUnread: 0})
+	bus.Publish(events.ChatPinned{ChatID: 42, Pinned: true})
+	bus.Publish(events.ChatMuted{ChatID: 42, Until: until})
+	bus.Publish(events.ChatUnreadMark{ChatID: 42, Unread: true})
+	bus.Publish(events.PeerPresence{UserID: 42, Online: true})
+	waitFor(t, "five facts to be recorded", func() bool { return len(store.factsSnapshot()) == 5 })
+	want := []string{"unread 42=0", "pinned 42=true", "muted 42=" + fmt.Sprint(until.Unix()), "mark 42=true", "presence 42=true/-62135596800"}
+	if got := store.factsSnapshot(); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("recorded %v, want %v", got, want)
+	}
+	reloads := 0
+	deadline := time.After(time.Second)
+	for reloads < 5 {
+		select {
+		case ev := <-watch:
+			if _, ok := ev.(events.DialogUpdated); ok {
+				reloads++
+			}
+		case <-deadline:
+			t.Fatalf("chat list told to reload %d times, want 5", reloads)
+		}
+	}
 	cancel()
 	<-done
 }

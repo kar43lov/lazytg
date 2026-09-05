@@ -517,3 +517,37 @@ func TestDialogsFetcher_ListedSelfDialogIsSavedMessages(t *testing.T) {
 		t.Fatalf("chats = %+v, want Saved Messages", page.Chats)
 	}
 }
+
+// Muted, marked unread, online, last seen: all four arrive on the dialog
+// page and are kept.
+func TestDialogsFetcher_KeepsTheListFacts(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	seen := at.Add(-time.Hour)
+	friend := &tg.User{ID: 42, AccessHash: 1, FirstName: "Friend", Status: &tg.UserStatusOffline{WasOnline: int(seen.Unix())}}
+	other := &tg.User{ID: 43, AccessHash: 1, FirstName: "Online", Status: &tg.UserStatusOnline{Expires: int(at.Unix()) + 60}}
+	d1, _ := dialogAt(&tg.PeerUser{UserID: 42}, 1, 2, false).(*tg.Dialog)
+	d1.UnreadMark = true
+	d1.NotifySettings.SetMuteUntil(2147483647)
+	d2, _ := dialogAt(&tg.PeerUser{UserID: 43}, 2, 0, false).(*tg.Dialog)
+	stub := &stubGetDialogs{responses: []tg.MessagesDialogsClass{&tg.MessagesDialogs{
+		Dialogs:  []tg.DialogClass{d1, d2},
+		Messages: []tg.MessageClass{topMessage(1, &tg.PeerUser{UserID: 42}, at), topMessage(2, &tg.PeerUser{UserID: 43}, at)},
+		Users:    []tg.UserClass{friend, other},
+	}}}
+	page, err := NewDialogsFetcher(stub).FetchDialogs(context.Background(), 10, coresync.DialogCursor{})
+	if err != nil {
+		t.Fatalf("FetchDialogs: %v", err)
+	}
+	if len(page.Chats) != 2 {
+		t.Fatalf("chats = %+v", page.Chats)
+	}
+	c := page.Chats[0]
+	if !c.UnreadMark || !c.Muted(at) || c.Online || !c.LastSeen.Equal(seen) {
+		t.Fatalf("first chat lost a fact: %+v", c)
+	}
+	if o := page.Chats[1]; !o.Online || o.Muted(at) || o.UnreadMark {
+		t.Fatalf("second chat: %+v", o)
+	}
+}

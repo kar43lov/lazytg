@@ -19,12 +19,14 @@ import (
 
 // fakeActions records what the UI asked for without touching a network.
 type fakeActions struct {
-	mu       sync.Mutex
-	edits    []editRecord
-	deletes  []deleteRecord
-	forwards []forwardRecord
-	reacts   []reactRecord
-	err      error
+	mu          sync.Mutex
+	edits       []editRecord
+	deletes     []deleteRecord
+	forwards    []forwardRecord
+	chatActions []chatActionRecord
+	chatErr     error
+	reacts      []reactRecord
+	err         error
 }
 
 type forwardRecord struct {
@@ -382,4 +384,44 @@ func TestMessageActionKeys_AreThreadOnly(t *testing.T) {
 		a = newAppForActions(t, actions)
 		a = tabTo(t, a, FocusInput)
 	}
+}
+
+// The chat-level actions, recorded like the rest.
+type chatActionRecord struct {
+	kind   string
+	chatID int64
+	flag   bool
+	until  time.Time
+}
+
+func (f *fakeActions) chatRecord(r chatActionRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.chatActions = append(f.chatActions, r)
+}
+
+func (f *fakeActions) chatCalls() []chatActionRecord {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]chatActionRecord(nil), f.chatActions...)
+}
+
+func (f *fakeActions) Mute(_ context.Context, chatID int64, until time.Time) error {
+	f.chatRecord(chatActionRecord{kind: "mute", chatID: chatID, until: until})
+	return f.chatErr
+}
+
+func (f *fakeActions) Pin(_ context.Context, chatID int64, pinned bool) error {
+	f.chatRecord(chatActionRecord{kind: "pin", chatID: chatID, flag: pinned})
+	return f.chatErr
+}
+
+func (f *fakeActions) MarkUnread(_ context.Context, chatID int64) error {
+	f.chatRecord(chatActionRecord{kind: "unread", chatID: chatID})
+	return f.chatErr
+}
+
+func (f *fakeActions) MarkRead(_ context.Context, chatID int64, marked bool) error {
+	f.chatRecord(chatActionRecord{kind: "read", chatID: chatID, flag: marked})
+	return f.chatErr
 }

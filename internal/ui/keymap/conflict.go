@@ -70,6 +70,9 @@ func DetectConflicts(km Keymap) []ConflictReport {
 // find out at runtime.
 var coexisting = [][2]string{
 	{"complete_emoji", "focus_next"},
+	// "p" pins a chat in the list and follows a reply in the thread. The
+	// two panes never hold the focus at once.
+	{"jump_to_reply", "pin_chat"},
 }
 
 func sharedByDesign(owners []string) bool {

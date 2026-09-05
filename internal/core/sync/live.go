@@ -25,6 +25,13 @@ type LiveStore interface {
 	// nothing about the message body and rewriting the whole row from an
 	// update that does not carry it would blank the text.
 	SetReactions(ctx context.Context, chatID, messageID int64, rs []domain.Reaction) error
+	// The chat-list facts. Each changes one column of the chat row, because
+	// each arrives on its own update that says nothing about the rest.
+	SetUnread(ctx context.Context, chatID int64, count int) error
+	SetPinned(ctx context.Context, chatID int64, pinned bool) error
+	SetMutedUntil(ctx context.Context, chatID int64, until time.Time) error
+	SetUnreadMark(ctx context.Context, chatID int64, marked bool) error
+	SetPresence(ctx context.Context, userID int64, online bool, lastSeen time.Time) error
 	// EnsureChat creates the parent chats row when the peer is unknown and
 	// leaves an existing row untouched. Without it a message from a chat
 	// outside the synced dialog window fails its foreign key and is lost.
@@ -130,6 +137,16 @@ func (s *LiveService) drain(ctx context.Context, ch <-chan events.Event) error {
 				s.applyReactions(ctx, typed)
 			case events.ChatOpened:
 				s.openChat.Store(typed.ChatID)
+			case events.ChatReadInbox:
+				s.applyChatFact(ctx, typed.ChatID, "read", s.store.SetUnread(ctx, typed.ChatID, typed.StillUnread))
+			case events.ChatPinned:
+				s.applyChatFact(ctx, typed.ChatID, "pin", s.store.SetPinned(ctx, typed.ChatID, typed.Pinned))
+			case events.ChatMuted:
+				s.applyChatFact(ctx, typed.ChatID, "mute", s.store.SetMutedUntil(ctx, typed.ChatID, typed.Until))
+			case events.ChatUnreadMark:
+				s.applyChatFact(ctx, typed.ChatID, "unread mark", s.store.SetUnreadMark(ctx, typed.ChatID, typed.Unread))
+			case events.PeerPresence:
+				s.applyChatFact(ctx, typed.UserID, "presence", s.store.SetPresence(ctx, typed.UserID, typed.Online, typed.LastSeen))
 			}
 		}
 	}
@@ -257,5 +274,19 @@ func (s *LiveService) countUnread(ctx context.Context, ev events.MessageReceived
 	}
 	if err := s.store.IncrementUnread(ctx, ev.ChatID); err != nil {
 		s.log.Warn("live: unread counter not raised", "chat_id", ev.ChatID, "err", err)
+	}
+}
+
+// applyChatFact reports the outcome of one list-fact write and, when it
+// took, tells the chat list to reload. A chat the mirror does not hold is
+// a no-op at the store, which is right: the facts describe a row, and a
+// row that does not exist has nothing to describe.
+func (s *LiveService) applyChatFact(_ context.Context, chatID int64, what string, err error) {
+	if err != nil {
+		s.log.Warn("live: chat "+what+" not recorded", "chat_id", chatID, "err", err)
+		return
+	}
+	if s.bus != nil {
+		s.bus.Publish(events.DialogUpdated{ChatID: chatID})
 	}
 }
