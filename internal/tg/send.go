@@ -11,6 +11,7 @@ import (
 	"github.com/gotd/td/tgerr"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/markdown"
 	coresync "github.com/kar43lov/lazytg/internal/core/sync"
 )
 
@@ -94,10 +95,16 @@ func (s *Sender) SendText(ctx context.Context, chatID int64, text string, replyT
 	if err != nil {
 		return 0, fmt.Errorf("send: generate random_id: %w", err)
 	}
+	// The outbox stores what was typed, markup included, so a retry sends
+	// the same thing; the markup becomes spans here, at the edge, once.
+	plain, entities := markdown.Parse(text)
 	req := &tg.MessagesSendMessageRequest{
 		Peer:     inputPeer,
-		Message:  text,
+		Message:  plain,
 		RandomID: randomID,
+	}
+	if wire := entitiesToWire(plain, entities); len(wire) > 0 {
+		req.SetEntities(wire)
 	}
 	if replyTo > 0 {
 		req.SetReplyTo(&tg.InputReplyToMessage{ReplyToMsgID: replyTo})
@@ -162,11 +169,15 @@ func (s *Sender) SendMedia(ctx context.Context, chatID int64, file tg.InputFileC
 			&tg.DocumentAttributeFilename{FileName: filename},
 		},
 	}
+	plainCaption, captionEntities := markdown.Parse(caption)
 	req := &tg.MessagesSendMediaRequest{
 		Peer:     inputPeer,
 		Media:    media,
-		Message:  caption,
+		Message:  plainCaption,
 		RandomID: randomID,
+	}
+	if wire := entitiesToWire(plainCaption, captionEntities); len(wire) > 0 {
+		req.SetEntities(wire)
 	}
 	if replyTo > 0 {
 		req.SetReplyTo(&tg.InputReplyToMessage{ReplyToMsgID: replyTo})

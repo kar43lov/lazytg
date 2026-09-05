@@ -108,6 +108,13 @@ type Message struct {
 	// Telegram orders them. Empty for the overwhelming majority of
 	// messages, so it costs nothing to carry. See migration 0012.
 	Reactions []Reaction
+	// Entities is the formatting Telegram attached to Text — bold, code, a
+	// link behind a word — as rune-indexed spans. See migration 0014.
+	Entities []Entity
+	// EditDate is when the message was last rewritten, zero when it never
+	// was. The header says "edited" from it, which is the one thing a
+	// reader wants to know about a message that changed under them.
+	EditDate time.Time
 }
 
 // Reaction is one emoji on a message, with how many people used it.

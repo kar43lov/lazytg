@@ -9,6 +9,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/markdown"
 	"github.com/kar43lov/lazytg/internal/ui/input"
 	"github.com/kar43lov/lazytg/internal/ui/overlay"
 	"github.com/kar43lov/lazytg/internal/ui/panes/thread"
@@ -103,7 +105,9 @@ func (a App) cmdEditTarget() (App, tea.Cmd, bool) {
 	chatID := a.thread.ChatID()
 	a = a.setFocus(FocusInput)
 	return a, func() tea.Msg {
-		return input.StartEditMsg{ChatID: chatID, MessageID: msg.ID, Text: msg.Text}
+		// The composer gets the message the way it was written, markup
+		// and all, so a bold word survives a typo fix.
+		return input.StartEditMsg{ChatID: chatID, MessageID: msg.ID, Text: markdown.Render(msg.Text, msg.Entities)}
 	}, true
 }
 
@@ -235,11 +239,11 @@ func (a App) applyActionResult(msg messageActionsResultMsg) App {
 }
 
 // applyMessageEdited redraws the one row an edit changed.
-func (a App) applyMessageEdited(chatID, messageID int64, text string) App {
-	if a.thread.ChatID() != chatID {
+func (a App) applyMessageEdited(ev events.MessageEdited) App {
+	if a.thread.ChatID() != ev.ChatID {
 		return a
 	}
-	a.thread = a.thread.ApplyEdit(messageID, text)
+	a.thread = a.thread.ApplyEdit(ev.MessageID, ev.Text, ev.Entities, ev.EditDate)
 	return a
 }
 

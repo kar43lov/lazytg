@@ -268,3 +268,49 @@ func TestCryptoRandInt64_NonNegative(t *testing.T) {
 // Compile-time assertion that fmt.Errorf wrapping survives errors.Is
 // inspection — guards against future refactors that drop %w.
 var _ = fmt.Errorf
+
+// The composer's markup becomes spans here, at the edge, once. The server
+// gets the plain text and the entities, not the asterisks.
+func TestSender_SendText_TurnsMarkupIntoEntities(t *testing.T) {
+	t.Parallel()
+	stub := &stubSendMessage{resp: &tg.UpdateShortSentMessage{ID: 1, Date: int(time.Now().Unix())}}
+	resolver := &stubResolver{peer: domain.Peer{ID: 99, Type: domain.ChatTypePrivate, AccessHash: 1}}
+	sender := NewSender(stub, resolver, WithRandomIDFunc(func() (int64, error) { return 1, nil }))
+
+	if _, err := sender.SendText(context.Background(), 99, "🚀 **go** `now`", 0); err != nil {
+		t.Fatalf("SendText: %v", err)
+	}
+	req := stub.calls[0]
+	if req.Message != "🚀 go now" {
+		t.Fatalf("Message = %q, want the markup stripped", req.Message)
+	}
+	got, ok := req.GetEntities()
+	if !ok || len(got) != 2 {
+		t.Fatalf("entities = %+v, want bold and code", got)
+	}
+	bold, isBold := got[0].(*tg.MessageEntityBold)
+	if !isBold || bold.Offset != 3 || bold.Length != 2 {
+		t.Fatalf("first entity = %+v, want bold at UTF-16 offset 3 (the rocket is two units)", got[0])
+	}
+	if _, isCode := got[1].(*tg.MessageEntityCode); !isCode {
+		t.Fatalf("second entity = %+v, want code", got[1])
+	}
+}
+
+func TestSender_SendText_PlainTextCarriesNoEntities(t *testing.T) {
+	t.Parallel()
+	stub := &stubSendMessage{resp: &tg.UpdateShortSentMessage{ID: 1, Date: int(time.Now().Unix())}}
+	resolver := &stubResolver{peer: domain.Peer{ID: 99, Type: domain.ChatTypePrivate, AccessHash: 1}}
+	sender := NewSender(stub, resolver, WithRandomIDFunc(func() (int64, error) { return 1, nil }))
+
+	if _, err := sender.SendText(context.Background(), 99, "2 * 3 and a_b", 0); err != nil {
+		t.Fatalf("SendText: %v", err)
+	}
+	req := stub.calls[0]
+	if req.Message != "2 * 3 and a_b" {
+		t.Fatalf("Message = %q, want it untouched", req.Message)
+	}
+	if _, ok := req.GetEntities(); ok {
+		t.Fatalf("entities were set on plain text: %+v", req.Entities)
+	}
+}

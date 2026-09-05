@@ -629,3 +629,70 @@ func TestLiveService_StoresReactionsFromAnotherDevice(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// The event and the stored row are two different sets of fields, and a field
+// the persist step does not copy is a field that vanishes on the next page
+// load. Formatting is the third field to learn this after from_id and
+// reply_to.
+func TestLiveService_PersistsEntities(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	store := &recordingStore{}
+	svc := NewLiveService(store, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+
+	want := []domain.Entity{{Kind: domain.EntityBold, Offset: 0, Length: 5}}
+	bus.Publish(events.MessageReceived{
+		ChatID: 1, MessageID: 100, Text: "hello", FromID: 7,
+		Date: time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC), Entities: want,
+	})
+
+	deadline := time.After(time.Second)
+	for {
+		if got := store.snapshot(); len(got) == 1 {
+			if len(got[0].Entities) != 1 || got[0].Entities[0] != want[0] {
+				t.Fatalf("saved message carries %+v, want %+v", got[0].Entities, want)
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("message was never persisted")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	cancel()
+	<-done
+}
+
+// An edit is the same message again. It is stored — the mirror has to show
+// the new text — and it raises no badge.
+func TestLiveService_StoresAnEditWithoutRaisingTheBadge(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	store := &recordingStore{}
+	svc := NewLiveService(store, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+
+	when := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	bus.Publish(events.MessageReceived{ChatID: 42, MessageID: 1, Text: "fixed", Date: when, Edited: true, EditDate: when.Add(time.Minute)})
+	waitFor(t, "the edit to be stored", func() bool { return len(store.snapshot()) == 1 })
+	if got := store.snapshot()[0]; got.Text != "fixed" || !got.EditDate.Equal(when.Add(time.Minute)) {
+		t.Fatalf("stored %+v", got)
+	}
+
+	bus.Publish(events.MessageReceived{ChatID: 43, MessageID: 2, Text: "new", Date: when})
+	waitFor(t, "the new message to raise its badge", func() bool { return len(store.unreadSnapshot()) == 1 })
+	if got := store.unreadSnapshot(); got[0] != 43 {
+		t.Fatalf("badges raised for %v, want only 43", got)
+	}
+
+	cancel()
+	<-done
+}

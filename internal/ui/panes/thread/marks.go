@@ -1,6 +1,11 @@
 package thread
 
-import "github.com/kar43lov/lazytg/internal/core/domain"
+import (
+	"reflect"
+	"time"
+
+	"github.com/kar43lov/lazytg/internal/core/domain"
+)
 
 // Marking several messages at once.
 //
@@ -150,17 +155,20 @@ func (m Model) CanRevokeDeletes() bool {
 // In place, rather than reloading the chat: an edit changes a single message,
 // and a reload would move the reader's position — the classic way a client
 // makes you lose your place because somebody fixed a typo three screens up.
-func (m Model) ApplyEdit(id int64, text string) Model {
+func (m Model) ApplyEdit(id int64, text string, entities []domain.Entity, editDate time.Time) Model {
 	for i := range m.messages {
 		if m.messages[i].ID != id {
 			continue
 		}
-		if m.messages[i].Text == text {
+		cur := m.messages[i]
+		if cur.Text == text && reflect.DeepEqual(cur.Entities, entities) && cur.EditDate.Equal(editDate) {
 			return m
 		}
 		msgs := make([]domain.Message, len(m.messages))
 		copy(msgs, m.messages)
 		msgs[i].Text = text
+		msgs[i].Entities = entities
+		msgs[i].EditDate = editDate
 		m.messages = msgs
 		m.viewport.SetContent(m.renderAll())
 		return m

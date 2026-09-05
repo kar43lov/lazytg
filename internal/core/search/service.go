@@ -106,12 +106,12 @@ func (s *Service) JumpContext(ctx context.Context, hit Hit, around int) ([]domai
         SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                media_kind, media_id, media_access_hash, media_file_reference,
                media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-               media_duration, outgoing, reactions, media_waveform
+               media_duration, outgoing, reactions, media_waveform, entities, edit_date
         FROM (
             SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                    media_kind, media_id, media_access_hash, media_file_reference,
                    media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-                   media_duration, outgoing, reactions, media_waveform,
+                   media_duration, outgoing, reactions, media_waveform, entities, edit_date,
                    0 AS half
             FROM messages
             WHERE chat_id = ? AND id < ?
@@ -122,12 +122,12 @@ func (s *Service) JumpContext(ctx context.Context, hit Hit, around int) ([]domai
         SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                media_kind, media_id, media_access_hash, media_file_reference,
                media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-               media_duration, outgoing, reactions, media_waveform
+               media_duration, outgoing, reactions, media_waveform, entities, edit_date
         FROM (
             SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                    media_kind, media_id, media_access_hash, media_file_reference,
                    media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-                   media_duration, outgoing, reactions, media_waveform,
+                   media_duration, outgoing, reactions, media_waveform, entities, edit_date,
                    1 AS half
             FROM messages
             WHERE chat_id = ? AND id >= ?
@@ -200,14 +200,19 @@ func scanMessageWithMedia(rows *sql.Rows) (domain.Message, error) {
 		mediaDur  sql.NullInt64
 		reactions sql.NullString
 		mediaWave []byte
+		entities  sql.NullString
+		editDate  int64
 	)
 	if err := rows.Scan(
 		&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &rawBlob,
 		&mediaKind, &mediaID, &mediaAH, &mediaRef,
 		&mediaDC, &mediaName, &mediaSize, &mediaMime, &mediaThSz,
-		&mediaDur, &m.Outgoing, &reactions, &mediaWave,
+		&mediaDur, &m.Outgoing, &reactions, &mediaWave, &entities, &editDate,
 	); err != nil {
 		return domain.Message{}, err
+	}
+	if editDate != 0 {
+		m.EditDate = time.Unix(editDate, 0).UTC()
 	}
 	m.FromID = fromID.Int64
 	m.Text = text.String
@@ -215,6 +220,7 @@ func scanMessageWithMedia(rows *sql.Rows) (domain.Message, error) {
 	m.Date = time.Unix(date, 0).UTC()
 	m.RawBlob = rawBlob
 	m.Reactions = domain.DecodeReactions(reactions.String)
+	m.Entities = domain.DecodeEntities(entities.String)
 	if mediaKind.Valid && mediaKind.String != "" {
 		m.Media = &domain.MediaInfo{
 			Kind:          domain.MediaKind(mediaKind.String),

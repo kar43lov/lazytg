@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kar43lov/lazytg/internal/core/domain"
+
 	"github.com/gotd/td/tg"
 
 	"github.com/kar43lov/lazytg/internal/core/events"
@@ -145,15 +147,12 @@ func TestUpdatesDispatcher_FlattensShortMessage(t *testing.T) {
 	}
 }
 
-func TestUpdatesDispatcher_IgnoresEditAndUnknown(t *testing.T) {
+func TestUpdatesDispatcher_IgnoresUnknown(t *testing.T) {
 	t.Parallel()
 	bus, ch := newTestBus(t)
 	d := NewUpdatesDispatcher(bus, nil)
 
-	edit := &tg.UpdateEditMessage{
-		Message: &tg.Message{ID: 1, PeerID: &tg.PeerUser{UserID: 1}, Date: 1, Message: "edited"},
-	}
-	upd := &tg.Updates{Updates: []tg.UpdateClass{edit}}
+	upd := &tg.Updates{Updates: []tg.UpdateClass{&tg.UpdateConfig{}}}
 	if err := d.HandlerFunc().Handle(context.Background(), upd); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -178,5 +177,42 @@ func TestUpdatesDispatcher_DedupCacheBoundedSize(t *testing.T) {
 	}
 	if got := len(d.index); got != dedupCacheCapacity {
 		t.Fatalf("len(index) = %d, want %d", got, dedupCacheCapacity)
+	}
+}
+
+// An edit is the same message id arriving again by design, so it must get
+// past the cache that stops one arrival rendering twice — and it must say
+// it is an edit, so nothing downstream counts it as new.
+func TestUpdatesDispatcher_PublishesEditsPastTheDedup(t *testing.T) {
+	t.Parallel()
+	bus, ch := newTestBus(t)
+	d := NewUpdatesDispatcher(bus, nil)
+
+	when := time.Now().UTC()
+	if err := d.HandlerFunc().Handle(context.Background(), &tg.Updates{Updates: []tg.UpdateClass{
+		makeUpdateNewMessage(1, 42, "hi", when),
+	}}); err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	receiveOne(t, ch)
+
+	edited := &tg.Message{ID: 1, PeerID: &tg.PeerUser{UserID: 42}, Date: int(when.Unix()), Message: "hi, fixed"}
+	edited.SetEditDate(int(when.Unix()) + 60)
+	edited.SetEntities([]tg.MessageEntityClass{&tg.MessageEntityBold{Offset: 4, Length: 5}})
+	if err := d.HandlerFunc().Handle(context.Background(), &tg.Updates{Updates: []tg.UpdateClass{
+		&tg.UpdateEditMessage{Message: edited},
+	}}); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	ev := receiveOne(t, ch)
+	got, ok := ev.(events.MessageReceived)
+	if !ok {
+		t.Fatalf("published %T, want MessageReceived", ev)
+	}
+	if !got.Edited || got.Text != "hi, fixed" || got.MessageID != 1 {
+		t.Fatalf("edit published as %+v", got)
+	}
+	if got.EditDate.IsZero() || len(got.Entities) != 1 || got.Entities[0].Kind != domain.EntityBold {
+		t.Fatalf("edit lost its date or spans: %+v", got)
 	}
 }

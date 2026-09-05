@@ -7,6 +7,7 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
+	"github.com/kar43lov/lazytg/internal/core/domain"
 	coresync "github.com/kar43lov/lazytg/internal/core/sync"
 )
 
@@ -48,7 +49,7 @@ func NewEditor(api MessagesEditMessageClient, peers PeerResolver) *Editor {
 //
 // FLOOD_WAIT is translated to *coresync.FloodWaitError so the calling service
 // stays free of gotd, matching Sender.SendText.
-func (e *Editor) Edit(ctx context.Context, chatID, messageID int64, text string) error {
+func (e *Editor) Edit(ctx context.Context, chatID, messageID int64, text string, entities []domain.Entity) error {
 	if e == nil || e.api == nil {
 		return fmt.Errorf("edit: no MTProto client for chat %d", chatID)
 	}
@@ -69,6 +70,9 @@ func (e *Editor) Edit(ctx context.Context, chatID, messageID int64, text string)
 		ID:   int(messageID),
 	}
 	req.SetMessage(text)
+	if wire := entitiesToWire(text, entities); len(wire) > 0 {
+		req.SetEntities(wire)
+	}
 
 	if _, err := e.api.MessagesEditMessage(ctx, req); err != nil {
 		if d, ok := tgerr.AsFloodWait(err); ok {

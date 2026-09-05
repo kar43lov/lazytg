@@ -185,7 +185,7 @@ func formatMessageBlockMarked(msg domain.Message, width int, replyTo *domain.Mes
 	case cursor:
 		b.WriteString(cursorStyle.Render(cursorMark) + " ")
 	}
-	b.WriteString(renderHeader(msg.Date, author, ""))
+	b.WriteString(renderHeader(msg.Date, author, editedSuffix(msg)))
 	b.WriteByte('\n')
 	line := 1
 
@@ -204,7 +204,7 @@ func formatMessageBlockMarked(msg domain.Message, width int, replyTo *domain.Mes
 		}
 	}
 
-	body := renderInlineMarkdown(safetext.Clean(msg.Text))
+	body := renderEntities(msg.Text, msg.Entities, cursor)
 	body = wrapText(body, width-2)
 	b.WriteString(body)
 
@@ -420,6 +420,17 @@ func renderHeader(ts time.Time, author, suffix string) string {
 		head += " " + suffix
 	}
 	return head
+}
+
+// editedSuffix is the word every client puts on a message that changed
+// after it was read. Dim, because it is a footnote; present, because a
+// sentence that says something different from what it said an hour ago
+// should admit it.
+func editedSuffix(msg domain.Message) string {
+	if msg.EditDate.IsZero() {
+		return ""
+	}
+	return timeStyle.Render("edited")
 }
 
 // authorLabel maps a from_id to a display string with no directory to consult.

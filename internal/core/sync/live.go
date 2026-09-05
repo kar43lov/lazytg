@@ -214,6 +214,8 @@ func (s *LiveService) persist(ctx context.Context, ev events.MessageReceived) {
 		Media:     ev.Media,
 		Outgoing:  ev.Outgoing,
 		ReplyTo:   ev.ReplyTo,
+		Entities:  ev.Entities,
+		EditDate:  ev.EditDate,
 		Reactions: ev.Reactions,
 	}); err != nil {
 		s.log.Error("live: save message failed",
@@ -249,7 +251,8 @@ func (s *LiveService) persist(ctx context.Context, ev events.MessageReceived) {
 // idempotent means having SaveMessage report whether the row was new, which is
 // a wider contract change than an over-count that heals itself is worth.
 func (s *LiveService) countUnread(ctx context.Context, ev events.MessageReceived) {
-	if ev.Outgoing || ev.ChatID == 0 || ev.ChatID == s.openChat.Load() {
+	// An edit is the same message again, not one more to read.
+	if ev.Edited || ev.Outgoing || ev.ChatID == 0 || ev.ChatID == s.openChat.Load() {
 		return
 	}
 	if err := s.store.IncrementUnread(ctx, ev.ChatID); err != nil {

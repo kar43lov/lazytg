@@ -107,7 +107,17 @@ func convertMessage(m *tg.Message, chatID int64) domain.Message {
 		Media:     MediaFromMessage(m),
 		Outgoing:  m.Out,
 		Reactions: ReactionsFromMessage(m),
+		Entities:  EntitiesFromMessage(m),
+		EditDate:  editDateOf(m),
 	}
+}
+
+// editDateOf is when the message was last rewritten, or the zero time.
+func editDateOf(m *tg.Message) time.Time {
+	if d, ok := m.GetEditDate(); ok && d != 0 {
+		return time.Unix(int64(d), 0).UTC()
+	}
+	return time.Time{}
 }
 
 // replyToOf names the message m answers, or 0.

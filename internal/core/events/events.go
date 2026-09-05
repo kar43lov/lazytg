@@ -50,6 +50,18 @@ type MessageReceived struct {
 	// arrival — a message is reacted to after it lands — but a message
 	// pulled in by gap recovery can arrive with them.
 	Reactions []domain.Reaction
+	// Entities is the formatting on Text, rune-indexed. Carried for the
+	// same reason ReplyTo is: the pane renders from the event, and a field
+	// the event drops is a field the reader loses until the chat is
+	// reopened.
+	Entities []domain.Entity
+	// Edited marks a rewrite of a message already delivered rather than a
+	// new one. Consumers replace the row they have and count nothing: an
+	// edit is not unread, not a notification, and not a reason to scroll.
+	Edited bool
+	// EditDate is when the rewrite happened; zero for a message never
+	// edited.
+	EditDate time.Time
 }
 
 func (MessageReceived) eventMarker() {}
@@ -122,6 +134,8 @@ type MessageEdited struct {
 	ChatID    int64
 	MessageID int64
 	Text      string
+	Entities  []domain.Entity
+	EditDate  time.Time
 }
 
 func (MessageEdited) eventMarker() {}

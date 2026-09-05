@@ -219,6 +219,13 @@ func (m Model) applyIncoming(ev events.MessageReceived) (Model, tea.Cmd) {
 	if ev.ChatID != m.chatID {
 		return m, nil
 	}
+	if ev.Edited {
+		// The row is replaced where it stands, the way a local edit is. A
+		// message not loaded here is left alone: it will come back rewritten
+		// when its page does, and inserting it now would put it in a window
+		// it does not belong to.
+		return m.ApplyEdit(ev.MessageID, ev.Text, ev.Entities, ev.EditDate), nil
+	}
 	wasAtBottom := m.viewport.AtBottom()
 	if localID, ok := m.pendingServerIDs[ev.MessageID]; ok {
 		m.outgoing = removeOutgoing(m.outgoing, localID)
@@ -233,6 +240,8 @@ func (m Model) applyIncoming(ev events.MessageReceived) (Model, tea.Cmd) {
 		Media:     ev.Media,
 		ReplyTo:   ev.ReplyTo,
 		Reactions: ev.Reactions,
+		Entities:  ev.Entities,
+		EditDate:  ev.EditDate,
 		Outgoing:  ev.Outgoing,
 	})
 	m.recomputeOldestID()

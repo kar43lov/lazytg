@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
@@ -18,10 +19,11 @@ type editCall struct {
 	chatID    int64
 	messageID int64
 	text      string
+	entities  []domain.Entity
 }
 
-func (f *fakeEditor) Edit(_ context.Context, chatID, messageID int64, text string) error {
-	f.calls = append(f.calls, editCall{chatID, messageID, text})
+func (f *fakeEditor) Edit(_ context.Context, chatID, messageID int64, text string, entities []domain.Entity) error {
+	f.calls = append(f.calls, editCall{chatID, messageID, text, entities})
 	return f.err
 }
 
@@ -418,5 +420,34 @@ func TestActionService_ReactIsNotRateLimited(t *testing.T) {
 	}
 	if limiter.calls != 0 {
 		t.Fatalf("the limiter was consulted for a reaction")
+	}
+}
+
+// The composer hands over markup. The server and the mirror get the plain
+// text with its spans, so an edited message stores the same shape a fresh
+// one does — and says when it was edited.
+func TestActionService_Edit_TurnsMarkupIntoSpans(t *testing.T) {
+	t.Parallel()
+
+	editor := &fakeEditor{}
+	store := &fakeActionStore{msg: domain.Message{ID: 7, ChatID: 1, Outgoing: true, Text: "before"}}
+	bus := &recordingBus{}
+	svc := NewActionService(editor, nil, nil, nil, store, bus, nil)
+
+	if err := svc.Edit(context.Background(), 1, 7, "**after** all"); err != nil {
+		t.Fatalf("Edit: %v", err)
+	}
+	want := []domain.Entity{{Kind: domain.EntityBold, Offset: 0, Length: 5}}
+	call := editor.calls[0]
+	if call.text != "after all" || !reflect.DeepEqual(call.entities, want) {
+		t.Fatalf("server call = %+v, want the plain text with a bold span", call)
+	}
+	saved := store.saved[0]
+	if saved.Text != "after all" || !reflect.DeepEqual(saved.Entities, want) || saved.EditDate.IsZero() {
+		t.Fatalf("mirror = %+v, want text, spans and an edit date", saved)
+	}
+	ev, ok := bus.events[0].(events.MessageEdited)
+	if !ok || ev.Text != "after all" || !reflect.DeepEqual(ev.Entities, want) || ev.EditDate.IsZero() {
+		t.Fatalf("published %+v, want the spans and the date", bus.events[0])
 	}
 }

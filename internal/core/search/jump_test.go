@@ -240,3 +240,40 @@ func TestService_JumpContext_CarriesReactions(t *testing.T) {
 		t.Fatalf("jumped-to message carries %v", got)
 	}
 }
+
+// The jump window lists its columns by hand, apart from the repository's
+// own reader. The media columns went missing from it once and the
+// reactions column would have too; the formatting column is the third.
+func TestService_JumpContext_CarriesEntities(t *testing.T) {
+	repo, ctx := openTestRepo(t)
+	const chatID int64 = 30010
+	seedChat(t, repo, ctx, chatID, "Entities")
+
+	want := []domain.Entity{{Kind: domain.EntityCode, Offset: 0, Length: 3}}
+	for i := 1; i <= 5; i++ {
+		var es []domain.Entity
+		if i == 3 {
+			es = want
+		}
+		if err := repo.SaveMessage(ctx, domain.Message{
+			ID: int64(i), ChatID: chatID, FromID: 7,
+			Date:     time.Date(2026, 1, 1, 0, 0, i, 0, time.UTC),
+			Text:     "msg",
+			Entities: es,
+		}); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+	}
+
+	svc := search.NewService(repo, nil, nil)
+	msgs, target, err := svc.JumpContext(ctx, search.Hit{
+		Message: domain.Message{ID: 3, ChatID: chatID},
+		ChatID:  chatID,
+	}, 2)
+	if err != nil {
+		t.Fatalf("JumpContext: %v", err)
+	}
+	if got := msgs[target].Entities; len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("jumped-to message carries %+v, want %+v", got, want)
+	}
+}

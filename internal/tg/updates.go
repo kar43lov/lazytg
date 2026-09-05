@@ -131,9 +131,13 @@ func (d *UpdatesDispatcher) handle(ctx context.Context, u tg.UpdatesClass) error
 func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass) {
 	switch upd := u.(type) {
 	case *tg.UpdateNewMessage:
-		d.publishMessage(upd.Message)
+		d.publishMessage(upd.Message, false)
 	case *tg.UpdateNewChannelMessage:
-		d.publishMessage(upd.Message)
+		d.publishMessage(upd.Message, false)
+	case *tg.UpdateEditMessage:
+		d.publishMessage(upd.Message, true)
+	case *tg.UpdateEditChannelMessage:
+		d.publishMessage(upd.Message, true)
 	case *tg.UpdateDeleteMessages:
 		// No peer in this variant, by design on Telegram's side: message ids
 		// are unique across all private chats and basic groups for one
@@ -152,8 +156,6 @@ func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass) {
 		d.publishTyping(upd.ChannelID, chatIDFromPeer(upd.FromID), upd.Action, time.Now())
 	case *tg.UpdateMessageReactions:
 		d.publishReactions(upd)
-	case *tg.UpdateEditMessage, *tg.UpdateEditChannelMessage:
-		d.log.Debug("update: edit ignored in v0.1", "type", u.TypeName())
 	default:
 		d.log.Debug("update: unhandled type", "type", u.TypeName())
 	}
@@ -161,7 +163,14 @@ func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass) {
 
 // publishMessage converts a gotd MessageClass into a domain MessageReceived
 // and publishes it after deduplication.
-func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass) {
+//
+// edited marks a rewrite of a message already delivered. It skips the
+// dedup on purpose: the cache exists to stop one arrival rendering twice,
+// and an edit is a second arrival of the same id by design — the same
+// message, changed. Telegram also sends an edit update when a reaction
+// lands on a message; the reactions come along on the message here, which
+// is fine, and the row is replaced rather than appended by every consumer.
+func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass, edited bool) {
 	m, ok := mc.(*tg.Message)
 	if !ok {
 		// MessageEmpty / MessageService — nothing useful to render in v0.1.
@@ -174,7 +183,7 @@ func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass) {
 		return
 	}
 	key := dedupKey{chatID: chatID, messageID: int64(m.ID)}
-	if d.seen(key) {
+	if !edited && d.seen(key) {
 		return
 	}
 	d.bus.Publish(events.MessageReceived{
@@ -188,6 +197,9 @@ func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass) {
 		Outgoing:  m.Out,
 		ReplyTo:   replyToOf(m),
 		Reactions: ReactionsFromMessage(m),
+		Entities:  EntitiesFromMessage(m),
+		Edited:    edited,
+		EditDate:  editDateOf(m),
 	})
 }
 

@@ -721,9 +721,9 @@ const messageUpsertSQL = `
             id, chat_id, from_id, date, text, reply_to, raw_blob,
             media_kind, media_id, media_access_hash, media_file_reference,
             media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-            media_duration, outgoing, reactions, media_waveform
+            media_duration, outgoing, reactions, media_waveform, entities, edit_date
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chat_id, id) DO UPDATE SET
             from_id              = excluded.from_id,
             date                 = excluded.date,
@@ -742,7 +742,9 @@ const messageUpsertSQL = `
             media_duration       = excluded.media_duration,
             outgoing             = excluded.outgoing,
             reactions            = excluded.reactions,
-            media_waveform       = excluded.media_waveform
+            media_waveform       = excluded.media_waveform,
+            entities             = excluded.entities,
+            edit_date            = excluded.edit_date
     `
 
 // messageInsertArgs builds the positional argument slice for
@@ -798,6 +800,8 @@ func messageInsertArgs(m domain.Message) []any {
 		m.Outgoing,
 		encodeReactions(m.Reactions),
 		mediaWave,
+		domain.EncodeEntities(m.Entities),
+		unixOrZero(m.EditDate),
 	}
 }
 
@@ -878,7 +882,7 @@ const messageSelectColumns = `
         SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                media_kind, media_id, media_access_hash, media_file_reference,
                media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-               media_duration, outgoing, reactions, media_waveform
+               media_duration, outgoing, reactions, media_waveform, entities, edit_date
     `
 
 // ErrMessageNotFound is returned by Message when the mirror holds no such
@@ -936,12 +940,14 @@ func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 			mediaDur  sql.NullInt64
 			reactions sql.NullString
 			mediaWave []byte
+			entities  sql.NullString
+			editDate  int64
 		)
 		if err := rows.Scan(
 			&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &raw,
 			&mediaKind, &mediaID, &mediaAH, &mediaRef,
 			&mediaDC, &mediaName, &mediaSize, &mediaMime, &mediaThSz,
-			&mediaDur, &m.Outgoing, &reactions, &mediaWave,
+			&mediaDur, &m.Outgoing, &reactions, &mediaWave, &entities, &editDate,
 		); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
@@ -966,6 +972,8 @@ func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 			}
 		}
 		m.Reactions = decodeReactions(reactions.String)
+		m.Entities = domain.DecodeEntities(entities.String)
+		m.EditDate = timeOrZero(editDate)
 		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -1084,4 +1092,20 @@ func (r *Repo) SetReactions(ctx context.Context, chatID, messageID int64, rs []d
 		return fmt.Errorf("set reactions %d/%d: %w", chatID, messageID, err)
 	}
 	return nil
+}
+
+// unixOrZero stores a time as seconds, with the zero time as 0 — the
+// column default, and what "never" reads as on the way back.
+func unixOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UTC().Unix()
+}
+
+func timeOrZero(unix int64) time.Time {
+	if unix == 0 {
+		return time.Time{}
+	}
+	return time.Unix(unix, 0).UTC()
 }

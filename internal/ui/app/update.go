@@ -218,7 +218,7 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case inlineImageReadyMsg:
 		return a.applyInlineImage(m), nil
 	case events.MessageEdited:
-		return a.applyMessageEdited(m.ChatID, m.MessageID, m.Text), nil
+		return a.applyMessageEdited(m), nil
 	case chats.SetFoldersMsg:
 		updated, cmd := a.chats.SetFolders(m.Folders)
 		a.chats = updated

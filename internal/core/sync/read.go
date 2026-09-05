@@ -245,7 +245,7 @@ func (s *ReadService) requestFor(ev events.Event) (readRequest, bool) {
 		s.openChat.Store(typed.ChatID)
 		return readRequest{chatID: typed.ChatID}, typed.ChatID != 0
 	case events.MessageReceived:
-		if typed.Outgoing || typed.ChatID == 0 || typed.ChatID != s.openChat.Load() {
+		if typed.Edited || typed.Outgoing || typed.ChatID == 0 || typed.ChatID != s.openChat.Load() {
 			return readRequest{}, false
 		}
 		return readRequest{chatID: typed.ChatID, maxID: typed.MessageID}, true

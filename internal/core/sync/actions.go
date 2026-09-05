@@ -5,15 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
 	"github.com/kar43lov/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/markdown"
 )
 
 // MessageEditor is the gotd-free contract for rewriting a message that is
 // already on the server. Satisfied by *internal/tg.Editor in production.
 type MessageEditor interface {
-	Edit(ctx context.Context, chatID, messageID int64, text string) error
+	Edit(ctx context.Context, chatID, messageID int64, text string, entities []domain.Entity) error
 }
 
 // MessageDeleter is the gotd-free contract for removing messages from the
@@ -155,17 +157,23 @@ func (s *ActionService) Edit(ctx context.Context, chatID, messageID int64, text 
 		return ErrNotEditable
 	}
 
-	if err := s.editor.Edit(ctx, chatID, messageID, text); err != nil {
+	// The composer hands over what was typed, markup and all; what the
+	// server and the mirror get is the text with its spans, so the edit
+	// stores the same shape a fresh message would.
+	plain, entities := markdown.Parse(text)
+	if err := s.editor.Edit(ctx, chatID, messageID, plain, entities); err != nil {
 		return err
 	}
 
-	msg.Text = text
+	msg.Text = plain
+	msg.Entities = entities
+	msg.EditDate = time.Now().UTC()
 	if err := s.store.SaveMessage(ctx, msg); err != nil {
 		s.log.Warn("edit: server accepted the edit but the mirror was not updated",
 			"chat_id", chatID, "message_id", messageID, "err", err)
 		return nil
 	}
-	s.publish(events.MessageEdited{ChatID: chatID, MessageID: messageID, Text: text})
+	s.publish(events.MessageEdited{ChatID: chatID, MessageID: messageID, Text: plain, Entities: entities, EditDate: msg.EditDate})
 	return nil
 }
 

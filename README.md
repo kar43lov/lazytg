@@ -43,6 +43,8 @@ Think `lazygit` ergonomics, but for Telegram conversations: keyboard-driven, sin
 - 📖 **"14 new messages" where you stopped reading** — opening a chat with a backlog draws a rule above the first message you have not seen, worked out before the chat is acknowledged and left where it is while you read.
 - ↩️ **Follow a reply back** — `p` goes to the message the cursor is answering, `Ctrl+O` comes back, and the pair behaves like an editor's jumplist. Local when the parent is on the page, a window load from the mirror when it is not.
 - ✏️ **"typing…" in the status line** — what the other side is doing right now, in Telegram's own words ("recording a voice message…"), for the chat you are reading. Received only: lazytg never announces your own typing.
+- 🅱️ **Formatting, both ways** — bold, italic, strikethrough, code, code blocks, spoilers and links behind words render the way Telegram's own clients draw them, with the host of a hidden link shown beside the words so "click here" cannot point somewhere it does not say. The composer takes Telegram Desktop's markup (`**bold**`, `__italic__`, `~~strike~~`, `||spoiler||`, `` `code` ``, ```` ```lang ```` blocks, `[text](url)`), and `e` hands a formatted message back to you as markup. A spoiler shows itself when the cursor is on its message.
+- ✏️ **Edits from your other devices land here** — a message rewritten on the phone is rewritten in the thread, in place, marked `edited`, without moving you or counting as new.
 - 💬 **Reactions, both ways** — what people put on your messages shows under them with counts and yours boxed; `r` sets or clears your own through the emoji picker.
 - 😀 **Emoji without leaving the keyboard** — type `:rocket` and press Tab, press it again to walk the other matches; `Alt+E` opens a picker with categories, search and what you used last.
 - 🧭 **Command palette (`Ctrl+Space`)** with frecency-ranked chat switcher and Unicode-fuzzy matching ("Алёна" === "Алена").
@@ -106,6 +108,8 @@ Current capabilities:
 | Ctrl+U          | attach file (upload)                  |
 | `?`             | toggle help overlay                   |
 | Ctrl+C / Ctrl+Q | quit                                  |
+
+The composer applies Telegram Desktop's markup on send and on edit — `**bold**`, `__italic__`, `~~strike~~`, `||spoiler||`, `` `code` ``, a ```` ``` ```` fence with an optional language on its first line, `[text](url)`. Nothing else, and no escapes: a marker with no partner is sent as typed.
 
 ### Mouse
 

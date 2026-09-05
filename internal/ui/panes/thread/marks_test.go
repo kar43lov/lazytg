@@ -170,7 +170,7 @@ func TestApplyEdit_RewritesOneRowInPlace(t *testing.T) {
 	t.Parallel()
 
 	m := markThread(t, msgAt(1, 0, "before"), msgAt(2, 1, "untouched"))
-	m = m.ApplyEdit(1, "after")
+	m = m.ApplyEdit(1, "after", nil, time.Time{})
 
 	out := stripANSI(m.View())
 	if !strings.Contains(out, "after") {

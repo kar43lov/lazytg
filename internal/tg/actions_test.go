@@ -43,7 +43,7 @@ func TestEditor_SendsTheNewTextForTheResolvedPeer(t *testing.T) {
 	api := &stubActionAPI{}
 	ed := NewEditor(api, stubPeers{peer: domain.Peer{ID: 42, Type: domain.ChatTypePrivate, AccessHash: 99}})
 
-	if err := ed.Edit(context.Background(), 42, 7, "rewritten"); err != nil {
+	if err := ed.Edit(context.Background(), 42, 7, "rewritten", nil); err != nil {
 		t.Fatalf("Edit: %v", err)
 	}
 	if len(api.editCalls) != 1 {
@@ -70,7 +70,7 @@ func TestEditor_RefusesAnEmptyEditBeforeSending(t *testing.T) {
 	api := &stubActionAPI{}
 	ed := NewEditor(api, stubPeers{peer: domain.Peer{Type: domain.ChatTypePrivate}})
 
-	if err := ed.Edit(context.Background(), 1, 2, ""); err == nil {
+	if err := ed.Edit(context.Background(), 1, 2, "", nil); err == nil {
 		t.Fatal("empty edit should be refused")
 	}
 	if len(api.editCalls) != 0 {
