@@ -239,6 +239,13 @@ func MediaFromMessage(m *tg.Message) *domain.MediaInfo {
 			Size:          size,
 			ThumbSize:     thumb,
 		}
+	case *tg.MessageMediaWebPage:
+		// The preview card every client draws under a link: site and
+		// title, and the address for "o". A pending or empty page is
+		// not a card yet and reads as nothing.
+		if wp, ok := v.Webpage.(*tg.WebPage); ok {
+			return &domain.MediaInfo{Kind: domain.MediaKindWebPage, Filename: webPageLabel(wp), MimeType: wp.URL}
+		}
 	case *tg.MessageMediaGeo:
 		if p, ok := v.Geo.(*tg.GeoPoint); ok {
 			return &domain.MediaInfo{Kind: domain.MediaKindLocation, Filename: fmt.Sprintf("%.6f,%.6f", p.Lat, p.Long)}
@@ -669,4 +676,21 @@ func largestPhotoSize(photo *tg.Photo) (int64, string) {
 		}
 	}
 	return bestSize, bestThumb
+}
+
+// webPageLabel names a preview the way its card does: the site, then the
+// title; whichever of the two the page carries; the display address when
+// it carries neither.
+func webPageLabel(wp *tg.WebPage) string {
+	site, _ := wp.GetSiteName()
+	title, _ := wp.GetTitle()
+	switch {
+	case site != "" && title != "":
+		return site + " — " + title
+	case title != "":
+		return title
+	case site != "":
+		return site
+	}
+	return wp.DisplayURL
 }

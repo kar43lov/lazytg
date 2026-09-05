@@ -19,7 +19,7 @@ covered by tests only.
 |------|-------------|----|----|----|----|
 | Account & login | 8 | 4 | 1 | 2 | 1 |
 | Chat list | 14 | 11 | 1 | 2 | 0 |
-| Reading a conversation | 16 | 14 | 1 | 1 | 0 |
+| Reading a conversation | 16 | 14 | 2 | 0 | 0 |
 | Writing | 15 | 10 | 1 | 4 | 0 |
 | Media & files | 14 | 8 | 2 | 3 | 1 |
 | Acting on messages | 12 | 9 | 0 | 3 | 0 |
@@ -31,7 +31,7 @@ covered by tests only.
 | Bots & payments | 7 | 2 | 0 | 2 | 3 |
 | Stickers, emoji, GIFs | 6 | 2 | 1 | 2 | 1 |
 | Stories, premium, misc | 8 | 0 | 0 | 2 | 6 |
-| **Total** | **138** | **74** | **8** | **36** | **20** |
+| **Total** | **138** | **74** | **9** | **35** | **20** |
 
 Roughly: half of TD is here, a quarter is reachable and worth doing, the
 rest is either video/voice (no terminal plays it) or product surface
@@ -87,7 +87,7 @@ rest is either video/voice (no terminal plays it) or product surface
 | Pinned message bar | 🟡 | Migration 0018; bar under the pane title from the newest pinned message in the loaded window, moved by `updatePinnedMessages`. A pinned message older than the window is not fetched. |
 | Forwarded-from header | ✅ | `↪ forwarded from Name` above the words; hidden senders by the header's name, channel posts with the author. |
 | Message threads / comments under channel posts | ⬜ | `messages.getReplies`; a second history view. |
-| Link previews (web page cards) | ⬜ | `MessageMediaWebPage` is dropped today; title + description as a badge would be enough. |
+| Link previews (web page cards) | 🟡 | `[🔗 Site — Title] o to open`; the description and the picture are not drawn. |
 | Polls (read) | ✅ | Question, options with shares, total, as text; searchable. |
 
 ## Writing
@@ -252,7 +252,7 @@ ban-risk. Each is one focused PR.
 
 1. ~~Inline keyboards~~ — shipped.
 2. ~~Pinned message bar and forwarded-from header~~ — shipped; the bar still does not fetch a pin older than the loaded window.
-3. **Link previews** as a badge — every link-heavy channel is unreadable without the title.
+3. ~~Link previews as a badge~~ — shipped as site and title; the description and picture are still open.
 4. **Archive** as a folder tab — the cheapest way to reach the chats people hide.
 5. **Mentions completion** (`@` in the composer) — needs the member list, which also unlocks the member view.
 6. **Topics** in forum supergroups — the two-pane layout has room for a topic strip.

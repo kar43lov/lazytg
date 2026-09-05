@@ -35,6 +35,7 @@ func TestOpenableLink(t *testing.T) {
 		{"attachment wins over a caption link", domain.Message{Text: "https://c.example", Media: &domain.MediaInfo{Kind: domain.MediaKindPhoto, FileID: 5}}, ""},
 		{"location opens a map", domain.Message{Media: &domain.MediaInfo{Kind: domain.MediaKindLocation, Filename: "55.755800,37.617300"}},
 			"https://www.openstreetmap.org/?mlat=55.755800&mlon=37.617300#map=16/55.755800/37.617300"},
+		{"the preview's address before the text's", domain.Message{Text: "see https://other.example and more", Media: &domain.MediaInfo{Kind: domain.MediaKindWebPage, Filename: "Example", MimeType: "https://example.com/post"}}, "https://example.com/post"},
 		{"nothing", domain.Message{Text: "just words"}, ""},
 	}
 	for _, tc := range cases {

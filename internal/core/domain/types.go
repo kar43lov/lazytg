@@ -223,6 +223,10 @@ const (
 	MediaKindContact  MediaKind = "contact"
 	MediaKindPoll     MediaKind = "poll"
 	MediaKindDice     MediaKind = "dice"
+	// MediaKindWebPage is the link preview Telegram attaches to a message
+	// with a link: Filename carries the site and title, MimeType the
+	// address. No file, nothing to download; "o" opens the address.
+	MediaKindWebPage MediaKind = "webpage"
 )
 
 // IsPhoto reports whether the kind is transported as a photo rather than

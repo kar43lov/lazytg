@@ -45,6 +45,27 @@ func TestMediaFromMessage_FilelessKinds(t *testing.T) {
 
 // A poll carries no text of its own; the row gets the question and the
 // options with their tallies, so there is something to read and to find.
+// A link preview is a card with no file: the site and the title on it,
+// the address behind it. A page still being fetched is not a card.
+func TestMediaFromMessage_WebPagePreview(t *testing.T) {
+	t.Parallel()
+
+	page := &tg.WebPage{URL: "https://example.com/post", DisplayURL: "example.com/post"}
+	page.SetSiteName("Example")
+	page.SetTitle("A post")
+	got := MediaFromMessage(withMedia(&tg.MessageMediaWebPage{Webpage: page}))
+	if got == nil || got.Kind != domain.MediaKindWebPage || got.Filename != "Example — A post" || got.MimeType != "https://example.com/post" || got.FileID != 0 {
+		t.Fatalf("preview = %+v", got)
+	}
+	bare := &tg.WebPage{URL: "https://example.com/x", DisplayURL: "example.com/x"}
+	if got := MediaFromMessage(withMedia(&tg.MessageMediaWebPage{Webpage: bare})); got == nil || got.Filename != "example.com/x" {
+		t.Fatalf("a page with no title is named by its address: %+v", got)
+	}
+	if got := MediaFromMessage(withMedia(&tg.MessageMediaWebPage{Webpage: &tg.WebPagePending{}})); got != nil {
+		t.Fatalf("a pending page is a card: %+v", got)
+	}
+}
+
 func TestMessageText_DescribesAPoll(t *testing.T) {
 	t.Parallel()
 

@@ -335,7 +335,7 @@ func mediaBadge(m *domain.MediaInfo) string {
 // nothing to open but a map.
 func fileless(kind domain.MediaKind) bool {
 	switch kind {
-	case domain.MediaKindLocation, domain.MediaKindContact, domain.MediaKindPoll, domain.MediaKindDice:
+	case domain.MediaKindLocation, domain.MediaKindContact, domain.MediaKindPoll, domain.MediaKindDice, domain.MediaKindWebPage:
 		return true
 	}
 	return false
@@ -357,6 +357,8 @@ func filelessBadge(m *domain.MediaInfo) string {
 		return mediaStyle.Render("[📊 poll]")
 	case domain.MediaKindDice:
 		return mediaStyle.Render("[🎲 " + label + "]")
+	case domain.MediaKindWebPage:
+		return mediaStyle.Render("[🔗 "+truncRunes(label, 80)+"]") + " " + hintStyle.Render("o to open")
 	default:
 		return mediaStyle.Render("[" + mediaIcon(m.Kind) + " " + label + "]")
 	}

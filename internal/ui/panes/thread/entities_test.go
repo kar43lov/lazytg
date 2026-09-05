@@ -152,6 +152,7 @@ func TestMediaBadge_FilelessKinds(t *testing.T) {
 		{&domain.MediaInfo{Kind: domain.MediaKindContact, Filename: "Ann +1"}, "[👤 Ann +1]"},
 		{&domain.MediaInfo{Kind: domain.MediaKindPoll, Filename: "Lunch?"}, "[📊 poll]"},
 		{&domain.MediaInfo{Kind: domain.MediaKindDice, Filename: "🎲 4"}, "[🎲 🎲 4]"},
+		{&domain.MediaInfo{Kind: domain.MediaKindWebPage, Filename: "Example — A post", MimeType: "https://example.com/post"}, "[🔗 Example — A post] o to open"},
 	}
 	for _, tc := range cases {
 		if got := ansi.Strip(mediaBadge(tc.media)); got != tc.want {

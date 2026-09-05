@@ -27,6 +27,12 @@ func openableLink(msg domain.Message) string {
 		switch msg.Media.Kind {
 		case domain.MediaKindLocation:
 			return mapLink(msg.Media.Filename)
+		case domain.MediaKindWebPage:
+			// The preview's own address first: it is the link the card
+			// was made for, whichever of several the text may carry.
+			if u := httpOnly(msg.Media.MimeType); u != "" {
+				return u
+			}
 		default:
 			if msg.Media.FileID != 0 {
 				// An attachment is what "o" opens; the caption's links
