@@ -165,9 +165,9 @@ Anything not on this list is out of scope until it lands here — see the non-go
 
 **v0.3+**
 
-- Inline media preview (Kitty/iTerm/sixel via `BourgeoisBear/rasterm`).
 - tgql — query DSL with saved searches (smart folders).
-- Forwarding, edit history, reactions.
+- Inline keyboards for bots, pinned-message bar, forwarded-from header, link previews, the archive as a folder tab, `@` mention completion, forum topics — the ranked list, with everything Telegram Desktop does and where lazytg stands on each, is [`docs/FEATURE_PARITY.md`](docs/FEATURE_PARITY.md).
+- Inline photos, forwarding and reactions shipped early, on the `feat/message-actions` branch; sixel/iTerm image protocols are still open.
 
 **v0.5+** (only if a community shows up)
 

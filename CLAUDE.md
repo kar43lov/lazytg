@@ -29,6 +29,7 @@
 | `make`-таргеты, установка, `lefthook install`, git-cliff | [`README.md`](README.md), [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) |
 | Почему решения именно такие (dialectic, отброшенные варианты) | [`docs/plans/lazytg-v0.1.0.md`](docs/plans/lazytg-v0.1.0.md) |
 | Что ещё не работает | `CHANGELOG.md` → **Known gaps** |
+| Что умеет Telegram Desktop и где по каждому пункту стоит lazytg (138 фич, ранжированный список «что дальше») | [`docs/FEATURE_PARITY.md`](docs/FEATURE_PARITY.md) |
 
 ---
 
