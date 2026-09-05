@@ -41,18 +41,16 @@ type FileDownloader interface {
 	Download(ctx context.Context, chatID int64, chatTitle string, info domain.MediaInfo) (string, error)
 }
 
-// MediaOpener is the contract App.handleOpenRequest uses to show a
-// downloaded file to the user. The production implementation is
-// internal/core/files.Opener, which launches the system viewer; tests
-// substitute a fake so no window opens on a CI runner.
-//
 // DesktopNotifier posts to the desktop's notification centre; the
 // production implementation is internal/core/notify.Notifier.
 type DesktopNotifier interface {
 	Notify(ctx context.Context, title, body string) error
 }
 
-// MediaOpener hands a downloaded file to the system viewer.
+// MediaOpener is the contract App.handleOpenRequest uses to show a
+// downloaded file to the user. The production implementation is
+// internal/core/files.Opener, which launches the system viewer; tests
+// substitute a fake so no window opens on a CI runner.
 type MediaOpener interface {
 	Open(ctx context.Context, path string) error
 	// OpenURL hands a web address to the browser.
