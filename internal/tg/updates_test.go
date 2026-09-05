@@ -216,3 +216,20 @@ func TestUpdatesDispatcher_PublishesEditsPastTheDedup(t *testing.T) {
 		t.Fatalf("edit lost its date or spans: %+v", got)
 	}
 }
+
+func TestUpdatesDispatcher_SavedMessagesArriveAsOutgoing(t *testing.T) {
+	t.Parallel()
+	bus, ch := newTestBus(t)
+	self := &Self{}
+	self.Set(8385)
+	d := NewUpdatesDispatcher(bus, nil).WithSelf(self)
+
+	m := &tg.Message{ID: 9, PeerID: &tg.PeerUser{UserID: 8385}, Date: int(time.Now().Unix()), Message: "note"}
+	if err := d.HandlerFunc().Handle(context.Background(), &tg.Updates{Updates: []tg.UpdateClass{&tg.UpdateNewMessage{Message: m}}}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	got := receiveOne(t, ch).(events.MessageReceived)
+	if !got.Outgoing {
+		t.Fatalf("published %+v, want Outgoing for the self chat", got)
+	}
+}

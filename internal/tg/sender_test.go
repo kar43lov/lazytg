@@ -37,7 +37,7 @@ func TestConvertMessage_PrivateChatKeepsItsSender(t *testing.T) {
 	t.Parallel()
 	const peer = 275641346
 
-	in := convertMessage(privateMsg(28, peer, "йцу", false), peer)
+	in := convertMessage(privateMsg(28, peer, "йцу", false), peer, nil)
 	if in.FromID != peer {
 		t.Errorf("incoming FromID = %d, want the peer %d", in.FromID, peer)
 	}
@@ -45,7 +45,7 @@ func TestConvertMessage_PrivateChatKeepsItsSender(t *testing.T) {
 		t.Errorf("incoming message marked outgoing")
 	}
 
-	out := convertMessage(privateMsg(29, peer, "asd", true), peer)
+	out := convertMessage(privateMsg(29, peer, "asd", true), peer, nil)
 	if !out.Outgoing {
 		t.Errorf("outgoing message not marked outgoing")
 	}
@@ -70,7 +70,7 @@ func TestConvertMessage_GroupSenderIsUntouched(t *testing.T) {
 	}
 	m.SetFromID(&tg.PeerUser{UserID: member})
 
-	got := convertMessage(m, chatID)
+	got := convertMessage(m, chatID, nil)
 	if got.FromID != member {
 		t.Errorf("FromID = %d, want the member %d", got.FromID, member)
 	}

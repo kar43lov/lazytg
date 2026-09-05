@@ -29,6 +29,8 @@ import (
 type UpdatesDispatcher struct {
 	bus *events.Bus
 	log *slog.Logger
+	// self names the account's own chat; see Self.
+	self *Self
 
 	mu    sync.Mutex
 	cache *list.List // doubly-linked LRU; back = most-recent
@@ -105,6 +107,12 @@ func (d *UpdatesDispatcher) Manager(storage updates.StateStorage, hasher updates
 // polling source reads the store's newest id, then makes a network call, and
 // a live update landing in that window is newer than the watermark the call
 // was made with. One filter across both paths closes it wherever it happens.
+// WithSelf tells the dispatcher which chat is the account's own.
+func (d *UpdatesDispatcher) WithSelf(self *Self) *UpdatesDispatcher {
+	d.self = self
+	return d
+}
+
 func (d *UpdatesDispatcher) SeenMessage(chatID, messageID int64) bool {
 	return d.seen(dedupKey{chatID: chatID, messageID: messageID})
 }
@@ -194,7 +202,7 @@ func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass, edited bool) {
 		Date:      time.Unix(int64(m.Date), 0).UTC(),
 		Media:     MediaFromMessage(m),
 		ChatType:  chatTypeFromPeer(m.PeerID),
-		Outgoing:  m.Out,
+		Outgoing:  m.Out || d.self.Owns(chatID),
 		ReplyTo:   replyToOf(m),
 		Reactions: ReactionsFromMessage(m),
 		Entities:  EntitiesFromMessage(m),

@@ -233,3 +233,27 @@ func TestHistoryFetcher_Fetch_ChannelUsesInputPeerChannel(t *testing.T) {
 		t.Fatalf("channel peer: got %+v", peer)
 	}
 }
+
+// Telegram marks nothing in Saved Messages as outgoing — the flag means
+// "sent to somebody else" — so without the account's own id every message
+// there reads as the peer's: labelled with the chat's name and refused by
+// the editor. Seen live on 05.09.2026 on the first send into it.
+func TestConvertMessage_SavedMessagesAreYours(t *testing.T) {
+	t.Parallel()
+
+	self := &Self{}
+	self.Set(8385)
+	m := &tg.Message{ID: 1, PeerID: &tg.PeerUser{UserID: 8385}, Date: 1, Message: "note to self"}
+	m.FromID = &tg.PeerUser{UserID: 8385}
+	m.Flags.Set(8)
+	if got := convertMessage(m, 8385, self); !got.Outgoing {
+		t.Fatalf("a message in the self chat is not the account's: %+v", got)
+	}
+	if got := convertMessage(m, 8385, nil); got.Outgoing {
+		t.Fatalf("without the id, the flag alone decided: %+v", got)
+	}
+	other := &tg.Message{ID: 2, PeerID: &tg.PeerUser{UserID: 42}, Date: 1, Message: "from a friend"}
+	if got := convertMessage(other, 42, self); got.Outgoing {
+		t.Fatalf("a message in another chat became the account's: %+v", got)
+	}
+}

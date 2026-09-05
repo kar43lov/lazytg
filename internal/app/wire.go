@@ -427,7 +427,7 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 		opt(&attachOpts)
 	}
 
-	historyFetcher := tgclient.NewHistoryFetcher(client.API())
+	historyFetcher := tgclient.NewHistoryFetcher(client.API()).WithSelf(client.Self())
 	a.HistoryFetcher = historyFetcher
 
 	a.History = coresync.NewHistoryService(historyFetcher, peerLookupAdapter{peers: a.Peers}, a.Repo, a.Bus, a.Log)
@@ -483,6 +483,7 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 	if a.Updates == nil {
 		a.Updates = tgclient.NewUpdatesDispatcher(a.Bus, a.Log)
 	}
+	a.Updates.WithSelf(client.Self())
 
 	// The sender announces what it sent through the dispatcher: Telegram
 	// does not push a message back to the session that sent it, so this

@@ -22,13 +22,21 @@ type MessagesGetHistoryClient interface {
 // so that internal/core/sync can satisfy its HistoryProvider interface
 // against a concrete gotd-aware implementation without importing gotd itself.
 type HistoryFetcher struct {
-	api MessagesGetHistoryClient
+	api  MessagesGetHistoryClient
+	self *Self
 }
 
 // NewHistoryFetcher returns a HistoryFetcher that talks to api. Call sites
 // pass either Client.API() in production or a stub in tests.
 func NewHistoryFetcher(api MessagesGetHistoryClient) *HistoryFetcher {
 	return &HistoryFetcher{api: api}
+}
+
+// WithSelf tells the fetcher which chat is the account's own, so messages
+// there come back as the account's rather than as the peer's.
+func (h *HistoryFetcher) WithSelf(self *Self) *HistoryFetcher {
+	h.self = self
+	return h
 }
 
 // Fetch retrieves up to limit messages older than offsetID from the given
@@ -57,7 +65,7 @@ func (h *HistoryFetcher) Fetch(ctx context.Context, peerID, accessHash int64, pe
 		}
 		return nil, false, fmt.Errorf("messages.getHistory peer=%d: %w", peerID, err)
 	}
-	return decodeHistory(res, peerID, limit), describesPartialResult(res, limit), nil
+	return decodeHistory(res, peerID, limit, h.self), describesPartialResult(res, limit), nil
 }
 
 // buildInputPeer maps domain peer metadata to the gotd InputPeer variant.
@@ -77,7 +85,7 @@ func buildInputPeer(peerID, accessHash int64, peerType string) (tg.InputPeerClas
 
 // decodeHistory converts the gotd response to domain messages, dropping
 // non-Message entries.
-func decodeHistory(res tg.MessagesMessagesClass, chatID int64, limit int) []domain.Message {
+func decodeHistory(res tg.MessagesMessagesClass, chatID int64, limit int, self *Self) []domain.Message {
 	mod, ok := res.AsModified()
 	if !ok {
 		return nil
@@ -89,13 +97,13 @@ func decodeHistory(res tg.MessagesMessagesClass, chatID int64, limit int) []doma
 		if !ok {
 			continue
 		}
-		out = append(out, convertMessage(m, chatID))
+		out = append(out, convertMessage(m, chatID, self))
 	}
 	_ = limit
 	return out
 }
 
-func convertMessage(m *tg.Message, chatID int64) domain.Message {
+func convertMessage(m *tg.Message, chatID int64, self *Self) domain.Message {
 	replyTo := replyToOf(m)
 	return domain.Message{
 		ID:        int64(m.ID),
@@ -105,7 +113,7 @@ func convertMessage(m *tg.Message, chatID int64) domain.Message {
 		Text:      m.Message,
 		ReplyTo:   replyTo,
 		Media:     MediaFromMessage(m),
-		Outgoing:  m.Out,
+		Outgoing:  m.Out || self.Owns(chatID),
 		Reactions: ReactionsFromMessage(m),
 		Entities:  EntitiesFromMessage(m),
 		EditDate:  editDateOf(m),
