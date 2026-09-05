@@ -1,9 +1,10 @@
 package palette
 
 import (
-	tea "charm.land/bubbletea/v2"
 	"regexp"
 	"strings"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 // Update routes incoming messages. Order matters:
