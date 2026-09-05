@@ -97,6 +97,12 @@ func (d *UpdatesDispatcher) Manager(storage updates.StateStorage, hasher updates
 	})
 }
 
+// WithSelf tells the dispatcher which chat is the account's own.
+func (d *UpdatesDispatcher) WithSelf(self *Self) *UpdatesDispatcher {
+	d.self = self
+	return d
+}
+
 // SeenMessage reports whether this message has already been published, and
 // records it when it has not. It is the same LRU the live path dedupes
 // against, exported so the polling fallback shares one filter with it rather
@@ -107,12 +113,6 @@ func (d *UpdatesDispatcher) Manager(storage updates.StateStorage, hasher updates
 // polling source reads the store's newest id, then makes a network call, and
 // a live update landing in that window is newer than the watermark the call
 // was made with. One filter across both paths closes it wherever it happens.
-// WithSelf tells the dispatcher which chat is the account's own.
-func (d *UpdatesDispatcher) WithSelf(self *Self) *UpdatesDispatcher {
-	d.self = self
-	return d
-}
-
 func (d *UpdatesDispatcher) SeenMessage(chatID, messageID int64) bool {
 	return d.seen(dedupKey{chatID: chatID, messageID: messageID})
 }
