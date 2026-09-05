@@ -207,3 +207,84 @@ func ids(items []ChatItem) []int64 {
 	}
 	return out
 }
+
+func archivedChats() []ChatItem {
+	base := time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC)
+	return []ChatItem{
+		NewChatItem(domain.Chat{ID: 1, Title: "Ada", Type: domain.ChatTypePrivate, LastMessageDate: base, UnreadCount: 2}, ""),
+		NewChatItem(domain.Chat{ID: 2, Title: "Team", Type: domain.ChatTypeSupergroup, LastMessageDate: base, Archived: true, UnreadCount: 5}, ""),
+		NewChatItem(domain.Chat{ID: 3, Title: "News", Type: domain.ChatTypeChannel, LastMessageDate: base}, ""),
+	}
+}
+
+// Archived chats are out of the main list and in an Archive tab that exists
+// only while there is something in it; the tab is one more stop for ] and
+// the strip takes its row from the list.
+func TestArchive_TabShowsTheHiddenChats(t *testing.T) {
+	t.Parallel()
+
+	m := New().SetSize(40, 20)
+	if m.stripShown() {
+		t.Fatal("a strip with nothing in it")
+	}
+	m, _ = m.applyLoaded(archivedChats())
+	if got := ids(m.visibleChats(m.chats)); len(got) != 2 || got[0] != 1 || got[1] != 3 {
+		t.Fatalf("main list = %v, want the two unarchived chats", got)
+	}
+	if !m.stripShown() || !strings.Contains(ansi.Strip(m.View()), "Archive") {
+		t.Fatalf("no Archive tab:\n%s", ansi.Strip(m.View()))
+	}
+	if m.list.Height() != 20-2 {
+		t.Fatalf("list height %d, want the strip's row taken", m.list.Height())
+	}
+	if m.UnreadTotal() != 2 {
+		t.Fatalf("unread total %d counts the archive", m.UnreadTotal())
+	}
+
+	m, _ = m.NextFolder()
+	if !m.ArchiveTabActive() {
+		t.Fatal("] did not reach the Archive tab")
+	}
+	if got := ids(m.visibleChats(m.chats)); len(got) != 1 || got[0] != 2 {
+		t.Fatalf("archive tab = %v", got)
+	}
+	m, _ = m.NextFolder()
+	if m.ArchiveTabActive() || len(m.visibleChats(m.chats)) != 2 {
+		t.Fatal("] past the Archive tab did not wrap to All")
+	}
+	m, _ = m.PrevFolder()
+	if !m.ArchiveTabActive() {
+		t.Fatal("[ from All did not wrap to the Archive tab")
+	}
+
+	// The last archived chat leaves: the tab goes and the view returns to All.
+	m, _ = m.applyLoaded(folderChats())
+	if m.ArchiveTabActive() || m.stripShown() || m.list.Height() != 20-1 {
+		t.Fatalf("the empty archive kept its tab: active=%v strip=%v height=%d", m.ArchiveTabActive(), m.stripShown(), m.list.Height())
+	}
+}
+
+// A folder that says exclude_archived keeps archived chats out; one that
+// does not shows them like any other member.
+func TestArchive_FoldersHonourExcludeArchived(t *testing.T) {
+	t.Parallel()
+
+	m := New().SetSize(40, 20)
+	m, _ = m.applyLoaded(archivedChats())
+	m, _ = m.SetFolders([]domain.Folder{
+		{ID: 10, Title: "Groups", Groups: true, ExcludeArchived: true},
+		{ID: 11, Title: "All groups", Groups: true},
+	})
+	m, _ = m.NextFolder()
+	if got := m.visibleChats(m.chats); len(got) != 0 {
+		t.Fatalf("exclude_archived folder shows %v", ids(got))
+	}
+	m, _ = m.NextFolder()
+	if got := ids(m.visibleChats(m.chats)); len(got) != 1 || got[0] != 2 {
+		t.Fatalf("plain folder shows %v, want the archived group", got)
+	}
+	m, _ = m.NextFolder()
+	if !m.ArchiveTabActive() {
+		t.Fatal("the Archive tab comes after the folders")
+	}
+}

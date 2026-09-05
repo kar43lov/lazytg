@@ -159,6 +159,12 @@ func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass, dir na
 		d.publishMessage(upd.Message, true, dir)
 	case *tg.UpdateEditChannelMessage:
 		d.publishMessage(upd.Message, true, dir)
+	case *tg.UpdateFolderPeers:
+		for _, fp := range upd.FolderPeers {
+			if id := chatIDFromPeer(fp.Peer); id != 0 {
+				d.publish(events.ChatArchived{ChatID: id, Archived: fp.FolderID == 1})
+			}
+		}
 	case *tg.UpdatePinnedMessages:
 		d.publish(events.MessagesPinned{ChatID: chatIDFromPeer(upd.Peer), IDs: intsToInt64(upd.Messages), Pinned: upd.Pinned})
 	case *tg.UpdatePinnedChannelMessages:

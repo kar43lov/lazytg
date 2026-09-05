@@ -453,7 +453,9 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 		a.Peers,
 		a.Bus,
 		a.Log,
-		coresync.DialogsConfig{},
+		// Two pages of the archive after the main list: the chats people
+		// hide there, at a fraction of the main walk's request budget.
+		coresync.DialogsConfig{ArchivePages: 2},
 	); err != nil {
 		a.Log.Warn("attach: dialogs service init failed", "err", err)
 	} else {

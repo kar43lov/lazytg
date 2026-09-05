@@ -166,7 +166,7 @@ func (m Model) SetSize(width, height int) Model {
 	// the last chat in the list: the pane draws a row the list does not know
 	// about and the bottom item falls off the end.
 	listHeight := height - 1
-	if len(m.folders) > 0 {
+	if m.stripShown() {
 		listHeight--
 	}
 	if listHeight < minListHeight {
@@ -252,7 +252,10 @@ func (m Model) UnreadTotal() int {
 	now := time.Now()
 	total := 0
 	for _, it := range m.chats {
-		if it.Muted(now) {
+		if it.Muted(now) || it.Archived() {
+			// Archived chats are out of sight by the user's own choice;
+			// their count is not the badge's business, the way it is not
+			// in the official clients.
 			continue
 		}
 		switch {

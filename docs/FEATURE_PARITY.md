@@ -18,7 +18,7 @@ covered by tests only.
 | Area | TD features | ✅ | 🟡 | ⬜ | 🚫 |
 |------|-------------|----|----|----|----|
 | Account & login | 8 | 4 | 1 | 2 | 1 |
-| Chat list | 14 | 11 | 1 | 2 | 0 |
+| Chat list | 14 | 12 | 1 | 1 | 0 |
 | Reading a conversation | 16 | 14 | 2 | 0 | 0 |
 | Writing | 15 | 10 | 1 | 4 | 0 |
 | Media & files | 14 | 8 | 2 | 3 | 1 |
@@ -31,7 +31,7 @@ covered by tests only.
 | Bots & payments | 7 | 2 | 0 | 2 | 3 |
 | Stickers, emoji, GIFs | 6 | 2 | 1 | 2 | 1 |
 | Stories, premium, misc | 8 | 0 | 0 | 2 | 6 |
-| **Total** | **138** | **74** | **9** | **35** | **20** |
+| **Total** | **138** | **75** | **9** | **34** | **20** |
 
 Roughly: half of TD is here, a quarter is reachable and worth doing, the
 rest is either video/voice (no terminal plays it) or product surface
@@ -62,7 +62,7 @@ rest is either video/voice (no terminal plays it) or product surface
 | Online / last seen of the other party | ✅ | In the status line; live-checked. |
 | Time of the last message | ✅ | Right column. |
 | Folders as tabs | ✅ | `[` / `]`; `All` first. |
-| Archive | ⬜ | `folder_id = 1` dialogs; a separate fetch, same cap and pauses as the main sync. |
+| Archive | ✅ | Folder 1 walked after the main list (two pages), `Archive` tab, `updateFolderPeers`, `exclude_archived` honoured in folders. |
 | Draft preview (`Draft:`) | ✅ | From the server; nothing sent back. |
 | Typing indicator in the list | 🟡 | Shown in the status line for the open chat, not on other rows. |
 | Chat switching by number | ✅ | `Alt+1..9`. |
@@ -253,7 +253,7 @@ ban-risk. Each is one focused PR.
 1. ~~Inline keyboards~~ — shipped.
 2. ~~Pinned message bar and forwarded-from header~~ — shipped; the bar still does not fetch a pin older than the loaded window.
 3. ~~Link previews as a badge~~ — shipped as site and title; the description and picture are still open.
-4. **Archive** as a folder tab — the cheapest way to reach the chats people hide.
+4. ~~Archive as a folder tab~~ — shipped.
 5. **Mentions completion** (`@` in the composer) — needs the member list, which also unlocks the member view.
 6. **Topics** in forum supergroups — the two-pane layout has room for a topic strip.
 7. **Desktop notifications** (opt-in) — the bell is not enough for a detached tmux session.

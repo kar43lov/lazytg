@@ -98,6 +98,9 @@ type Chat struct {
 	// as markup. It rides on the dialog page and is not stored: the server
 	// keeps it, and the sync brings it back on every start.
 	Draft string
+	// Archived is the chat's place in Telegram's archive folder: out of
+	// the main list and the folder tabs, in the Archive tab.
+	Archived bool
 
 	// LastMessagePreview is the text of the chat's newest cached message,
 	// filled by the read path only (GetChats) and ignored on write. It is a
@@ -289,8 +292,7 @@ type Peer struct {
 // a chat that arrives after the folder was defined belongs to it immediately
 // if it matches.
 //
-// Two things are deliberately not modelled. Archived chats are not tracked by
-// this client at all, so ExcludeArchived is stored and ignored. And a folder
+// One thing is deliberately not modelled. A folder
 // can name a bot or a contact, categories the local mirror has no column for
 // — see Matches for what that costs.
 type Folder struct {

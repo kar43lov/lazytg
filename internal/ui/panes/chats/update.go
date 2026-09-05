@@ -74,7 +74,16 @@ func (m Model) applyLoaded(items []ChatItem) (Model, tea.Cmd) {
 		wantID = sel.ID()
 	}
 
+	hadStrip := m.stripShown()
 	m.chats = m.withDrafts(items)
+	if m.folderIdx == folderArchive && !m.hasArchive() {
+		// The last archived chat left; the tab went with it.
+		m.folderIdx = folderAll
+	}
+	if hadStrip != m.stripShown() && m.Width > 0 {
+		// The strip appeared or went: the list has a row more or less.
+		m = m.SetSize(m.Width, m.Height)
+	}
 	visible := m.visibleChats(m.chats)
 	cmd := m.list.SetItems(listItems(visible, m.rowWidth()))
 

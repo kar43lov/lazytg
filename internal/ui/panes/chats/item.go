@@ -38,6 +38,7 @@ type ChatItem struct {
 	readOutboxMaxID int64
 	username        string
 	draft           string
+	archived        bool
 	// width is the room the row has, set when the list is laid out. Zero
 	// means "unknown", and the row then carries no right-hand column.
 	width int
@@ -79,8 +80,12 @@ func NewChatItem(c domain.Chat, preview string) ChatItem {
 		lastSeen:        c.LastSeen,
 		readOutboxMaxID: c.ReadOutboxMaxID,
 		username:        c.Username,
+		archived:        c.Archived,
 	}
 }
+
+// Archived reports the chat's place in the archive folder.
+func (i ChatItem) Archived() bool { return i.archived }
 
 // Username is the public handle of the chat, empty when it has none.
 func (i ChatItem) Username() string { return i.username }
@@ -294,5 +299,6 @@ func (i ChatItem) Chat() domain.Chat {
 		LastSeen:        i.lastSeen,
 		ReadOutboxMaxID: i.readOutboxMaxID,
 		Username:        i.username,
+		Archived:        i.archived,
 	}
 }

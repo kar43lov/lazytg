@@ -67,6 +67,10 @@ func (s *recordingStore) SetPresence(_ context.Context, userID int64, online boo
 
 // IncrementUnread satisfies coresync.LiveStore and records which chats had
 // their badge raised, which is what the unread tests assert on.
+func (s *recordingStore) SetArchived(_ context.Context, chatID int64, archived bool) error {
+	return s.fact(fmt.Sprintf("archived %d=%v", chatID, archived))
+}
+
 func (s *recordingStore) SetPinnedMessages(_ context.Context, chatID int64, ids []int64, pinned bool) error {
 	return s.fact(fmt.Sprintf("pinned %d=%v/%v", chatID, ids, pinned))
 }
@@ -769,8 +773,9 @@ func TestLiveService_RecordsTheListFacts(t *testing.T) {
 	bus.Publish(events.PeerPresence{UserID: 42, Online: true})
 	bus.Publish(events.ChatReadOutbox{ChatID: 42, MaxID: 17})
 	bus.Publish(events.MessagesPinned{ChatID: 42, IDs: []int64{5}, Pinned: true})
-	waitFor(t, "seven facts to be recorded", func() bool { return len(store.factsSnapshot()) == 7 })
-	want := []string{"unread 42=0", "pinned 42=true", "muted 42=" + fmt.Sprint(until.Unix()), "mark 42=true", "presence 42=true/-62135596800", "read-outbox 42=17", "pinned 42=[5]/true"}
+	bus.Publish(events.ChatArchived{ChatID: 42, Archived: true})
+	waitFor(t, "eight facts to be recorded", func() bool { return len(store.factsSnapshot()) == 8 })
+	want := []string{"unread 42=0", "pinned 42=true", "muted 42=" + fmt.Sprint(until.Unix()), "mark 42=true", "presence 42=true/-62135596800", "read-outbox 42=17", "pinned 42=[5]/true", "archived 42=true"}
 	if got := store.factsSnapshot(); fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("recorded %v, want %v", got, want)
 	}

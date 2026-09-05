@@ -157,3 +157,4 @@ func (s *stampedStore) SetUnreadMark(context.Context, int64, bool) error        
 func (s *stampedStore) SetPresence(context.Context, int64, bool, time.Time) error     { return nil }
 func (s *stampedStore) SetReadOutbox(context.Context, int64, int64) error             { return nil }
 func (s *stampedStore) SetPinnedMessages(context.Context, int64, []int64, bool) error { return nil }
+func (s *stampedStore) SetArchived(context.Context, int64, bool) error                { return nil }

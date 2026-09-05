@@ -571,8 +571,8 @@ func (r *Repo) SaveChat(ctx context.Context, c domain.Chat) error {
 	}
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO chats (id, type, title, username, last_message_date, unread_count, pinned,
-                           muted_until, unread_mark, online, last_seen, read_outbox_max_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           muted_until, unread_mark, online, last_seen, read_outbox_max_id, archived)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             type              = excluded.type,
             title             = excluded.title,
@@ -584,7 +584,8 @@ func (r *Repo) SaveChat(ctx context.Context, c domain.Chat) error {
             unread_mark       = excluded.unread_mark,
             online            = excluded.online,
             last_seen         = excluded.last_seen,
-            read_outbox_max_id = MAX(chats.read_outbox_max_id, excluded.read_outbox_max_id)
+            read_outbox_max_id = MAX(chats.read_outbox_max_id, excluded.read_outbox_max_id),
+            archived          = excluded.archived
     `,
 		c.ID,
 		string(c.Type),
@@ -598,6 +599,7 @@ func (r *Repo) SaveChat(ctx context.Context, c domain.Chat) error {
 		boolToInt(c.Online),
 		unixOrZero(c.LastSeen),
 		c.ReadOutboxMaxID,
+		boolToInt(c.Archived),
 	)
 	if err != nil {
 		return fmt.Errorf("save chat %d: %w", c.ID, err)
@@ -619,7 +621,7 @@ func (r *Repo) GetChats(ctx context.Context) ([]domain.Chat, error) {
 	// not bytes, so this cannot split a rune.
 	rows, err := r.db.QueryContext(ctx, `
         SELECT c.id, c.type, c.title, c.username, c.last_message_date, c.unread_count, c.pinned,
-               c.muted_until, c.unread_mark, c.online, c.last_seen, c.read_outbox_max_id,
+               c.muted_until, c.unread_mark, c.online, c.last_seen, c.read_outbox_max_id, c.archived,
                (SELECT substr(m.text, 1, 200) FROM messages m
                  WHERE m.chat_id = c.id
                  ORDER BY m.date DESC, m.id DESC
@@ -645,10 +647,11 @@ func (r *Repo) GetChats(ctx context.Context) ([]domain.Chat, error) {
 			mark     int
 			online   int
 			lastSeen int64
+			archived int
 			preview  sql.NullString
 		)
 		if err := rows.Scan(&c.ID, &typ, &title, &username, &lastDate, &c.UnreadCount, &pinned,
-			&muted, &mark, &online, &lastSeen, &c.ReadOutboxMaxID, &preview); err != nil {
+			&muted, &mark, &online, &lastSeen, &c.ReadOutboxMaxID, &archived, &preview); err != nil {
 			return nil, fmt.Errorf("scan chat: %w", err)
 		}
 		c.MutedUntil = timeOrZero(muted)
@@ -663,6 +666,7 @@ func (r *Repo) GetChats(ctx context.Context) ([]domain.Chat, error) {
 			c.LastMessageDate = time.Unix(lastDate.Int64, 0).UTC()
 		}
 		c.Pinned = pinned != 0
+		c.Archived = archived != 0
 		out = append(out, c)
 	}
 	if err := rows.Err(); err != nil {
@@ -1186,18 +1190,23 @@ func (r *Repo) SaveChatIfMissing(ctx context.Context, c domain.Chat) error {
 	}
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO chats (id, type, title, username, last_message_date, unread_count, pinned,
-                           muted_until, unread_mark, online, last_seen, read_outbox_max_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           muted_until, unread_mark, online, last_seen, read_outbox_max_id, archived)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO NOTHING
     `,
 		c.ID, string(c.Type), c.Title, c.Username, nullableUnix(c.LastMessageDate), c.UnreadCount,
 		boolToInt(c.Pinned), unixOrZero(c.MutedUntil), boolToInt(c.UnreadMark), boolToInt(c.Online),
-		unixOrZero(c.LastSeen), c.ReadOutboxMaxID,
+		unixOrZero(c.LastSeen), c.ReadOutboxMaxID, boolToInt(c.Archived),
 	)
 	if err != nil {
 		return fmt.Errorf("insert chat if missing: %w", err)
 	}
 	return nil
+}
+
+// SetArchived moves a chat into, or out of, the archive.
+func (r *Repo) SetArchived(ctx context.Context, chatID int64, archived bool) error {
+	return r.setChatField(ctx, `UPDATE chats SET archived = ? WHERE id = ?`, boolToInt(archived), chatID)
 }
 
 // SetPinnedMessages flags, or unflags, the given messages of a chat as

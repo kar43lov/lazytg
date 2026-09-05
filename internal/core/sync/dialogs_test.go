@@ -19,11 +19,27 @@ type fakeDialogsProvider struct {
 	errs    []error
 	cursors []DialogCursor
 	calls   int
+	// The archive walk is served from its own pages, one per call.
+	archivePages []DialogPage
+	archiveErr   error
+	archiveCalls int
 }
 
 func (f *fakeDialogsProvider) FetchDialogs(_ context.Context, _ int, cursor DialogCursor) (DialogPage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if cursor.Folder == 1 {
+		idx := f.archiveCalls
+		f.archiveCalls++
+		f.cursors = append(f.cursors, cursor)
+		if f.archiveErr != nil {
+			return DialogPage{}, f.archiveErr
+		}
+		if idx < len(f.archivePages) {
+			return f.archivePages[idx], nil
+		}
+		return DialogPage{}, nil
+	}
 	idx := f.calls
 	f.calls++
 	f.cursors = append(f.cursors, cursor)
@@ -614,5 +630,57 @@ func TestDialogsService_Sync_PublishesDrafts(t *testing.T) {
 	}
 	if len(drafts) != 1 || drafts[0].ChatID != 7 || drafts[0].Text != "half a sentence" {
 		t.Fatalf("drafts = %+v", drafts)
+	}
+}
+
+// The archive is walked after the main list, its chats stored as archived,
+// and both lists count towards what the prune keeps. An empty archive is
+// complete; an archive that errors fails the sync.
+func TestDialogsService_Sync_WalksTheArchive(t *testing.T) {
+	t.Parallel()
+
+	provider := &fakeDialogsProvider{
+		pages:        []DialogPage{chatPage(false, DialogCursor{}, 7, 8)},
+		archivePages: []DialogPage{chatPage(false, DialogCursor{}, 9)},
+	}
+	chats := &fakeChatStore{}
+	svc := newTestService(t, provider, chats, &fakePeerStore{}, nil, DialogsConfig{ArchivePages: 2})
+	if n, err := svc.Sync(context.Background()); err != nil || n != 3 {
+		t.Fatalf("Sync = %d, %v", n, err)
+	}
+	archived := map[int64]bool{}
+	for _, c := range chats.saved {
+		archived[c.ID] = c.Archived
+	}
+	if archived[7] || archived[8] || !archived[9] {
+		t.Fatalf("archived flags = %v", archived)
+	}
+	if got := provider.cursors[len(provider.cursors)-1]; got.Folder != 1 {
+		t.Fatalf("the archive walk asked with %+v", got)
+	}
+	if pruned := chats.prunedSnapshot(); len(pruned) != 1 || len(pruned[0]) != 3 {
+		t.Fatalf("prune keep-set = %v, want the three chats of both lists", pruned)
+	}
+
+	empty := &fakeDialogsProvider{pages: []DialogPage{chatPage(false, DialogCursor{}, 7)}}
+	chats = &fakeChatStore{}
+	svc = newTestService(t, empty, chats, &fakePeerStore{}, nil, DialogsConfig{ArchivePages: 2})
+	if _, err := svc.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync with an empty archive: %v", err)
+	}
+	if pruned := chats.prunedSnapshot(); len(pruned) != 1 {
+		t.Fatalf("an empty archive kept the prune from running: %v", pruned)
+	}
+
+	failing := &fakeDialogsProvider{pages: []DialogPage{chatPage(false, DialogCursor{}, 7)}, archiveErr: errors.New("boom")}
+	svc = newTestService(t, failing, &fakeChatStore{}, &fakePeerStore{}, nil, DialogsConfig{ArchivePages: 2})
+	if _, err := svc.Sync(context.Background()); err == nil {
+		t.Fatal("an archive fetch error was swallowed")
+	}
+
+	skipped := &fakeDialogsProvider{pages: []DialogPage{chatPage(false, DialogCursor{}, 7)}, archivePages: []DialogPage{chatPage(false, DialogCursor{}, 9)}}
+	svc = newTestService(t, skipped, &fakeChatStore{}, &fakePeerStore{}, nil, DialogsConfig{})
+	if _, err := svc.Sync(context.Background()); err != nil || skipped.archiveCalls != 0 {
+		t.Fatalf("ArchivePages 0 still walked the archive: calls=%d err=%v", skipped.archiveCalls, err)
 	}
 }

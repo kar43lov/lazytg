@@ -583,3 +583,35 @@ func TestDialogsFetcher_CarriesTheDraft(t *testing.T) {
 		t.Fatalf("an empty draft reads %q", got)
 	}
 }
+
+// The archive is folder 1 on the request; the main list is asked for the
+// way it always was, with no folder at all. A page's cursor keeps the folder.
+func TestDialogsFetcher_AsksForTheArchiveByFolder(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	full := &tg.MessagesDialogsSlice{Count: 500}
+	for i := 1; i <= 100; i++ {
+		full.Dialogs = append(full.Dialogs, dialogAt(&tg.PeerUser{UserID: int64(i)}, i, 0, false))
+		full.Messages = append(full.Messages, topMessage(i, &tg.PeerUser{UserID: int64(i)}, at.Add(time.Duration(i)*time.Second)))
+		full.Users = append(full.Users, &tg.User{ID: int64(i), AccessHash: 1, FirstName: "u"})
+	}
+	stub := &stubGetDialogs{responses: []tg.MessagesDialogsClass{full, full}}
+	f := NewDialogsFetcher(stub)
+	if _, err := f.FetchDialogs(context.Background(), 100, coresync.DialogCursor{}); err != nil {
+		t.Fatalf("main: %v", err)
+	}
+	page, err := f.FetchDialogs(context.Background(), 100, coresync.DialogCursor{Folder: 1})
+	if err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	if _, set := stub.calls[0].GetFolderID(); set {
+		t.Fatal("the main list was asked with a folder id")
+	}
+	if id, set := stub.calls[1].GetFolderID(); !set || id != 1 {
+		t.Fatalf("the archive was asked with folder %d (set=%v)", id, set)
+	}
+	if !page.HasMore || page.Next.Folder != 1 {
+		t.Fatalf("the archive page's cursor lost its folder: %+v", page.Next)
+	}
+}

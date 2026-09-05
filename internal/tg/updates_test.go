@@ -261,12 +261,19 @@ func TestUpdatesDispatcher_PublishesTheListFacts(t *testing.T) {
 		&tg.UpdateReadChannelOutbox{ChannelID: 77, MaxID: 8},
 		&tg.UpdateDraftMessage{Peer: &tg.PeerUser{UserID: 42}, Draft: &tg.DraftMessage{Message: "later"}},
 		&tg.UpdateDraftMessage{Peer: &tg.PeerUser{UserID: 43}, Draft: &tg.DraftMessageEmpty{}},
+		&tg.UpdateFolderPeers{FolderPeers: []tg.FolderPeer{{Peer: &tg.PeerUser{UserID: 42}, FolderID: 1}, {Peer: &tg.PeerChannel{ChannelID: 77}, FolderID: 0}}},
 	}}
 	if err := d.HandlerFunc().Handle(context.Background(), upd); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	got := []events.Event{receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch)}
+	got := []events.Event{receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch)}
 	expectNone(t, ch)
+	if a, ok := got[10].(events.ChatArchived); !ok || a.ChatID != 42 || !a.Archived {
+		t.Fatalf("archived = %+v", got[10])
+	}
+	if a, ok := got[11].(events.ChatArchived); !ok || a.ChatID != 77 || a.Archived {
+		t.Fatalf("unarchived = %+v", got[11])
+	}
 	if d, ok := got[8].(events.DraftChanged); !ok || d.ChatID != 42 || d.Text != "later" {
 		t.Fatalf("draft = %+v", got[8])
 	}

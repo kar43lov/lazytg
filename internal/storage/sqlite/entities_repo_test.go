@@ -231,3 +231,27 @@ func TestMessageOriginAndPinned_RoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestChatArchived_RoundTripAndSetter(t *testing.T) {
+	t.Parallel()
+	repo, ctx := openTestRepo(t)
+	if err := repo.SaveChat(ctx, domain.Chat{ID: 1, Type: domain.ChatTypePrivate, Title: "hidden", Archived: true}); err != nil {
+		t.Fatalf("SaveChat: %v", err)
+	}
+	if err := repo.SaveChatIfMissing(ctx, domain.Chat{ID: 2, Type: domain.ChatTypePrivate, Title: "also", Archived: true}); err != nil {
+		t.Fatalf("SaveChatIfMissing: %v", err)
+	}
+	chats, _ := repo.GetChats(ctx)
+	if len(chats) != 2 || !chats[0].Archived || !chats[1].Archived {
+		t.Fatalf("archived flags lost: %+v", chats)
+	}
+	if err := repo.SetArchived(ctx, 1, false); err != nil {
+		t.Fatalf("SetArchived: %v", err)
+	}
+	chats, _ = repo.GetChats(ctx)
+	for _, c := range chats {
+		if (c.ID == 1) == c.Archived {
+			t.Fatalf("after SetArchived: %+v", c)
+		}
+	}
+}

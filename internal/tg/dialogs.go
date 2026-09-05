@@ -47,12 +47,18 @@ func (d *DialogsFetcher) FetchDialogs(ctx context.Context, limit int, cursor cor
 		return coresync.DialogPage{}, err
 	}
 
-	res, err := d.api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
+	req := &tg.MessagesGetDialogsRequest{
 		Limit:      limit,
 		OffsetDate: cursor.Date,
 		OffsetID:   cursor.ID,
 		OffsetPeer: offsetPeer,
-	})
+	}
+	if cursor.Folder != 0 {
+		// The archive is folder 1; the main list is what an unset folder
+		// answers with, the way it always did.
+		req.SetFolderID(cursor.Folder)
+	}
+	res, err := d.api.MessagesGetDialogs(ctx, req)
 	if err != nil {
 		if wait, ok := tgerr.AsFloodWait(err); ok {
 			return coresync.DialogPage{}, &coresync.FloodWaitError{RetryAfter: wait}
@@ -67,7 +73,11 @@ func (d *DialogsFetcher) FetchDialogs(ctx context.Context, limit int, cursor cor
 		// new data" rather than an error.
 		return coresync.DialogPage{}, nil
 	}
-	return decodeDialogs(mod, limit), nil
+	page := decodeDialogs(mod, limit)
+	if page.HasMore {
+		page.Next.Folder = cursor.Folder
+	}
+	return page, nil
 }
 
 // cursorPeer turns a paging cursor into the InputPeer that getDialogs expects.

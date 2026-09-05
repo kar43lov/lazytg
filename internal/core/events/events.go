@@ -446,6 +446,14 @@ type ChatReadInbox struct {
 
 func (ChatReadInbox) eventMarker() {}
 
+// ChatArchived says a chat moved into, or out of, the archive folder.
+type ChatArchived struct {
+	ChatID   int64
+	Archived bool
+}
+
+func (ChatArchived) eventMarker() {}
+
 // MessagesPinned says messages of a chat were pinned, or unpinned.
 type MessagesPinned struct {
 	ChatID int64

@@ -34,7 +34,32 @@ type SetFoldersMsg struct {
 // a Telegram folder — the API has a DialogFilterDefault for "All chats" and
 // this pane drops it, because two tabs meaning the same thing is one too
 // many.
-const folderAll = -1
+const (
+	folderAll = -1
+	// folderArchive is the tab past the account's folders: the chats in
+	// Telegram's archive, shown alone there and nowhere else.
+	folderArchive = -2
+)
+
+// hasArchive reports whether any loaded chat is archived — the Archive
+// tab exists only then, and the strip with it.
+func (m Model) hasArchive() bool {
+	for _, it := range m.chats {
+		if it.Archived() {
+			return true
+		}
+	}
+	return false
+}
+
+// stripShown reports whether the tab row is drawn: for an account with
+// folders, or with something in the archive.
+func (m Model) stripShown() bool {
+	return len(m.folders) > 0 || m.hasArchive()
+}
+
+// ArchiveTabActive reports whether the Archive tab is in force.
+func (m Model) ArchiveTabActive() bool { return m.folderIdx == folderArchive }
 
 // SetFolders installs the folder list, keeping the active tab if the folder
 // it names still exists. A folder deleted on another device therefore drops
@@ -89,15 +114,35 @@ func (m Model) NextFolder() (Model, tea.Cmd) { return m.moveFolder(1) }
 func (m Model) PrevFolder() (Model, tea.Cmd) { return m.moveFolder(-1) }
 
 func (m Model) moveFolder(delta int) (Model, tea.Cmd) {
-	if len(m.folders) == 0 {
+	if !m.stripShown() {
 		return m, nil
 	}
-	// Index space is [-1, len): -1 is the unfiltered tab.
+	// Positions: 0 is All, 1..n the folders, n+1 the Archive tab when
+	// there is one. Wraps at both ends.
 	span := len(m.folders) + 1
-	pos := m.folderIdx + 1 + delta
+	if m.hasArchive() {
+		span++
+	}
+	pos := m.tabPosition() + delta
 	pos = ((pos % span) + span) % span
-	m.folderIdx = pos - 1
+	m.folderIdx = m.tabIndex(pos)
 	return m.applyLoaded(m.chats)
+}
+
+// tabPosition is the active tab as a position in the strip.
+func (m Model) tabPosition() int {
+	if m.folderIdx == folderArchive {
+		return len(m.folders) + 1
+	}
+	return m.folderIdx + 1
+}
+
+// tabIndex is the inverse of tabPosition.
+func (m Model) tabIndex(pos int) int {
+	if pos == len(m.folders)+1 {
+		return folderArchive
+	}
+	return pos - 1
 }
 
 // SelectFolder jumps to a tab by position, one-based as the user sees it,
@@ -106,23 +151,40 @@ func (m Model) moveFolder(delta int) (Model, tea.Cmd) {
 // mis-pressed, and moving them somewhere they did not ask for is worse than
 // doing nothing.
 func (m Model) SelectFolder(oneBased int) (Model, tea.Cmd) {
-	if oneBased < 1 || oneBased > len(m.folders)+1 {
+	last := len(m.folders) + 1
+	if m.hasArchive() {
+		last++
+	}
+	if oneBased < 1 || oneBased > last {
 		return m, nil
 	}
-	m.folderIdx = oneBased - 2
+	m.folderIdx = m.tabIndex(oneBased - 1)
 	return m.applyLoaded(m.chats)
 }
 
 // visibleChats narrows the master slice to the active folder.
 func (m Model) visibleChats(items []ChatItem) []ChatItem {
-	folder, ok := m.ActiveFolder()
-	if !ok {
-		return items
-	}
 	out := make([]ChatItem, 0, len(items))
+	folder, inFolder := m.ActiveFolder()
 	for _, it := range items {
-		if folder.Matches(it.Chat()) {
-			out = append(out, it)
+		switch {
+		case m.folderIdx == folderArchive:
+			// The archive alone.
+			if it.Archived() {
+				out = append(out, it)
+			}
+		case inFolder:
+			// A folder keeps archived chats out when it says so, the way
+			// Telegram's own filter does; otherwise they are its members
+			// like any other.
+			if folder.Matches(it.Chat()) && (!it.Archived() || !folder.ExcludeArchived) {
+				out = append(out, it)
+			}
+		default:
+			// The main list: everything but the archive.
+			if !it.Archived() {
+				out = append(out, it)
+			}
 		}
 	}
 	return out
@@ -141,13 +203,16 @@ var (
 // folders — an account with none should look exactly as it did before folders
 // existed, rather than gaining a row that says "All".
 func (m Model) folderStrip(width int) string {
-	if len(m.folders) == 0 {
+	if !m.stripShown() {
 		return ""
 	}
-	labels := make([]string, 0, len(m.folders)+1)
+	labels := make([]string, 0, len(m.folders)+2)
 	labels = append(labels, m.styleTab("All", m.folderIdx == folderAll))
 	for i, f := range m.folders {
 		labels = append(labels, m.styleTab(safetext.CleanLine(f.Label()), m.folderIdx == i))
+	}
+	if m.hasArchive() {
+		labels = append(labels, m.styleTab("Archive", m.folderIdx == folderArchive))
 	}
 	strip := strings.Join(labels, " ")
 	if width > 0 && lipgloss.Width(strip) > width {

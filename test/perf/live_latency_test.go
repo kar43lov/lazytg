@@ -298,3 +298,4 @@ func (s *inMemoryStore) SetUnreadMark(context.Context, int64, bool) error       
 func (s *inMemoryStore) SetPresence(context.Context, int64, bool, time.Time) error     { return nil }
 func (s *inMemoryStore) SetReadOutbox(context.Context, int64, int64) error             { return nil }
 func (s *inMemoryStore) SetPinnedMessages(context.Context, int64, []int64, bool) error { return nil }
+func (s *inMemoryStore) SetArchived(context.Context, int64, bool) error                { return nil }
