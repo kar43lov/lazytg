@@ -254,7 +254,7 @@ ban-risk. Each is one focused PR.
 2. ~~Pinned message bar and forwarded-from header~~ — shipped; the bar still does not fetch a pin older than the loaded window.
 3. ~~Link previews as a badge~~ — shipped as site and title; the description and picture are still open.
 4. ~~Archive as a folder tab~~ — shipped.
-5. **Mentions completion** (`@` in the composer) — needs the member list, which also unlocks the member view.
+5. **Mentions completion** (`@` in the composer) — deferred: the member list means `channels.getParticipants`, a known abuse signal on an unofficial client. The acceptable form is the one without a request — complete from the senders already seen in the open thread and from the chats that have a username — and it is not built yet.
 6. **Topics** in forum supergroups — the two-pane layout has room for a topic strip.
 7. ~~Desktop notifications (opt-in)~~ — shipped.
 8. ~~Server-side search fallback~~ — shipped as Tab in the overlay.
