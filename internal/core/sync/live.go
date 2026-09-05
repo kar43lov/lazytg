@@ -31,6 +31,9 @@ type LiveStore interface {
 	SetPinned(ctx context.Context, chatID int64, pinned bool) error
 	SetMutedUntil(ctx context.Context, chatID int64, until time.Time) error
 	SetUnreadMark(ctx context.Context, chatID int64, marked bool) error
+	// SetReadOutbox moves the other side's read pointer forward; a value
+	// below the stored one is kept out, because updates arrive unordered.
+	SetReadOutbox(ctx context.Context, chatID, maxID int64) error
 	SetPresence(ctx context.Context, userID int64, online bool, lastSeen time.Time) error
 	// EnsureChat creates the parent chats row when the peer is unknown and
 	// leaves an existing row untouched. Without it a message from a chat
@@ -145,6 +148,8 @@ func (s *LiveService) drain(ctx context.Context, ch <-chan events.Event) error {
 				s.applyChatFact(ctx, typed.ChatID, "mute", s.store.SetMutedUntil(ctx, typed.ChatID, typed.Until))
 			case events.ChatUnreadMark:
 				s.applyChatFact(ctx, typed.ChatID, "unread mark", s.store.SetUnreadMark(ctx, typed.ChatID, typed.Unread))
+			case events.ChatReadOutbox:
+				s.applyChatFact(ctx, typed.ChatID, "read outbox", s.store.SetReadOutbox(ctx, typed.ChatID, typed.MaxID))
 			case events.PeerPresence:
 				s.applyChatFact(ctx, typed.UserID, "presence", s.store.SetPresence(ctx, typed.UserID, typed.Online, typed.LastSeen))
 			}

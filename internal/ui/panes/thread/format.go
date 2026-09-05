@@ -166,14 +166,14 @@ func formatMessageAs(msg domain.Message, width int, replyTo *domain.Message, aut
 // block: the body stays where it was, so nothing about wrapping, selection
 // columns or the golden snapshots moves when the cursor passes over a message.
 func formatMessageBlock(msg domain.Message, width int, replyTo *domain.Message, author string, cursor bool) (string, int) {
-	return formatMessageBlockMarked(msg, width, replyTo, author, cursor, false)
+	return formatMessageBlockMarked(msg, width, replyTo, author, cursor, false, 0)
 }
 
 // formatMessageBlockMarked is formatMessageBlock with the mark state the
 // multi-select needs. The two are separate so every existing caller — and
 // every existing golden test — keeps its signature: a mark is an addition
 // to the row, not a change to how a row is built.
-func formatMessageBlockMarked(msg domain.Message, width int, replyTo *domain.Message, author string, cursor, marked bool) (string, int) {
+func formatMessageBlockMarked(msg domain.Message, width int, replyTo *domain.Message, author string, cursor, marked bool, readMax int64) (string, int) {
 	if width < minBodyWidth {
 		width = minBodyWidth
 	}
@@ -185,7 +185,7 @@ func formatMessageBlockMarked(msg domain.Message, width int, replyTo *domain.Mes
 	case cursor:
 		b.WriteString(cursorStyle.Render(cursorMark) + " ")
 	}
-	b.WriteString(renderHeader(msg.Date, author, editedSuffix(msg)))
+	b.WriteString(renderHeader(msg.Date, author, headerSuffix(msg, readMax)))
 	b.WriteByte('\n')
 	line := 1
 
@@ -448,12 +448,45 @@ var (
 // purpose (storage, tg mapping, search), and formatting that instant as-is
 // prints UTC to a user sitting in another zone. Found on the first live smoke —
 // a message sent at 19:32 MSK rendered as [16:32].
+// readStyle paints the second tick, the one that says the message was
+// read. Blue, the way the official clients draw it.
+var readStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+
 func renderHeader(ts time.Time, author, suffix string) string {
 	head := timeStyle.Render(fmt.Sprintf("[%s]", ts.Local().Format("15:04"))) + " " + nameStyle.Render(safetext.CleanLine(author))
 	if suffix != "" {
 		head += " " + suffix
 	}
 	return head
+}
+
+// headerSuffix is what follows the author in the header: the tick or two
+// on a message you sent, then "edited" when it applies.
+func headerSuffix(msg domain.Message, readMax int64) string {
+	parts := make([]string, 0, 2)
+	if t := ticks(msg, readMax); t != "" {
+		parts = append(parts, t)
+	}
+	if e := editedSuffix(msg); e != "" {
+		parts = append(parts, e)
+	}
+	return strings.Join(parts, " ")
+}
+
+// ticks is the mark every client draws on a message you sent: one when
+// the server has it, two once the other side has read it. The second
+// depends on one number per chat, the newest of your messages they have
+// read, so a message is read when its id is at or below it. Nothing on
+// somebody else's message — the tick is about your words reaching them,
+// and whether you read theirs is not drawn anywhere.
+func ticks(msg domain.Message, readMax int64) string {
+	if !msg.Outgoing {
+		return ""
+	}
+	if msg.ID <= readMax {
+		return readStyle.Render("✓✓")
+	}
+	return timeStyle.Render("✓")
 }
 
 // editedSuffix is the word every client puts on a message that changed

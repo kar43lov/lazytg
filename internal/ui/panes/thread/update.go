@@ -55,6 +55,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.applyIncoming(typed)
 	case events.MessagesDeleted:
 		return m.applyDeleted(typed)
+	case events.ChatReadOutbox:
+		return m.applyReadOutbox(typed)
 	case events.OutgoingMessageStateChanged:
 		return m.applyOutgoingState(typed)
 	case tea.KeyPressMsg:

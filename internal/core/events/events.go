@@ -439,6 +439,15 @@ type ChatReadInbox struct {
 
 func (ChatReadInbox) eventMarker() {}
 
+// ChatReadOutbox says the other side has read your messages up to MaxID.
+// It is the fact behind the second tick.
+type ChatReadOutbox struct {
+	ChatID int64
+	MaxID  int64
+}
+
+func (ChatReadOutbox) eventMarker() {}
+
 // ChatPinned says a chat was pinned to, or unpinned from, the top.
 type ChatPinned struct {
 	ChatID int64

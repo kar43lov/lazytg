@@ -86,3 +86,30 @@ func TestChatState_RoundTripAndSetters(t *testing.T) {
 		t.Fatalf("a setter touched the title: %+v", c)
 	}
 }
+
+// The other side's read pointer only moves forward: neither a stale update
+// nor a dialog page fetched before the update may take a tick away.
+func TestChatState_ReadOutboxOnlyMovesForward(t *testing.T) {
+	t.Parallel()
+	repo, ctx := openTestRepo(t)
+
+	if err := repo.SaveChat(ctx, domain.Chat{ID: 42, Type: domain.ChatTypePrivate, Title: "friend", ReadOutboxMaxID: 5}); err != nil {
+		t.Fatalf("SaveChat: %v", err)
+	}
+	if err := repo.SetReadOutbox(ctx, 42, 9); err != nil {
+		t.Fatalf("SetReadOutbox: %v", err)
+	}
+	if err := repo.SetReadOutbox(ctx, 42, 3); err != nil {
+		t.Fatalf("SetReadOutbox (stale): %v", err)
+	}
+	if err := repo.SaveChat(ctx, domain.Chat{ID: 42, Type: domain.ChatTypePrivate, Title: "friend", ReadOutboxMaxID: 4}); err != nil {
+		t.Fatalf("SaveChat (older page): %v", err)
+	}
+	chats, err := repo.GetChats(ctx)
+	if err != nil || len(chats) != 1 {
+		t.Fatalf("GetChats: %v %v", chats, err)
+	}
+	if chats[0].ReadOutboxMaxID != 9 {
+		t.Fatalf("read pointer = %d, want 9", chats[0].ReadOutboxMaxID)
+	}
+}

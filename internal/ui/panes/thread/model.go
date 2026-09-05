@@ -94,6 +94,9 @@ type Model struct {
 	// worked out once and left alone; see unread.go.
 	unreadCount int
 	unreadFrom  int64
+	// readOutboxMaxID is the newest of your messages the other side has
+	// read; it decides which outgoing rows get the second tick.
+	readOutboxMaxID int64
 
 	// marked holds the ids the user has picked out for an action that
 	// takes several — copying a run of messages, deleting them. Ids for
@@ -225,6 +228,7 @@ func (m Model) OpenChat(chatID int64) (Model, tea.Cmd) {
 	m.messages = nil
 	m.unreadCount = 0
 	m.unreadFrom = 0
+	m.readOutboxMaxID = 0
 	m.outgoing = nil
 	m.pendingServerIDs = make(map[int64]string)
 	m.finalizedLocalIDs = make(map[string]struct{})
@@ -538,7 +542,7 @@ func (m Model) renderContent() (string, []blockSpan) {
 		}
 		rendered, mediaLine := formatMessageBlockMarked(msg, width, nil,
 			resolveAuthor(msg, m.chatID, m.private, m.authorNames),
-			msg.ID == cursorID, m.marked[msg.ID])
+			msg.ID == cursorID, m.marked[msg.ID], m.readOutboxMaxID)
 		// A drawn picture is appended to its message's block so it moves
 		// with the message and is covered by the same span — a click on it
 		// means that message, which is what the user is pointing at.

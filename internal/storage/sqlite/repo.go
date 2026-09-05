@@ -571,8 +571,8 @@ func (r *Repo) SaveChat(ctx context.Context, c domain.Chat) error {
 	}
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO chats (id, type, title, username, last_message_date, unread_count, pinned,
-                           muted_until, unread_mark, online, last_seen)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           muted_until, unread_mark, online, last_seen, read_outbox_max_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             type              = excluded.type,
             title             = excluded.title,
@@ -583,7 +583,8 @@ func (r *Repo) SaveChat(ctx context.Context, c domain.Chat) error {
             muted_until       = excluded.muted_until,
             unread_mark       = excluded.unread_mark,
             online            = excluded.online,
-            last_seen         = excluded.last_seen
+            last_seen         = excluded.last_seen,
+            read_outbox_max_id = MAX(chats.read_outbox_max_id, excluded.read_outbox_max_id)
     `,
 		c.ID,
 		string(c.Type),
@@ -596,6 +597,7 @@ func (r *Repo) SaveChat(ctx context.Context, c domain.Chat) error {
 		boolToInt(c.UnreadMark),
 		boolToInt(c.Online),
 		unixOrZero(c.LastSeen),
+		c.ReadOutboxMaxID,
 	)
 	if err != nil {
 		return fmt.Errorf("save chat %d: %w", c.ID, err)
@@ -617,7 +619,7 @@ func (r *Repo) GetChats(ctx context.Context) ([]domain.Chat, error) {
 	// not bytes, so this cannot split a rune.
 	rows, err := r.db.QueryContext(ctx, `
         SELECT c.id, c.type, c.title, c.username, c.last_message_date, c.unread_count, c.pinned,
-               c.muted_until, c.unread_mark, c.online, c.last_seen,
+               c.muted_until, c.unread_mark, c.online, c.last_seen, c.read_outbox_max_id,
                (SELECT substr(m.text, 1, 200) FROM messages m
                  WHERE m.chat_id = c.id
                  ORDER BY m.date DESC, m.id DESC
@@ -646,7 +648,7 @@ func (r *Repo) GetChats(ctx context.Context) ([]domain.Chat, error) {
 			preview  sql.NullString
 		)
 		if err := rows.Scan(&c.ID, &typ, &title, &username, &lastDate, &c.UnreadCount, &pinned,
-			&muted, &mark, &online, &lastSeen, &preview); err != nil {
+			&muted, &mark, &online, &lastSeen, &c.ReadOutboxMaxID, &preview); err != nil {
 			return nil, fmt.Errorf("scan chat: %w", err)
 		}
 		c.MutedUntil = timeOrZero(muted)
@@ -1162,6 +1164,13 @@ func (r *Repo) SetUnreadMark(ctx context.Context, chatID int64, marked bool) err
 // updated: the row is addressed by the user's id, which is the chat's.
 func (r *Repo) SetPresence(ctx context.Context, userID int64, online bool, lastSeen time.Time) error {
 	return r.setChatField(ctx, `UPDATE chats SET online = ?, last_seen = ? WHERE id = ?`, boolToInt(online), unixOrZero(lastSeen), userID)
+}
+
+// SetReadOutbox records how far the other side has read, and only ever
+// forward: updates are not guaranteed to arrive in order, and a stale one
+// must not take a tick away.
+func (r *Repo) SetReadOutbox(ctx context.Context, chatID, maxID int64) error {
+	return r.setChatField(ctx, `UPDATE chats SET read_outbox_max_id = MAX(read_outbox_max_id, ?) WHERE id = ?`, maxID, chatID)
 }
 
 func (r *Repo) setChatField(ctx context.Context, query string, args ...any) error {

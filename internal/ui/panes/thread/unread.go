@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/events"
 )
 
 // The line that says where you stopped reading.
@@ -27,6 +29,31 @@ import (
 // is the same kind of thing — a mark between messages rather than a message —
 // but bold, because unlike the date it is where the reader is going.
 var unreadStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Bold(true)
+
+// MarkReadOutbox tells the pane how far the other side has read, from the
+// chat row at open time. Updates move it forward from there.
+func (m Model) MarkReadOutbox(maxID int64) Model {
+	if maxID <= m.readOutboxMaxID {
+		return m
+	}
+	m.readOutboxMaxID = maxID
+	if len(m.messages) > 0 {
+		m.viewport.SetContent(m.renderAll())
+	}
+	return m
+}
+
+// ReadOutboxMaxID is how far the other side has read, as the pane knows it.
+func (m Model) ReadOutboxMaxID() int64 { return m.readOutboxMaxID }
+
+// applyReadOutbox moves the read pointer when the update is about the open
+// chat. Forward only: updates arrive in no particular order.
+func (m Model) applyReadOutbox(ev events.ChatReadOutbox) (Model, tea.Cmd) {
+	if ev.ChatID != m.chatID {
+		return m, nil
+	}
+	return m.MarkReadOutbox(ev.MaxID), nil
+}
 
 // MarkUnread tells the pane how many messages were unread when the chat was
 // opened. Zero clears the divider.

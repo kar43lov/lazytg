@@ -67,6 +67,10 @@ func (s *recordingStore) SetPresence(_ context.Context, userID int64, online boo
 
 // IncrementUnread satisfies coresync.LiveStore and records which chats had
 // their badge raised, which is what the unread tests assert on.
+func (s *recordingStore) SetReadOutbox(_ context.Context, chatID, maxID int64) error {
+	return s.fact(fmt.Sprintf("read-outbox %d=%d", chatID, maxID))
+}
+
 func (s *recordingStore) IncrementUnread(_ context.Context, chatID int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -751,8 +755,9 @@ func TestLiveService_RecordsTheListFacts(t *testing.T) {
 	bus.Publish(events.ChatMuted{ChatID: 42, Until: until})
 	bus.Publish(events.ChatUnreadMark{ChatID: 42, Unread: true})
 	bus.Publish(events.PeerPresence{UserID: 42, Online: true})
-	waitFor(t, "five facts to be recorded", func() bool { return len(store.factsSnapshot()) == 5 })
-	want := []string{"unread 42=0", "pinned 42=true", "muted 42=" + fmt.Sprint(until.Unix()), "mark 42=true", "presence 42=true/-62135596800"}
+	bus.Publish(events.ChatReadOutbox{ChatID: 42, MaxID: 17})
+	waitFor(t, "six facts to be recorded", func() bool { return len(store.factsSnapshot()) == 6 })
+	want := []string{"unread 42=0", "pinned 42=true", "muted 42=" + fmt.Sprint(until.Unix()), "mark 42=true", "presence 42=true/-62135596800", "read-outbox 42=17"}
 	if got := store.factsSnapshot(); fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("recorded %v, want %v", got, want)
 	}

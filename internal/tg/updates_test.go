@@ -257,12 +257,20 @@ func TestUpdatesDispatcher_PublishesTheListFacts(t *testing.T) {
 		&tg.UpdateDialogPinned{Pinned: true, Peer: &tg.DialogPeerFolder{FolderID: 1}},
 		// Your own presence: not news, dropped.
 		&tg.UpdateUserStatus{UserID: 8385, Status: &tg.UserStatusOnline{Expires: 1}},
+		&tg.UpdateReadHistoryOutbox{Peer: &tg.PeerUser{UserID: 42}, MaxID: 7},
+		&tg.UpdateReadChannelOutbox{ChannelID: 77, MaxID: 8},
 	}}
 	if err := d.HandlerFunc().Handle(context.Background(), upd); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	got := []events.Event{receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch)}
+	got := []events.Event{receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch)}
 	expectNone(t, ch)
+	if r, ok := got[6].(events.ChatReadOutbox); !ok || r.ChatID != 42 || r.MaxID != 7 {
+		t.Fatalf("read outbox = %+v", got[6])
+	}
+	if r, ok := got[7].(events.ChatReadOutbox); !ok || r.ChatID != 77 || r.MaxID != 8 {
+		t.Fatalf("channel read outbox = %+v", got[7])
+	}
 
 	if r, ok := got[0].(events.ChatReadInbox); !ok || r.ChatID != 42 || r.MaxID != 10 || r.StillUnread != 2 {
 		t.Fatalf("read inbox = %+v", got[0])

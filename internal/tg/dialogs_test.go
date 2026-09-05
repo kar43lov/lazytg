@@ -532,6 +532,7 @@ func TestDialogsFetcher_KeepsTheListFacts(t *testing.T) {
 	other := &tg.User{ID: 43, AccessHash: 1, FirstName: "Online", Status: &tg.UserStatusOnline{Expires: int(at.Unix()) + 60}}
 	d1, _ := dialogAt(&tg.PeerUser{UserID: 42}, 1, 2, false).(*tg.Dialog)
 	d1.UnreadMark = true
+	d1.ReadOutboxMaxID = 1
 	d1.NotifySettings.SetMuteUntil(2147483647)
 	d2, _ := dialogAt(&tg.PeerUser{UserID: 43}, 2, 0, false).(*tg.Dialog)
 	stub := &stubGetDialogs{responses: []tg.MessagesDialogsClass{&tg.MessagesDialogs{
@@ -547,6 +548,9 @@ func TestDialogsFetcher_KeepsTheListFacts(t *testing.T) {
 		t.Fatalf("chats = %+v", page.Chats)
 	}
 	c := page.Chats[0]
+	if c.ReadOutboxMaxID != 1 {
+		t.Fatalf("read pointer = %d, want 1", c.ReadOutboxMaxID)
+	}
 	if !c.UnreadMark || !c.Muted(at) || c.Online || !c.LastSeen.Equal(seen) {
 		t.Fatalf("first chat lost a fact: %+v", c)
 	}

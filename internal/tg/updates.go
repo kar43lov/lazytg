@@ -168,6 +168,10 @@ func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass) {
 		d.publish(events.ChatReadInbox{ChatID: chatIDFromPeer(upd.Peer), MaxID: int64(upd.MaxID), StillUnread: upd.StillUnreadCount})
 	case *tg.UpdateReadChannelInbox:
 		d.publish(events.ChatReadInbox{ChatID: upd.ChannelID, MaxID: int64(upd.MaxID), StillUnread: upd.StillUnreadCount})
+	case *tg.UpdateReadHistoryOutbox:
+		d.publish(events.ChatReadOutbox{ChatID: chatIDFromPeer(upd.Peer), MaxID: int64(upd.MaxID)})
+	case *tg.UpdateReadChannelOutbox:
+		d.publish(events.ChatReadOutbox{ChatID: upd.ChannelID, MaxID: int64(upd.MaxID)})
 	case *tg.UpdateDialogPinned:
 		if id := dialogPeerID(upd.Peer); id != 0 {
 			d.publish(events.ChatPinned{ChatID: id, Pinned: upd.Pinned})

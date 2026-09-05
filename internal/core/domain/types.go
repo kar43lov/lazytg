@@ -90,6 +90,10 @@ type Chat struct {
 	// for people who hide it.
 	Online   bool
 	LastSeen time.Time
+	// ReadOutboxMaxID is the newest of your own messages the other side
+	// has read: everything you sent with an id at or below it gets the
+	// second tick. Zero when nothing was read, or nothing was sent.
+	ReadOutboxMaxID int64
 
 	// LastMessagePreview is the text of the chat's newest cached message,
 	// filled by the read path only (GetChats) and ignored on write. It is a

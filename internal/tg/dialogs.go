@@ -164,6 +164,8 @@ func resolveDialog(
 		Pinned:      dlg.Pinned,
 		UnreadMark:  dlg.UnreadMark,
 		MutedUntil:  muteUntilOf(dlg.NotifySettings),
+
+		ReadOutboxMaxID: int64(dlg.ReadOutboxMaxID),
 	}
 	var peer domain.Peer
 

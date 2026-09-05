@@ -231,3 +231,21 @@ func TestStatusBar_UnreadTotalFromTheList(t *testing.T) {
 		t.Fatalf("status bar:\n%s", a.View().Content)
 	}
 }
+
+// Opening a chat hands the thread the read pointer from the list row: the
+// ticks have to be right on the first draw, not after the next update.
+func TestOpenChat_CarriesTheReadPointer(t *testing.T) {
+	t.Parallel()
+
+	a, _ := appWithChatRows(t, []domain.Chat{{ID: 7, Title: "Friend", Type: domain.ChatTypePrivate, ReadOutboxMaxID: 31}})
+	model, _ := a.Update(chats.ChatSelectedMsg{ChatID: 7})
+	a = model.(App)
+	if got := a.thread.ReadOutboxMaxID(); got != 31 {
+		t.Fatalf("thread read pointer = %d, want 31", got)
+	}
+	model, _ = a.Update(events.ChatReadOutbox{ChatID: 7, MaxID: 40})
+	a = model.(App)
+	if got := a.thread.ReadOutboxMaxID(); got != 40 {
+		t.Fatalf("the update did not reach the thread: %d", got)
+	}
+}
