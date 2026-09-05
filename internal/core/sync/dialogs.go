@@ -59,6 +59,15 @@ type DialogsProvider interface {
 	FetchDialogs(ctx context.Context, limit int, cursor DialogCursor) (DialogPage, error)
 }
 
+// SelfDialogProvider is the optional half of a DialogsProvider: the chat the
+// account has with itself, which the server lists only once something has
+// been written there. A provider that implements it gets that chat added
+// to the list when the server left it out, the way every official client
+// shows Saved Messages from day one.
+type SelfDialogProvider interface {
+	SelfDialog(ctx context.Context) (domain.Chat, domain.Peer, error)
+}
+
 // ChatStore is the storage surface for the chat list — a subset of
 // *sqlite.Repo.
 type ChatStore interface {
@@ -203,9 +212,40 @@ func (s *DialogsService) Sync(ctx context.Context) (int, error) {
 		}
 	}
 
+	seen, added := s.ensureSelf(ctx, seen)
+	stored += added
 	s.prune(ctx, seen, complete)
 	s.log.Info("dialogs: sync finished", "chats", stored)
 	return stored, nil
+}
+
+// ensureSelf adds Saved Messages when the server's list did not carry it.
+// Only then: a row the server did list already has its date and its unread
+// count, and rewriting it from the bare user record would zero both. The id
+// joins the seen list so the prune that follows keeps the row.
+func (s *DialogsService) ensureSelf(ctx context.Context, seen []int64) ([]int64, int) {
+	sp, ok := s.provider.(SelfDialogProvider)
+	if !ok {
+		return seen, 0
+	}
+	chat, peer, err := sp.SelfDialog(ctx)
+	if err != nil {
+		s.log.Warn("dialogs: saved messages not added", "err", err)
+		return seen, 0
+	}
+	if chat.ID == 0 {
+		return seen, 0
+	}
+	for _, id := range seen {
+		if id == chat.ID {
+			return seen, 0
+		}
+	}
+	stored := s.persist(ctx, DialogPage{Chats: []domain.Chat{chat}, Peers: []domain.Peer{peer}})
+	if stored == 0 {
+		return seen, 0
+	}
+	return append(seen, chat.ID), stored
 }
 
 // prune removes chats the server stopped listing — the only way a chat

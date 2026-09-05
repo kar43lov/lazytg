@@ -2,6 +2,7 @@ package tg
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -173,6 +174,11 @@ func resolveDialog(
 		chat.ID = p.UserID
 		chat.Type = domain.ChatTypePrivate
 		chat.Title = userTitle(u)
+		if u.Self {
+			// The dialog with yourself. Every official client names it
+			// rather than showing the account's own name twice.
+			chat.Title = SavedMessagesTitle
+		}
 		chat.Username = u.Username
 		peer = domain.Peer{ID: p.UserID, Type: domain.ChatTypePrivate, AccessHash: u.AccessHash}
 
@@ -296,4 +302,45 @@ func dialogsHaveMore(mod tg.ModifiedMessagesDialogs, limit int) bool {
 		return false
 	}
 	return limit > 0 && len(mod.GetDialogs()) >= limit
+}
+
+// SavedMessagesTitle is what the dialog with the account itself is called.
+// The name every official client uses, so a user looking for it finds it
+// under the words they already know.
+const SavedMessagesTitle = "Saved Messages"
+
+// UsersGetUsersClient is the one call SelfDialog needs beyond the dialog
+// list. Optional on the fetcher's API: the tests' dialog stubs do not
+// implement it, and the production client does.
+type UsersGetUsersClient interface {
+	UsersGetUsers(ctx context.Context, id []tg.InputUserClass) ([]tg.UserClass, error)
+}
+
+// SelfDialog describes the account's own chat — Saved Messages — whether or
+// not the server lists it. Telegram returns that dialog only once something
+// has been written there, and every official client shows it regardless,
+// because it is where people keep the things they send themselves. One
+// request, at sync, against the account's own record.
+func (d *DialogsFetcher) SelfDialog(ctx context.Context) (domain.Chat, domain.Peer, error) {
+	api, ok := d.api.(UsersGetUsersClient)
+	if !ok {
+		return domain.Chat{}, domain.Peer{}, errors.New("self dialog: users.getUsers is not available on this client")
+	}
+	users, err := api.UsersGetUsers(ctx, []tg.InputUserClass{&tg.InputUserSelf{}})
+	if err != nil {
+		if wait, ok := tgerr.AsFloodWait(err); ok {
+			return domain.Chat{}, domain.Peer{}, &coresync.FloodWaitError{RetryAfter: wait}
+		}
+		return domain.Chat{}, domain.Peer{}, fmt.Errorf("users.getUsers(self): %w", err)
+	}
+	if len(users) == 0 {
+		return domain.Chat{}, domain.Peer{}, errors.New("self dialog: the server returned no user")
+	}
+	u, ok := users[0].(*tg.User)
+	if !ok {
+		return domain.Chat{}, domain.Peer{}, fmt.Errorf("self dialog: unexpected %T", users[0])
+	}
+	chat := domain.Chat{ID: u.ID, Type: domain.ChatTypePrivate, Title: SavedMessagesTitle, Username: u.Username}
+	peer := domain.Peer{ID: u.ID, Type: domain.ChatTypePrivate, AccessHash: u.AccessHash}
+	return chat, peer, nil
 }

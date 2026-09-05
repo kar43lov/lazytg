@@ -3,6 +3,7 @@ package tg
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -448,5 +449,71 @@ func TestUserTitle(t *testing.T) {
 				t.Fatalf("userTitle = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// stubDialogsWithSelf is the dialog stub plus the one users call the self
+// lookup needs.
+type stubDialogsWithSelf struct {
+	stubGetDialogs
+	self *tg.User
+	err  error
+}
+
+func (s *stubDialogsWithSelf) UsersGetUsers(_ context.Context, ids []tg.InputUserClass) ([]tg.UserClass, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if len(ids) != 1 {
+		return nil, fmt.Errorf("asked for %d users, want exactly self", len(ids))
+	}
+	if _, ok := ids[0].(*tg.InputUserSelf); !ok {
+		return nil, fmt.Errorf("asked for %T, want InputUserSelf", ids[0])
+	}
+	return []tg.UserClass{s.self}, nil
+}
+
+func TestDialogsFetcher_SelfDialogIsSavedMessages(t *testing.T) {
+	t.Parallel()
+
+	stub := &stubDialogsWithSelf{self: &tg.User{ID: 8385, AccessHash: 0xABC, FirstName: "Me", Username: "me", Self: true}}
+	chat, peer, err := NewDialogsFetcher(stub).SelfDialog(context.Background())
+	if err != nil {
+		t.Fatalf("SelfDialog: %v", err)
+	}
+	if chat.ID != 8385 || chat.Title != SavedMessagesTitle || chat.Type != domain.ChatTypePrivate {
+		t.Fatalf("chat = %+v", chat)
+	}
+	if peer.ID != 8385 || peer.AccessHash != 0xABC || peer.Type != domain.ChatTypePrivate {
+		t.Fatalf("peer = %+v", peer)
+	}
+}
+
+func TestDialogsFetcher_SelfDialogNeedsTheUsersCall(t *testing.T) {
+	t.Parallel()
+
+	if _, _, err := NewDialogsFetcher(&stubGetDialogs{}).SelfDialog(context.Background()); err == nil {
+		t.Fatal("a client without users.getUsers reported a self dialog")
+	}
+}
+
+// When the server does list the dialog with yourself, it is named the way
+// every official client names it rather than after the account.
+func TestDialogsFetcher_ListedSelfDialogIsSavedMessages(t *testing.T) {
+	t.Parallel()
+
+	me := &tg.User{ID: 8385, AccessHash: 1, FirstName: "Pavel", Self: true}
+	at := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	stub := &stubGetDialogs{responses: []tg.MessagesDialogsClass{&tg.MessagesDialogs{
+		Dialogs:  []tg.DialogClass{dialogAt(&tg.PeerUser{UserID: 8385}, 1, 0, false)},
+		Messages: []tg.MessageClass{topMessage(1, &tg.PeerUser{UserID: 8385}, at)},
+		Users:    []tg.UserClass{me},
+	}}}
+	page, err := NewDialogsFetcher(stub).FetchDialogs(context.Background(), 10, coresync.DialogCursor{})
+	if err != nil {
+		t.Fatalf("FetchDialogs: %v", err)
+	}
+	if len(page.Chats) != 1 || page.Chats[0].Title != SavedMessagesTitle {
+		t.Fatalf("chats = %+v, want Saved Messages", page.Chats)
 	}
 }

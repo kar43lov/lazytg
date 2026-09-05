@@ -471,3 +471,107 @@ func TestDialogsSync_DoesNotPruneAfterAPartialWalk(t *testing.T) {
 		t.Fatalf("a capped walk pruned %d time(s) — every chat past the cap would be deleted", len(pruned))
 	}
 }
+
+// selfAwareProvider is a fakeDialogsProvider that also knows the account's
+// own chat, the way the production fetcher does.
+type selfAwareProvider struct {
+	fakeDialogsProvider
+	self      domain.Chat
+	selfPeer  domain.Peer
+	selfErr   error
+	selfCalls int
+}
+
+func (p *selfAwareProvider) SelfDialog(context.Context) (domain.Chat, domain.Peer, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.selfCalls++
+	return p.self, p.selfPeer, p.selfErr
+}
+
+// Telegram lists the chat with yourself only once something was written
+// there; every official client shows it regardless. When the server leaves
+// it out, the sync adds it — and the prune that follows must keep it.
+func TestDialogsService_Sync_AddsSavedMessagesTheServerLeftOut(t *testing.T) {
+	t.Parallel()
+
+	provider := &selfAwareProvider{
+		fakeDialogsProvider: fakeDialogsProvider{pages: []DialogPage{chatPage(false, DialogCursor{}, 1, 2)}},
+		self:                domain.Chat{ID: 777, Type: domain.ChatTypePrivate, Title: "Saved Messages"},
+		selfPeer:            domain.Peer{ID: 777, Type: domain.ChatTypePrivate, AccessHash: 5},
+	}
+	chats := &fakeChatStore{}
+	peers := &fakePeerStore{}
+	svc := newTestService(t, provider, chats, peers, nil, DialogsConfig{})
+
+	stored, err := svc.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if stored != 3 {
+		t.Fatalf("stored = %d, want the two listed plus Saved Messages", stored)
+	}
+	var found bool
+	for _, id := range chats.ids() {
+		if id == 777 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("chats saved = %v, Saved Messages missing", chats.ids())
+	}
+	pruned := chats.prunedSnapshot()
+	if len(pruned) != 1 {
+		t.Fatalf("prune ran %d times, want once", len(pruned))
+	}
+	var kept bool
+	for _, id := range pruned[0] {
+		if id == 777 {
+			kept = true
+		}
+	}
+	if !kept {
+		t.Fatalf("prune keep-list %v would delete Saved Messages", pruned[0])
+	}
+}
+
+// A row the server did list carries its date and unread count; rewriting it
+// from the bare user record would zero both. So when the list has it, the
+// self record is left alone.
+func TestDialogsService_Sync_LeavesAListedSavedMessagesAlone(t *testing.T) {
+	t.Parallel()
+
+	provider := &selfAwareProvider{
+		fakeDialogsProvider: fakeDialogsProvider{pages: []DialogPage{chatPage(false, DialogCursor{}, 777, 2)}},
+		self:                domain.Chat{ID: 777, Type: domain.ChatTypePrivate, Title: "Saved Messages"},
+		selfPeer:            domain.Peer{ID: 777, Type: domain.ChatTypePrivate, AccessHash: 5},
+	}
+	chats := &fakeChatStore{}
+	svc := newTestService(t, provider, chats, &fakePeerStore{}, nil, DialogsConfig{})
+
+	stored, err := svc.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if stored != 2 {
+		t.Fatalf("stored = %d, want just the two listed", stored)
+	}
+}
+
+func TestDialogsService_Sync_SurvivesASelfLookupFailure(t *testing.T) {
+	t.Parallel()
+
+	provider := &selfAwareProvider{
+		fakeDialogsProvider: fakeDialogsProvider{pages: []DialogPage{chatPage(false, DialogCursor{}, 1)}},
+		selfErr:             errors.New("boom"),
+	}
+	chats := &fakeChatStore{}
+	svc := newTestService(t, provider, chats, &fakePeerStore{}, nil, DialogsConfig{})
+
+	if _, err := svc.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync failed on the optional lookup: %v", err)
+	}
+	if got := chats.ids(); len(got) != 1 {
+		t.Fatalf("chats saved = %v, want the one listed", got)
+	}
+}
