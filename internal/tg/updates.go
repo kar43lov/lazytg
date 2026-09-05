@@ -203,7 +203,9 @@ func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass) {
 func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass, edited bool) {
 	m, ok := mc.(*tg.Message)
 	if !ok {
-		// MessageEmpty / MessageService — nothing useful to render in v0.1.
+		if svc, isService := mc.(*tg.MessageService); isService {
+			d.publishService(svc)
+		}
 		return
 	}
 	chatID := chatIDFromPeer(m.PeerID)
@@ -406,4 +408,27 @@ func dialogPeerID(p tg.DialogPeerClass) int64 {
 		return 0
 	}
 	return chatIDFromPeer(dp.Peer)
+}
+
+// publishService is publishMessage for Telegram's own lines: somebody
+// joined, a message was pinned, a call ended. Same dedup, same event.
+func (d *UpdatesDispatcher) publishService(m *tg.MessageService) {
+	chatID := chatIDFromPeer(m.PeerID)
+	if chatID == 0 {
+		return
+	}
+	if d.seen(dedupKey{chatID: chatID, messageID: int64(m.ID)}) {
+		return
+	}
+	row := convertService(m, chatID, d.self)
+	d.bus.Publish(events.MessageReceived{
+		ChatID:    chatID,
+		MessageID: row.ID,
+		Text:      row.Text,
+		FromID:    row.FromID,
+		Date:      row.Date,
+		ChatType:  chatTypeFromPeer(m.PeerID),
+		Outgoing:  row.Outgoing,
+		ReplyTo:   row.ReplyTo,
+	})
 }

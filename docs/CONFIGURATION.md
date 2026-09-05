@@ -48,6 +48,11 @@ Files that may exist inside these directories:
 
 ## Environment variables
 
+| Variable | Effect |
+|----------|--------|
+| `LAZYTG_NOTIFY` | `off` silences the terminal bell that rings for a message in a chat you are not reading. Anything else, or unset, leaves it on. Muted chats never ring. |
+
+
 | Variable          | Purpose                                                                                                | Default / required           |
 |-------------------|--------------------------------------------------------------------------------------------------------|------------------------------|
 | `LAZYTG_API_ID`   | Telegram MTProto API ID. Get from <https://my.telegram.org/apps>.                                       | **required** — no lazytg build ships one, releases included |

@@ -64,8 +64,8 @@ func TestHistoryFetcher_Fetch_ConvertsBatch(t *testing.T) {
 		Messages: []tg.MessageClass{
 			makeMsg(5, userID, "hello", 0),
 			makeMsg(4, userID, "world", 5),
-			&tg.MessageEmpty{ID: 3},   // must be skipped
-			&tg.MessageService{ID: 2}, // must be skipped
+			&tg.MessageEmpty{ID: 3}, // must be skipped
+			&tg.MessageService{ID: 2, PeerID: &tg.PeerUser{UserID: userID}, Action: &tg.MessageActionPinMessage{}},
 			makeMsg(1, userID, "first", 0),
 		},
 	}
@@ -79,12 +79,13 @@ func TestHistoryFetcher_Fetch_ConvertsBatch(t *testing.T) {
 	if hasMore != true {
 		t.Fatalf("hasMore=false; expected true (slice + len==limit)")
 	}
-	if got := len(msgs); got != 3 {
-		t.Fatalf("converted %d messages, want 3 (empty/service skipped)", got)
+	if got := len(msgs); got != 4 {
+		t.Fatalf("converted %d messages, want 4 (empty skipped, service kept)", got)
 	}
 	want := []domain.Message{
 		{ID: 5, ChatID: userID, FromID: userID, Text: "hello", ReplyTo: 0},
 		{ID: 4, ChatID: userID, FromID: userID, Text: "world", ReplyTo: 5},
+		{ID: 2, ChatID: userID, FromID: userID, Text: "pinned a message", ReplyTo: 0},
 		{ID: 1, ChatID: userID, FromID: userID, Text: "first", ReplyTo: 0},
 	}
 	for i, w := range want {

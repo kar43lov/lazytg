@@ -89,6 +89,7 @@ func (a App) renderBody() string {
 		Width(a.width).
 		Render(a.input.View())
 	a.status.Presence = a.presenceLabel()
+	a.status.UnreadTotal = a.chats.UnreadTotal()
 	statusView := a.status.View(a.width)
 
 	return lipgloss.JoinVertical(lipgloss.Left, upper, inputView, statusView)

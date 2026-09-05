@@ -240,3 +240,23 @@ func sortChatItems(items []ChatItem) {
 // value is part of the contract SetSize is given, not a layout decision the
 // pane makes.
 const paneHPadding = 2
+
+// UnreadTotal is the badge count: unread messages across every chat that is
+// not muted, plus one for each by-hand dot on such a chat. Muted chats are
+// left out the way every official client leaves them out of the badge.
+func (m Model) UnreadTotal() int {
+	now := time.Now()
+	total := 0
+	for _, it := range m.chats {
+		if it.Muted(now) {
+			continue
+		}
+		switch {
+		case it.UnreadCount() > 0:
+			total += it.UnreadCount()
+		case it.UnreadMark():
+			total++
+		}
+	}
+	return total
+}

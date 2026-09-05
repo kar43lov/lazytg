@@ -2,12 +2,16 @@ package app
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/events"
 	"github.com/kar43lov/lazytg/internal/ui/panes/chats"
 )
 
@@ -134,4 +138,44 @@ func presenceText(online bool, lastSeen, now time.Time) string {
 	default:
 		return "last seen " + lastSeen.Format("02.01.06")
 	}
+}
+
+// notifyEnv is the switch for the terminal bell: "off" silences it. The
+// bell is the one notification every terminal, multiplexer and desktop
+// already knows how to route — Ghostty bounces the dock, tmux flags the
+// window, iTerm posts a banner — without this program naming any of them.
+const notifyEnv = "LAZYTG_NOTIFY"
+
+// ringCmd rings the terminal bell for a message worth being told about:
+// somebody else's, new rather than edited, in a chat the reader is not
+// looking at and has not muted. The check is one map lookup; the bell is
+// one byte.
+func (a App) ringCmd(ev events.MessageReceived) tea.Cmd {
+	if !shouldRing(ev, a.thread.ChatID(), a.chats, os.Getenv(notifyEnv)) {
+		return nil
+	}
+	return tea.Raw("\a")
+}
+
+func shouldRing(ev events.MessageReceived, openChat int64, list chats.Model, setting string) bool {
+	if strings.EqualFold(setting, "off") {
+		return false
+	}
+	if ev.Outgoing || ev.Edited || ev.ChatID == 0 || ev.ChatID == openChat {
+		return false
+	}
+	if item, ok := list.ItemByID(ev.ChatID); ok && item.Muted(time.Now()) {
+		return false
+	}
+	return true
+}
+
+// windowTitle is the OSC 2 escape that names the terminal tab: the badge
+// in parentheses while there is one, the bare name otherwise.
+func windowTitle(unread int) string {
+	title := "lazytg"
+	if unread > 0 {
+		title = fmt.Sprintf("lazytg (%d)", unread)
+	}
+	return "\x1b]2;" + title + "\x07"
 }

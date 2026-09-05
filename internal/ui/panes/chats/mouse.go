@@ -132,3 +132,18 @@ func (m Model) SelectNth(n int) (Model, tea.Cmd, bool) {
 	updated, cmd := m.handleEnter()
 	return updated, cmd, true
 }
+
+// SelectByID moves the highlight onto a chat opened by some other road —
+// the palette, a search jump — so the row the chords act on is the one
+// the reader is looking at. Nothing is published: the chat is already
+// open. A chat not in the visible list (another folder) leaves the
+// highlight where it was.
+func (m Model) SelectByID(id int64) Model {
+	for i, it := range m.list.VisibleItems() {
+		if ci, ok := it.(ChatItem); ok && ci.ID() == id {
+			m.list.Select(i)
+			return m
+		}
+	}
+	return m
+}

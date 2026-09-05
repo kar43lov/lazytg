@@ -92,6 +92,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !updated.tooSmall && updated.input.Rows() != before {
 		updated = updated.applySizes()
 	}
+	// The terminal's title carries the badge, so a hidden tab still says
+	// how much is waiting. Written only when the number changes: it is an
+	// escape on every draw otherwise.
+	if total := updated.chats.UnreadTotal(); total != updated.titledUnread || !updated.titled {
+		updated.titledUnread, updated.titled = total, true
+		cmd = tea.Batch(cmd, tea.Raw(windowTitle(total)))
+	}
 	return updated, cmd
 }
 
@@ -504,6 +511,9 @@ func (a App) broadcastBusEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// and appends the message to the visible list; chats reloads
 		// the dialog list so the chat hosting this message bubbles to
 		// the top.
+		if ring := a.ringCmd(ev); ring != nil {
+			cmds = append(cmds, ring)
+		}
 		updatedThread, cmdT := a.thread.Update(ev)
 		a.thread = updatedThread
 		if cmdT != nil {
@@ -905,6 +915,8 @@ func (a App) handlePaletteSelected(msg palette.SelectedMsg) (tea.Model, tea.Cmd)
 	a.jumpGen++
 	a.pendingScroll = nil
 	a.onChatOpened(chatID)
+	// The row the chat-list chords act on must be the chat on screen.
+	a.chats = a.chats.SelectByID(chatID)
 
 	wipe := a.clearDrawnImagesCmd()
 	a = a.clearTyping().clearJumpTrail()

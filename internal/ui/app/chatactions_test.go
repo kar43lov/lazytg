@@ -1,6 +1,8 @@
 package app
 
 import (
+	"github.com/kar43lov/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/ui/palette"
 	"strings"
 	"testing"
 	"time"
@@ -153,5 +155,78 @@ func TestStatusBar_ShowsPresenceOfTheOpenChat(t *testing.T) {
 	a = model.(App)
 	if !strings.Contains(a.View().Content, "Friend · online") {
 		t.Fatalf("status bar does not say online:\n%s", a.View().Content)
+	}
+}
+
+// Opening a chat through the palette has to move the list's highlight too:
+// the chords act on the highlighted row, and a row that is not the chat on
+// screen is how somebody mutes the wrong conversation.
+func TestPaletteSelection_MovesTheListHighlight(t *testing.T) {
+	t.Parallel()
+
+	a, _ := appWithChatRows(t, []domain.Chat{
+		{ID: 1, Title: "first", Type: domain.ChatTypePrivate},
+		{ID: 2, Title: "second", Type: domain.ChatTypePrivate},
+	})
+	model, _ := a.Update(palette.SelectedMsg{ChatID: 2})
+	a = model.(App)
+	if sel, ok := a.chats.SelectedItem(); !ok || sel.ID() != 2 {
+		t.Fatalf("highlight on %+v, want chat 2", sel)
+	}
+}
+
+func TestShouldRing(t *testing.T) {
+	t.Parallel()
+
+	a, _ := appWithChatRows(t, []domain.Chat{
+		{ID: 1, Title: "loud", Type: domain.ChatTypePrivate},
+		{ID: 2, Title: "quiet", Type: domain.ChatTypePrivate, MutedUntil: time.Now().Add(time.Hour)},
+	})
+	incoming := func(chat int64) events.MessageReceived { return events.MessageReceived{ChatID: chat, MessageID: 1} }
+	cases := []struct {
+		name    string
+		ev      events.MessageReceived
+		open    int64
+		setting string
+		want    bool
+	}{
+		{"another chat rings", incoming(1), 9, "", true},
+		{"the open chat is silent", incoming(1), 1, "", false},
+		{"a muted chat is silent", incoming(2), 9, "", false},
+		{"an unknown chat rings", incoming(77), 9, "", true},
+		{"own messages are silent", events.MessageReceived{ChatID: 1, MessageID: 1, Outgoing: true}, 9, "", false},
+		{"edits are silent", events.MessageReceived{ChatID: 1, MessageID: 1, Edited: true}, 9, "", false},
+		{"off is off", incoming(1), 9, "off", false},
+		{"OFF is off too", incoming(1), 9, "OFF", false},
+	}
+	for _, tc := range cases {
+		if got := shouldRing(tc.ev, tc.open, a.chats, tc.setting); got != tc.want {
+			t.Errorf("%s: got %v", tc.name, got)
+		}
+	}
+}
+
+func TestWindowTitle(t *testing.T) {
+	t.Parallel()
+
+	if got := windowTitle(0); got != "\x1b]2;lazytg\x07" {
+		t.Fatalf("no badge: %q", got)
+	}
+	if got := windowTitle(4); got != "\x1b]2;lazytg (4)\x07" {
+		t.Fatalf("badge: %q", got)
+	}
+}
+
+// The badge in the status bar and the title come from the list, so a chat
+// read on the phone lowers both once the list reloads.
+func TestStatusBar_UnreadTotalFromTheList(t *testing.T) {
+	t.Parallel()
+
+	a, _ := appWithChatRows(t, []domain.Chat{
+		{ID: 1, Title: "a", Type: domain.ChatTypePrivate, UnreadCount: 3},
+		{ID: 2, Title: "b", Type: domain.ChatTypePrivate, UnreadCount: 4, MutedUntil: time.Now().Add(time.Hour)},
+	})
+	if !strings.Contains(a.View().Content, "unread 3") {
+		t.Fatalf("status bar:\n%s", a.View().Content)
 	}
 }

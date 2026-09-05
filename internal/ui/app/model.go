@@ -326,6 +326,11 @@ type App struct {
 	// target. -1 means "no palette open".
 	prePaletteFocus FocusTarget
 
+	// titledUnread is the badge last written into the terminal's title,
+	// and titled whether one was written at all.
+	titledUnread int
+	titled       bool
+
 	// preAttachFocus is the same idea for the attach overlay so
 	// Esc / Submit can restore the prior focus target. -1 means
 	// "no attach overlay open".

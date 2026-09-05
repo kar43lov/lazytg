@@ -46,9 +46,8 @@ func (h *HistoryFetcher) WithSelf(self *Self) *HistoryFetcher {
 // messages exist beyond the returned slice — callers use it to drive
 // pagination.
 //
-// MessageEmpty and MessageService entries are silently dropped in v0.1: the
-// UI cannot render service messages yet, and including them would only inflate
-// the local index.
+// MessageEmpty entries are dropped — there is nothing in them. Service
+// messages become rows with Telegram's own sentence as their text.
 func (h *HistoryFetcher) Fetch(ctx context.Context, peerID, accessHash int64, peerType string, limit, offsetID int) (msgs []domain.Message, hasMore bool, err error) {
 	peer, err := buildInputPeer(peerID, accessHash, peerType)
 	if err != nil {
@@ -93,11 +92,12 @@ func decodeHistory(res tg.MessagesMessagesClass, chatID int64, limit int, self *
 	raw := mod.GetMessages()
 	out := make([]domain.Message, 0, len(raw))
 	for _, mc := range raw {
-		m, ok := mc.(*tg.Message)
-		if !ok {
-			continue
+		switch m := mc.(type) {
+		case *tg.Message:
+			out = append(out, convertMessage(m, chatID, self))
+		case *tg.MessageService:
+			out = append(out, convertService(m, chatID, self))
 		}
-		out = append(out, convertMessage(m, chatID, self))
 	}
 	_ = limit
 	return out

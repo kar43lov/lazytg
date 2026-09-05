@@ -589,3 +589,33 @@ func TestSelectionIsLeftAloneWhileFiltering(t *testing.T) {
 		t.Fatalf("selection = id=%d ok=%v after a reload under a filter, want 20", sel.ID(), ok)
 	}
 }
+
+func TestUnreadTotal_SkipsMutedCountsDots(t *testing.T) {
+	t.Parallel()
+
+	m := NewWithRepo(&fakeRepo{chats: []domain.Chat{
+		{ID: 1, Title: "a", UnreadCount: 3},
+		{ID: 2, Title: "b", UnreadCount: 5, MutedUntil: time.Now().Add(time.Hour)},
+		{ID: 3, Title: "c", UnreadMark: true},
+		{ID: 4, Title: "d", UnreadCount: 2, UnreadMark: true},
+	}}, nil)
+	m, _ = m.Update(m.Init()())
+	if got := m.UnreadTotal(); got != 6 {
+		t.Fatalf("UnreadTotal = %d, want 3 + 1 + 2 with the muted chat left out", got)
+	}
+}
+
+func TestSelectByID_MovesTheHighlight(t *testing.T) {
+	t.Parallel()
+
+	m := NewWithRepo(&fakeRepo{chats: []domain.Chat{{ID: 1, Title: "a"}, {ID: 2, Title: "b"}, {ID: 3, Title: "c"}}}, nil)
+	m, _ = m.Update(m.Init()())
+	m = m.SelectByID(3)
+	if sel, ok := m.SelectedItem(); !ok || sel.ID() != 3 {
+		t.Fatalf("selected %+v, want chat 3", sel)
+	}
+	m = m.SelectByID(99)
+	if sel, _ := m.SelectedItem(); sel.ID() != 3 {
+		t.Fatalf("an unknown id moved the highlight to %d", sel.ID())
+	}
+}
