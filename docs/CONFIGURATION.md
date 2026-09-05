@@ -50,7 +50,8 @@ Files that may exist inside these directories:
 
 | Variable | Effect |
 |----------|--------|
-| `LAZYTG_NOTIFY` | `off` silences the terminal bell that rings for a message in a chat you are not reading. Anything else, or unset, leaves it on. Muted chats never ring. |
+| `LAZYTG_NOTIFY` | `off` silences the terminal bell that rings for a message in a chat you are not reading. `desktop` rings the bell **and** posts the message to the desktop's notification centre (the chat as the title, the sender and the first line as the body; nothing for muted chats, edits or your own messages). Anything else, or unset, leaves just the bell. |
+| `LAZYTG_NOTIFY_CMD` | With `LAZYTG_NOTIFY=desktop`: a program to post the notification with instead of the platform default (`terminal-notifier` or `osascript` on macOS, `notify-send` elsewhere). The title and the body are appended as two arguments; nothing goes through a shell. |
 
 
 | Variable          | Purpose                                                                                                | Default / required           |

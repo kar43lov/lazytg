@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
@@ -10,6 +12,7 @@ import (
 	"github.com/kar43lov/lazytg/internal/app"
 	"github.com/kar43lov/lazytg/internal/core/events"
 	"github.com/kar43lov/lazytg/internal/core/files"
+	"github.com/kar43lov/lazytg/internal/core/notify"
 	uiapp "github.com/kar43lov/lazytg/internal/ui/app"
 	"github.com/kar43lov/lazytg/internal/ui/input"
 	"github.com/kar43lov/lazytg/internal/ui/palette"
@@ -153,6 +156,15 @@ func runTUI(cmd *cobra.Command, _ []string) error {
 	}
 	if runtime.Client != nil {
 		deps.SelfID = runtime.Client.Self().ID
+	}
+	// Desktop notifications leave the terminal, so they are the user's
+	// to switch on; a platform with no notifier says so once, here.
+	if strings.EqualFold(os.Getenv("LAZYTG_NOTIFY"), "desktop") {
+		if notifier, err := notify.New(logger); err != nil {
+			logger.Warn("notify: desktop notifications requested but unavailable", "err", err)
+		} else {
+			deps.Notifier = notifier
+		}
 	}
 	if runtime.Backfill != nil {
 		deps.Backfiller = runtime.Backfill

@@ -25,13 +25,13 @@ covered by tests only.
 | Acting on messages | 12 | 9 | 0 | 3 | 0 |
 | Groups & channels | 12 | 2 | 1 | 7 | 2 |
 | Search | 6 | 4 | 0 | 2 | 0 |
-| Notifications | 6 | 3 | 0 | 3 | 0 |
+| Notifications | 6 | 4 | 0 | 2 | 0 |
 | Privacy & security | 9 | 4 | 0 | 3 | 2 |
 | Calls & live | 5 | 1 | 0 | 0 | 4 |
 | Bots & payments | 7 | 2 | 0 | 2 | 3 |
 | Stickers, emoji, GIFs | 6 | 2 | 1 | 2 | 1 |
 | Stories, premium, misc | 8 | 0 | 0 | 2 | 6 |
-| **Total** | **138** | **75** | **9** | **34** | **20** |
+| **Total** | **138** | **76** | **9** | **33** | **20** |
 
 Roughly: half of TD is here, a quarter is reachable and worth doing, the
 rest is either video/voice (no terminal plays it) or product surface
@@ -181,7 +181,7 @@ rest is either video/voice (no terminal plays it) or product surface
 | Bell on new message | ✅ | `LAZYTG_NOTIFY=off` to silence. |
 | Badge in the tab title | ✅ | |
 | Mute per chat | ✅ | |
-| Desktop notifications (system tray / notification center) | ⬜ | `terminal-notifier` / `notify-send` shell-out, or OSC 777; opt-in. |
+| Desktop notifications (system tray / notification center) | ✅ | `LAZYTG_NOTIFY=desktop`; `terminal-notifier` / `osascript` / `notify-send` or `LAZYTG_NOTIFY_CMD`, arguments only, never a shell. |
 | Mention/reply-only notifications | ⬜ | |
 | Mute for 1h/8h/2d | ⬜ | Only "forever" today; a small picker on `m`. |
 
@@ -256,7 +256,7 @@ ban-risk. Each is one focused PR.
 4. ~~Archive as a folder tab~~ — shipped.
 5. **Mentions completion** (`@` in the composer) — needs the member list, which also unlocks the member view.
 6. **Topics** in forum supergroups — the two-pane layout has room for a topic strip.
-7. **Desktop notifications** (opt-in) — the bell is not enough for a detached tmux session.
+7. ~~Desktop notifications (opt-in)~~ — shipped.
 8. **Server-side search fallback** — for the chats never opened here.
 
 Anything not in this file is out of scope until it is added here; the

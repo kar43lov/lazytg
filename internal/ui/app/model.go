@@ -45,6 +45,14 @@ type FileDownloader interface {
 // downloaded file to the user. The production implementation is
 // internal/core/files.Opener, which launches the system viewer; tests
 // substitute a fake so no window opens on a CI runner.
+//
+// DesktopNotifier posts to the desktop's notification centre; the
+// production implementation is internal/core/notify.Notifier.
+type DesktopNotifier interface {
+	Notify(ctx context.Context, title, body string) error
+}
+
+// MediaOpener hands a downloaded file to the system viewer.
 type MediaOpener interface {
 	Open(ctx context.Context, path string) error
 	// OpenURL hands a web address to the browser.
@@ -200,6 +208,10 @@ type Deps struct {
 	// the session knows it. The thread hides the ticks in the chat with
 	// yourself: "did they read it" has no answer there.
 	SelfID func() int64
+	// Notifier, if set, posts a desktop notification for a message in a
+	// chat that is not being read, alongside the bell. Set only when the
+	// user asked for it (LAZYTG_NOTIFY=desktop).
+	Notifier DesktopNotifier
 
 	// Uploader, if set, is invoked when the user submits a file
 	// from the Attach overlay (Ctrl-U flow). nil makes the overlay
@@ -255,8 +267,9 @@ type App struct {
 	// opener shows a downloaded file to the user, wired through
 	// Deps.Opener. nil means the open gesture downloads and stops
 	// there.
-	opener MediaOpener
-	selfID func() int64
+	opener   MediaOpener
+	selfID   func() int64
+	notifier DesktopNotifier
 
 	// uploader is the file-upload collaborator wired through
 	// Deps.Uploader. nil means "no uploader wired" — the Attach
@@ -421,6 +434,7 @@ func New(deps Deps) App {
 		downloader:        deps.Downloader,
 		opener:            deps.Opener,
 		selfID:            deps.SelfID,
+		notifier:          deps.Notifier,
 		uploader:          deps.Uploader,
 		jumper:            deps.Jumper,
 		backfiller:        deps.Backfiller,

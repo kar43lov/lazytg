@@ -1,8 +1,10 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -451,5 +453,80 @@ func TestMessagesPinned_ReachesTheThread(t *testing.T) {
 	}
 	if !strings.Contains(a.View().Content, "forwarded from News") {
 		t.Fatal("the fixture dropped the origin")
+	}
+}
+
+type fakeNotifier struct {
+	mu   sync.Mutex
+	got  []string
+	fail error
+}
+
+func (f *fakeNotifier) Notify(_ context.Context, title, body string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.got = append(f.got, title+"|"+body)
+	return f.fail
+}
+
+// With LAZYTG_NOTIFY=desktop a message in a chat not being read rings and
+// goes to the desktop, as the chat's name and "who: what"; without the
+// setting only the bell rings; a muted chat does neither.
+func TestDesktopNotification(t *testing.T) {
+	notifier := &fakeNotifier{}
+	pane := chats.NewWithRepo(fakeChatsRepo{chats: []domain.Chat{
+		{ID: 7, Title: "Ann", Type: domain.ChatTypePrivate},
+		{ID: 8, Title: "Quiet", Type: domain.ChatTypePrivate, MutedUntil: time.Date(2038, 1, 1, 0, 0, 0, 0, time.UTC)},
+	}}, nil)
+	pane, _ = pane.Update(pane.Init()())
+	threadModel := thread.New()
+	a := New(Deps{Keymap: keymap.Default(), Chats: &pane, Thread: &threadModel, Notifier: notifier})
+	model, _ := a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	a = model.(App)
+	loud := events.MessageReceived{ChatID: 7, MessageID: 1, FromID: 7, Text: "see you \x1b]52;c;x\x07at six\nsecond line", Date: time.Now()}
+
+	t.Setenv(notifyEnv, "desktop")
+	cmd := a.ringCmd(loud)
+	if cmd == nil {
+		t.Fatal("no command for a message in another chat")
+	}
+	runBatch(t, cmd)
+	if got := notifier.got; len(got) != 1 || got[0] != "Ann|see you ]52;c;xat six second line" {
+		t.Fatalf("notifier got %v", got)
+	}
+	// In a group the sender is named from the chat list.
+	if body := desktopBody(events.MessageReceived{ChatID: 99, FromID: 7, Text: "hi"}, map[int64]string{7: "Ann"}, false); body != "Ann: hi" {
+		t.Fatalf("group body = %q", body)
+	}
+	if body := desktopBody(events.MessageReceived{ChatID: 99, FromID: 5, Text: "hi"}, map[int64]string{7: "Ann"}, false); body != "hi" {
+		t.Fatalf("unknown sender body = %q", body)
+	}
+	if cmd := a.ringCmd(events.MessageReceived{ChatID: 8, MessageID: 2, FromID: 8, Text: "psst", Date: time.Now()}); cmd != nil {
+		t.Fatal("a muted chat reached the desktop")
+	}
+
+	t.Setenv(notifyEnv, "")
+	runBatch(t, a.ringCmd(loud))
+	if len(notifier.got) != 1 {
+		t.Fatalf("the desktop was reached without the setting: %v", notifier.got)
+	}
+	t.Setenv(notifyEnv, "off")
+	if cmd := a.ringCmd(loud); cmd != nil {
+		t.Fatal("off still rang")
+	}
+}
+
+// runBatch executes a command and the commands it batches, once.
+func runBatch(t *testing.T, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		return
+	}
+	switch msg := cmd().(type) {
+	case tea.BatchMsg:
+		for _, c := range msg {
+			runBatch(t, c)
+		}
+	default:
 	}
 }

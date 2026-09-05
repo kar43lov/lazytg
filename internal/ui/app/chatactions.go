@@ -13,6 +13,7 @@ import (
 	"github.com/kar43lov/lazytg/internal/core/domain"
 	"github.com/kar43lov/lazytg/internal/core/events"
 	"github.com/kar43lov/lazytg/internal/ui/panes/chats"
+	"github.com/kar43lov/lazytg/internal/ui/safetext"
 )
 
 // The chat-list chords act on the highlighted chat without opening it, the
@@ -151,10 +152,67 @@ const notifyEnv = "LAZYTG_NOTIFY"
 // looking at and has not muted. The check is one map lookup; the bell is
 // one byte.
 func (a App) ringCmd(ev events.MessageReceived) tea.Cmd {
-	if !shouldRing(ev, a.thread.ChatID(), a.chats, os.Getenv(notifyEnv)) {
+	setting := os.Getenv(notifyEnv)
+	if !shouldRing(ev, a.thread.ChatID(), a.chats, setting) {
 		return nil
 	}
-	return tea.Raw("\a")
+	ring := tea.Raw("\a")
+	if a.notifier == nil || !wantsDesktop(setting) {
+		return ring
+	}
+	return tea.Batch(ring, a.desktopCmd(ev))
+}
+
+// wantsDesktop reads the setting that lets the client leave the terminal.
+func wantsDesktop(setting string) bool {
+	return strings.EqualFold(setting, "desktop")
+}
+
+// desktopCmd posts the message to the desktop: the chat as the title,
+// the author and the first line of the text as the body. Both are
+// somebody else's strings and are cleaned and cut like everything else
+// drawn from them. Failures are logged and not shown — a notification
+// that could not be posted is not the user's problem to solve
+// mid-conversation.
+func (a App) desktopCmd(ev events.MessageReceived) tea.Cmd {
+	title := "lazytg"
+	if name, ok := a.chatTitle(ev.ChatID); ok {
+		title = name
+	}
+	private := false
+	if item, ok := a.chats.ItemByID(ev.ChatID); ok {
+		private = item.Type() == domain.ChatTypePrivate
+	}
+	body := desktopBody(ev, a.directoryNames(), private)
+	notifier := a.notifier
+	log := a.log
+	return func() tea.Msg {
+		if err := notifier.Notify(context.Background(), title, body); err != nil && log != nil {
+			log.Warn("notify: desktop notification failed", "err", err)
+		}
+		return nil
+	}
+}
+
+// desktopBody is the notification's one line: in a group, who and then
+// what; in a private chat the title already says who, so what alone.
+// The name comes from the chat list, the one directory the client has;
+// a sender it does not list goes unnamed rather than as a number.
+func desktopBody(ev events.MessageReceived, names map[int64]string, private bool) string {
+	text := safetext.CleanLine(ev.Text)
+	if text == "" && ev.Media != nil {
+		text = string(ev.Media.Kind)
+	}
+	if r := []rune(text); len(r) > 120 {
+		text = string(r[:119]) + "…"
+	}
+	if private {
+		return text
+	}
+	if who := safetext.CleanLine(names[ev.FromID]); who != "" {
+		return who + ": " + text
+	}
+	return text
 }
 
 func shouldRing(ev events.MessageReceived, openChat int64, list chats.Model, setting string) bool {
