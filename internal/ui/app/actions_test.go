@@ -27,7 +27,7 @@ type fakeActions struct {
 	chatActions []chatActionRecord
 	chatErr     error
 	resolved    []string
-	resolveID   int64
+	resolveChat domain.Chat
 	resolveErr  error
 	presses     []pressRecord
 	pressAnswer coresync.CallbackAnswer
@@ -440,11 +440,11 @@ func (f *fakeActions) PressButton(_ context.Context, chatID, messageID int64, da
 	return f.pressAnswer, f.pressErr
 }
 
-func (f *fakeActions) OpenByUsername(_ context.Context, name string) (int64, error) {
+func (f *fakeActions) OpenByUsername(_ context.Context, name string) (domain.Chat, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.resolved = append(f.resolved, name)
-	return f.resolveID, f.resolveErr
+	return f.resolveChat, f.resolveErr
 }
 
 func (f *fakeActions) MarkRead(_ context.Context, chatID int64, marked bool) error {

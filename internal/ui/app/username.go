@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/kar43lov/lazytg/internal/core/domain"
 	coresync "github.com/kar43lov/lazytg/internal/core/sync"
 	"github.com/kar43lov/lazytg/internal/ui/palette"
 )
@@ -18,9 +19,9 @@ import (
 // usernameResolvedMsg is the server's answer to an "@name" from the
 // palette.
 type usernameResolvedMsg struct {
-	name   string
-	chatID int64
-	err    error
+	name string
+	chat domain.Chat
+	err  error
 }
 
 // resolveTimeout bounds the one request a typed handle costs.
@@ -38,8 +39,8 @@ func (a App) handleOpenUsername(msg palette.OpenUsernameMsg) (tea.Model, tea.Cmd
 	return a, func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), resolveTimeout)
 		defer cancel()
-		id, err := actions.OpenByUsername(ctx, name)
-		return usernameResolvedMsg{name: name, chatID: id, err: err}
+		chat, err := actions.OpenByUsername(ctx, name)
+		return usernameResolvedMsg{name: name, chat: chat, err: err}
 	}
 }
 
@@ -51,7 +52,21 @@ func (a App) applyUsernameResolved(msg usernameResolvedMsg) (tea.Model, tea.Cmd)
 	// From here it is a palette pick: the same path opens the thread,
 	// moves the list highlight and, with a forward pending, sends there.
 	a.status = a.status.SetNotice("opened @" + msg.name)
-	return a.handlePaletteSelected(palette.SelectedMsg{ChatID: msg.chatID})
+	model, cmd := a.handlePaletteSelected(palette.SelectedMsg{ChatID: msg.chat.ID})
+	a = model.(App)
+	if _, listed := a.chats.ItemByID(msg.chat.ID); !listed {
+		// The list reloads on its own a moment later; until then the
+		// resolved row is the only place the sender's name lives, and
+		// a bot answering as "user-983000232" is what the wait looks
+		// like without this.
+		a = a.applyDirectory(msg.chat.ID)
+		names := map[int64]string{msg.chat.ID: msg.chat.Title}
+		for id, name := range a.directoryNames() {
+			names[id] = name
+		}
+		a.thread = a.thread.SetDirectory(names, msg.chat.Type)
+	}
+	return a, cmd
 }
 
 // resolveFailure words the refusal.

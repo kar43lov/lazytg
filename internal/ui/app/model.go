@@ -72,7 +72,7 @@ type MessageActions interface {
 	// OpenByUsername resolves a public handle, stores the chat and
 	// returns its id, so the thread can open a conversation that was
 	// not in the list.
-	OpenByUsername(ctx context.Context, name string) (int64, error)
+	OpenByUsername(ctx context.Context, name string) (domain.Chat, error)
 	// PressButton calls a bot back with the data of one of its buttons
 	// and returns what the bot said.
 	PressButton(ctx context.Context, chatID, messageID int64, data []byte) (coresync.CallbackAnswer, error)

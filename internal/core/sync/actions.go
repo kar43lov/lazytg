@@ -363,26 +363,27 @@ func (s *ActionService) PressButton(ctx context.Context, chatID, messageID int64
 }
 
 // OpenByUsername resolves a public handle, stores what came back and
-// returns the chat id to open. The peer goes in first: a chat row without
+// returns the chat to open — the whole row, because the list will not
+// have reloaded by the time the thread needs a name for its author. The peer goes in first: a chat row without
 // its peer is one the history loader cannot address.
-func (s *ActionService) OpenByUsername(ctx context.Context, name string) (int64, error) {
+func (s *ActionService) OpenByUsername(ctx context.Context, name string) (domain.Chat, error) {
 	if s.resolver == nil || s.chatSaver == nil || s.peerStore == nil {
-		return 0, errors.New("open by username: not connected")
+		return domain.Chat{}, errors.New("open by username: not connected")
 	}
 	chat, peer, err := s.resolver.ResolveUsername(ctx, name)
 	if err != nil {
-		return 0, err
+		return domain.Chat{}, err
 	}
 	if err := s.peerStore.Save(ctx, peer); err != nil {
-		return 0, fmt.Errorf("open @%s: save peer: %w", name, err)
+		return domain.Chat{}, fmt.Errorf("open @%s: save peer: %w", name, err)
 	}
 	if err := s.chatSaver.SaveChatIfMissing(ctx, chat); err != nil {
-		return 0, fmt.Errorf("open @%s: save chat: %w", name, err)
+		return domain.Chat{}, fmt.Errorf("open @%s: save chat: %w", name, err)
 	}
 	if s.bus != nil {
 		s.bus.Publish(events.DialogUpdated{ChatID: chat.ID})
 	}
-	return chat.ID, nil
+	return chat, nil
 }
 
 // Mute silences a chat until the given time; the zero time unmutes.

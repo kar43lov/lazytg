@@ -645,9 +645,9 @@ func TestActionService_OpenByUsername(t *testing.T) {
 	bus := &recordingBus{}
 	svc := NewActionService(nil, nil, nil, nil, nil, bus, nil).WithResolver(resolver, chats, peers)
 
-	id, err := svc.OpenByUsername(context.Background(), "durov")
-	if err != nil || id != 42 {
-		t.Fatalf("OpenByUsername = %d, %v", id, err)
+	chat, err := svc.OpenByUsername(context.Background(), "durov")
+	if err != nil || chat.ID != 42 || chat.Title != "Pavel" {
+		t.Fatalf("OpenByUsername = %+v, %v", chat, err)
 	}
 	if len(peers.saved) != 1 || peers.saved[0].AccessHash != 7 {
 		t.Fatalf("peer not stored: %+v", peers.saved)

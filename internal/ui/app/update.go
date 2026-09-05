@@ -1187,19 +1187,25 @@ func (a App) handleChatCycled(msg chatCycledMsg) (tea.Model, tea.Cmd) {
 // user has a dialog with. That covers the other party of every private chat,
 // which is where an unnamed "user-8385473863" was most jarring.
 func (a App) applyDirectory(chatID int64) App {
+	var kind domain.ChatType
+	if it, ok := a.chats.ItemByID(chatID); ok {
+		kind = it.Type()
+	}
+	a.thread = a.thread.SetDirectory(a.directoryNames(), kind)
+	return a
+}
+
+// directoryNames is the sender directory the chat list provides: a title
+// for every peer the account has a dialog with.
+func (a App) directoryNames() map[int64]string {
 	items := a.chats.Items()
 	names := make(map[int64]string, len(items))
-	var kind domain.ChatType
 	for _, it := range items {
 		if name := it.Name(); name != "" {
 			names[it.ID()] = name
 		}
-		if it.ID() == chatID {
-			kind = it.Type()
-		}
 	}
-	a.thread = a.thread.SetDirectory(names, kind)
-	return a
+	return names
 }
 
 // handleResize updates the cached dimensions, recomputes per-pane sizes, and

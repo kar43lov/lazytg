@@ -303,7 +303,7 @@ func TestDraftChanged_ReachesComposerAndList(t *testing.T) {
 func TestPalette_OpensAChatByUsername(t *testing.T) {
 	t.Parallel()
 
-	actions := &fakeActions{resolveID: 4242}
+	actions := &fakeActions{resolveChat: domain.Chat{ID: 4242, Type: domain.ChatTypePrivate, Title: "Quiz Bot"}}
 	threadModel := thread.New()
 	a := New(Deps{Keymap: keymap.Default(), Thread: &threadModel, Actions: actions})
 	model, _ := a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
@@ -318,6 +318,11 @@ func TestPalette_OpensAChatByUsername(t *testing.T) {
 	}
 	if a.thread.ChatID() != 4242 {
 		t.Fatalf("thread opened chat %d, want 4242", a.thread.ChatID())
+	}
+	// The list has not reloaded yet; the resolved row is the only place
+	// the sender's name can come from, and the thread must have it.
+	if got := a.thread.AuthorLabel(domain.Message{ID: 1, ChatID: 4242, FromID: 4242}); got != "Quiz Bot" {
+		t.Fatalf("author label = %q, want the resolved title", got)
 	}
 
 	actions.resolveErr = fmt.Errorf("@nobody: %w", coresync.ErrNoSuchUsername)
