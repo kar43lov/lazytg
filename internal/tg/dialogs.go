@@ -179,8 +179,10 @@ func resolveDialog(
 		chat.Online, chat.LastSeen = presenceOf(u.Status)
 		if u.Self {
 			// The dialog with yourself. Every official client names it
-			// rather than showing the account's own name twice.
+			// rather than showing the account's own name twice, and none
+			// tells you when you were last seen.
 			chat.Title = SavedMessagesTitle
+			chat.Online, chat.LastSeen = false, time.Time{}
 		}
 		chat.Username = u.Username
 		peer = domain.Peer{ID: p.UserID, Type: domain.ChatTypePrivate, AccessHash: u.AccessHash}

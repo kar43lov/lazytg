@@ -184,6 +184,11 @@ func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass) {
 			d.publish(events.ChatMuted{ChatID: chatIDFromPeer(np.Peer), Until: muteUntilOf(upd.NotifySettings)})
 		}
 	case *tg.UpdateUserStatus:
+		if d.self.Owns(upd.UserID) {
+			// Your own presence is not news, and the chat with yourself
+			// does not show it.
+			return
+		}
 		online, lastSeen := presenceOf(upd.Status)
 		d.publish(events.PeerPresence{UserID: upd.UserID, Online: online, LastSeen: lastSeen})
 	default:

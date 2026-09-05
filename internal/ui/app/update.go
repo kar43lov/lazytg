@@ -224,6 +224,9 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.applyChatAction(m), nil
 	case linkOpenedMsg:
 		return a.applyLinkOpened(m), nil
+	case noticeMsg:
+		a.status = a.status.SetNotice(string(m))
+		return a, nil
 	case forwardResultMsg:
 		return a.applyForwardResult(m), nil
 	case inlineImageReadyMsg:
@@ -1258,12 +1261,12 @@ func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		if cmd, ok := a.cmdDownloadCursorMedia(); ok {
 			return cmd, true
 		}
-		return nil, true
+		return noticeCmd(a.nothingToDownload()), true
 	case openAllowed && key.Matches(k, a.keymap.OpenMedia):
 		if cmd, ok := a.cmdOpenCursorMedia(); ok {
 			return cmd, true
 		}
-		return nil, true
+		return noticeCmd(a.nothingToOpen()), true
 	case !a.chats.IsFilterActive() && key.Matches(k, a.keymap.EmojiPicker):
 		return cmdOpenEmojiPicker(), true
 	case attachAllowed && key.Matches(k, a.keymap.Attach):
@@ -1321,9 +1324,7 @@ func (a App) cmdOpenAttach() (tea.Cmd, bool) {
 // the user moves it.
 func (a App) cmdDownloadCursorMedia() (tea.Cmd, bool) {
 	target, media, title, ok := a.cursorMediaTarget()
-	if !ok || media.FileID == 0 {
-		// A place, a contact card, a poll: something is attached and
-		// none of it is a file.
+	if !ok {
 		return nil, false
 	}
 	return func() tea.Msg {
@@ -1368,7 +1369,9 @@ func (a App) cmdOpenCursorMedia() (tea.Cmd, bool) {
 // and the chat title the download path needs for its on-disk layout.
 func (a App) cursorMediaTarget() (domain.Message, domain.MediaInfo, string, bool) {
 	target, ok := a.thread.MediaTarget()
-	if !ok || target.Media == nil {
+	if !ok || target.Media == nil || target.Media.FileID == 0 {
+		// A poll or a contact card is an attachment with no file: the
+		// chords that save and open files have nothing to act on.
 		return domain.Message{}, domain.MediaInfo{}, "", false
 	}
 	title, _ := a.chatTitle(target.ChatID)

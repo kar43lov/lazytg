@@ -73,3 +73,52 @@ func TestOpenKey_FollowsTheLinkUnderTheCursor(t *testing.T) {
 		t.Fatalf("status reads %q", a.statusText())
 	}
 }
+
+// A chord that did nothing says why. Silence reads as a broken key.
+func TestOpenAndDownload_SayWhyNothingHappened(t *testing.T) {
+	t.Parallel()
+
+	threadModel := thread.New()
+	now := time.Now()
+	threadModel = injectMessages(threadModel, []domain.Message{
+		{ID: 1, ChatID: 42, Date: now, Media: &domain.MediaInfo{Kind: domain.MediaKindPoll, Filename: "Lunch?"}},
+		{ID: 2, ChatID: 42, Date: now.Add(time.Second), Text: "call", Entities: []domain.Entity{{Kind: domain.EntityTextURL, Offset: 0, Length: 4, URL: "tel:+123"}}},
+	})
+	inputModel := input.NewWithDeps(nil, keymap.Default(), nil)
+	opener := &fakeOpener{}
+	a := New(Deps{Keymap: keymap.Default(), Thread: &threadModel, Input: &inputModel, Opener: opener})
+	model, _ := a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	a = tabTo(t, model.(App), FocusThread)
+
+	run := func(a App, key string) App {
+		t.Helper()
+		next, cmd := press(t, a, key)
+		if cmd == nil {
+			t.Fatalf("%q produced no command", key)
+		}
+		model, _ := next.Update(cmd())
+		return model.(App)
+	}
+	a = run(a, "o")
+	if !strings.Contains(a.statusText(), "only http and https") {
+		t.Fatalf("o on a tel: link: status %q", a.statusText())
+	}
+	a = cursorUp(t, a, 1)
+	a = run(a, "o")
+	if !strings.Contains(a.statusText(), "poll has no file") {
+		t.Fatalf("o on a poll: status %q", a.statusText())
+	}
+	next, cmd := a.Update(keyChord('d', tea.ModCtrl))
+	a = next.(App)
+	if cmd == nil {
+		t.Fatal("ctrl+d on a poll produced no command")
+	}
+	model, _ = a.Update(cmd())
+	a = model.(App)
+	if !strings.Contains(a.statusText(), "nothing to download: a poll") {
+		t.Fatalf("ctrl+d on a poll: status %q", a.statusText())
+	}
+	if got := opener.snapshot(); len(got) != 0 {
+		t.Fatalf("the opener was called: %v", got)
+	}
+}

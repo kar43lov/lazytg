@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -109,6 +110,10 @@ func injectMessages(m thread.Model, msgs []domain.Message) thread.Model {
 			// fixture that drops it hides every defect in that path.
 			ReplyTo:   msg.ReplyTo,
 			Reactions: msg.Reactions,
+			// Formatting and the link behind words live in the entities;
+			// a fixture without them hides every path that reads them.
+			Entities: msg.Entities,
+			EditDate: msg.EditDate,
 		}
 		updated, _ := m.Update(ev)
 		m = updated
@@ -159,11 +164,14 @@ func TestDownloadChord_NoMediaIsConsumedNoop(t *testing.T) {
 
 	_, cmd := a.Update(keyChord('d', tea.ModCtrl))
 	// The chord is consumed (the global handler returns handled=true)
-	// to prevent an unfocused fall-through, but the cmd is nil because
-	// there's nothing to download. The fake downloader must not have
-	// been called.
-	if cmd != nil {
-		t.Fatalf("expected nil cmd when no media available, got %T", cmd)
+	// to prevent an unfocused fall-through; all it produces is a line
+	// for the status bar saying there was nothing to save. The fake
+	// downloader must not have been called.
+	if cmd == nil {
+		t.Fatal("Ctrl-D with nothing to save must still say so")
+	}
+	if n, ok := cmd().(noticeMsg); !ok || !strings.Contains(string(n), "nothing to download") {
+		t.Fatalf("expected a notice, got %#v", cmd())
 	}
 	if len(dl.snapshot()) != 0 {
 		t.Fatalf("downloader called without media: %+v", dl.snapshot())

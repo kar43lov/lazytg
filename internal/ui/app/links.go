@@ -102,6 +102,51 @@ func (a App) cmdOpenLink(link string) tea.Cmd {
 	}
 }
 
+// noticeMsg puts a sentence in the status bar and nothing else. It is
+// how a chord that ended up doing nothing says why, since a silent key is
+// indistinguishable from a broken one.
+type noticeMsg string
+
+func noticeCmd(text string) tea.Cmd {
+	return func() tea.Msg { return noticeMsg(text) }
+}
+
+// nothingToOpen explains an "o" that opened nothing: a link of a kind the
+// browser is not given, an attachment that has no file, or no attachment
+// at all.
+func (a App) nothingToOpen() string {
+	cur, ok := a.thread.CursorMessage()
+	if !ok {
+		return "nothing to open: no message under the cursor"
+	}
+	if cur.Media != nil && cur.Media.FileID == 0 && cur.Media.Kind != domain.MediaKindLocation {
+		return "nothing to open: a " + string(cur.Media.Kind) + " has no file behind it"
+	}
+	if hasNonWebLink(cur) {
+		return "not opened: only http and https links are handed to the browser"
+	}
+	return "nothing to open: no link or attachment at the cursor"
+}
+
+// nothingToDownload explains a Ctrl+D that saved nothing.
+func (a App) nothingToDownload() string {
+	if cur, ok := a.thread.CursorMessage(); ok && cur.Media != nil && cur.Media.FileID == 0 {
+		return "nothing to download: a " + string(cur.Media.Kind) + " has no file behind it"
+	}
+	return "nothing to download: no attachment at the cursor"
+}
+
+// hasNonWebLink reports a link the message carries that openableLink
+// passed over — the reason "o" did nothing was the scheme, not the absence.
+func hasNonWebLink(msg domain.Message) bool {
+	for _, e := range msg.Entities {
+		if e.Kind == domain.EntityTextURL && e.URL != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (a App) applyLinkOpened(msg linkOpenedMsg) App {
 	if msg.err != nil {
 		a.status = a.status.SetNotice("could not open the link: " + msg.err.Error())

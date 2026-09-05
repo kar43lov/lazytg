@@ -240,7 +240,9 @@ func TestUpdatesDispatcher_SavedMessagesArriveAsOutgoing(t *testing.T) {
 func TestUpdatesDispatcher_PublishesTheListFacts(t *testing.T) {
 	t.Parallel()
 	bus, ch := newTestBus(t)
-	d := NewUpdatesDispatcher(bus, nil)
+	self := &Self{}
+	self.Set(8385)
+	d := NewUpdatesDispatcher(bus, nil).WithSelf(self)
 
 	ns := tg.PeerNotifySettings{}
 	ns.SetMuteUntil(2147483647)
@@ -253,6 +255,8 @@ func TestUpdatesDispatcher_PublishesTheListFacts(t *testing.T) {
 		&tg.UpdateNotifySettings{Peer: &tg.NotifyUsers{}, NotifySettings: ns},
 		&tg.UpdateUserStatus{UserID: 42, Status: &tg.UserStatusOnline{Expires: 1}},
 		&tg.UpdateDialogPinned{Pinned: true, Peer: &tg.DialogPeerFolder{FolderID: 1}},
+		// Your own presence: not news, dropped.
+		&tg.UpdateUserStatus{UserID: 8385, Status: &tg.UserStatusOnline{Expires: 1}},
 	}}
 	if err := d.HandlerFunc().Handle(context.Background(), upd); err != nil {
 		t.Fatalf("Handle: %v", err)

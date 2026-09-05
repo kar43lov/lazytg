@@ -502,7 +502,7 @@ func TestDialogsFetcher_SelfDialogNeedsTheUsersCall(t *testing.T) {
 func TestDialogsFetcher_ListedSelfDialogIsSavedMessages(t *testing.T) {
 	t.Parallel()
 
-	me := &tg.User{ID: 8385, AccessHash: 1, FirstName: "Pavel", Self: true}
+	me := &tg.User{ID: 8385, AccessHash: 1, FirstName: "Pavel", Self: true, Status: &tg.UserStatusOnline{Expires: 1}}
 	at := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	stub := &stubGetDialogs{responses: []tg.MessagesDialogsClass{&tg.MessagesDialogs{
 		Dialogs:  []tg.DialogClass{dialogAt(&tg.PeerUser{UserID: 8385}, 1, 0, false)},
@@ -515,6 +515,9 @@ func TestDialogsFetcher_ListedSelfDialogIsSavedMessages(t *testing.T) {
 	}
 	if len(page.Chats) != 1 || page.Chats[0].Title != SavedMessagesTitle {
 		t.Fatalf("chats = %+v, want Saved Messages", page.Chats)
+	}
+	if page.Chats[0].Online || !page.Chats[0].LastSeen.IsZero() {
+		t.Fatalf("the chat with yourself shows a presence: %+v", page.Chats[0])
 	}
 }
 
