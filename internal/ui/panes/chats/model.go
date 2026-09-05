@@ -20,6 +20,8 @@ import (
 
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/kar43lov/lazytg/internal/core/domain"
 )
 
 // debounceWindow is how long Update waits after the *last* DialogUpdated
@@ -60,11 +62,21 @@ type Model struct {
 	repo  Repository
 	log   *slog.Logger
 	chats []ChatItem
+	// drafts is what the server holds half-written per chat, kept apart
+	// from the rows because the rows are rebuilt from the repo on every
+	// reload and the repo does not store drafts.
+	drafts map[int64]string
 
 	// itemRows is how many terminal rows one list row occupies, captured
 	// from the delegate at construction (bubbles exposes no getter on
 	// list.Model). Mouse hit-testing needs it; see mouse.go.
 	itemRows int
+
+	// folders are the chat folders read from Telegram, and folderIdx is
+	// the tab in force: -1 for the unfiltered list, otherwise an index
+	// into folders. See folders.go.
+	folders   []domain.Folder
+	folderIdx int
 
 	// reloadGeneration is incremented every time a DialogUpdated arrives.
 	// reloadDebouncedMsg with a stale generation is dropped so only the
@@ -97,10 +109,11 @@ func newModel(repo Repository, log *slog.Logger) Model {
 	l.SetShowPagination(false)  // few-dozen-chats lists fit in one page
 	l.SetFilteringEnabled(true) // keep the built-in '/' filter
 	return Model{
-		list:     l,
-		repo:     repo,
-		log:      log,
-		itemRows: delegate.Height() + delegate.Spacing(),
+		list:      l,
+		repo:      repo,
+		log:       log,
+		itemRows:  delegate.Height() + delegate.Spacing(),
+		folderIdx: folderAll,
 	}
 }
 
@@ -148,13 +161,33 @@ func (m Model) SetSize(width, height int) Model {
 	if w < minListWidth {
 		w = minListWidth
 	}
-	// Reserve one row for the focus-aware header rendered by View.
+	// Reserve one row for the focus-aware header rendered by View, and one
+	// more for the folder tabs when there are any. Getting this wrong costs
+	// the last chat in the list: the pane draws a row the list does not know
+	// about and the bottom item falls off the end.
 	listHeight := height - 1
+	if m.stripShown() {
+		listHeight--
+	}
 	if listHeight < minListHeight {
 		listHeight = minListHeight
 	}
 	m.list.SetSize(w, listHeight)
+	if len(m.chats) > 0 {
+		// The rows carry their width, so a resize lays them out again.
+		m.list.SetItems(listItems(m.visibleChats(m.chats), m.rowWidth()))
+	}
 	return m
+}
+
+// ItemByID finds a chat in the loaded list.
+func (m Model) ItemByID(id int64) (ChatItem, bool) {
+	for _, it := range m.chats {
+		if it.ID() == id {
+			return it, true
+		}
+	}
+	return ChatItem{}, false
 }
 
 // SetFocus toggles whether the pane is focused. The list itself does not
@@ -211,3 +244,26 @@ func sortChatItems(items []ChatItem) {
 // value is part of the contract SetSize is given, not a layout decision the
 // pane makes.
 const paneHPadding = 2
+
+// UnreadTotal is the badge count: unread messages across every chat that is
+// not muted, plus one for each by-hand dot on such a chat. Muted chats are
+// left out the way every official client leaves them out of the badge.
+func (m Model) UnreadTotal() int {
+	now := time.Now()
+	total := 0
+	for _, it := range m.chats {
+		if it.Muted(now) || it.Archived() {
+			// Archived chats are out of sight by the user's own choice;
+			// their count is not the badge's business, the way it is not
+			// in the official clients.
+			continue
+		}
+		switch {
+		case it.UnreadCount() > 0:
+			total += it.UnreadCount()
+		case it.UnreadMark():
+			total++
+		}
+	}
+	return total
+}

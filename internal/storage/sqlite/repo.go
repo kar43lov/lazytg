@@ -570,15 +570,22 @@ func (r *Repo) SaveChat(ctx context.Context, c domain.Chat) error {
 		return ErrReadOnly
 	}
 	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO chats (id, type, title, username, last_message_date, unread_count, pinned)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO chats (id, type, title, username, last_message_date, unread_count, pinned,
+                           muted_until, unread_mark, online, last_seen, read_outbox_max_id, archived)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             type              = excluded.type,
             title             = excluded.title,
             username          = excluded.username,
             last_message_date = excluded.last_message_date,
             unread_count      = excluded.unread_count,
-            pinned            = excluded.pinned
+            pinned            = excluded.pinned,
+            muted_until       = excluded.muted_until,
+            unread_mark       = excluded.unread_mark,
+            online            = excluded.online,
+            last_seen         = excluded.last_seen,
+            read_outbox_max_id = MAX(chats.read_outbox_max_id, excluded.read_outbox_max_id),
+            archived          = excluded.archived
     `,
 		c.ID,
 		string(c.Type),
@@ -587,6 +594,12 @@ func (r *Repo) SaveChat(ctx context.Context, c domain.Chat) error {
 		nullableUnix(c.LastMessageDate),
 		c.UnreadCount,
 		boolToInt(c.Pinned),
+		unixOrZero(c.MutedUntil),
+		boolToInt(c.UnreadMark),
+		boolToInt(c.Online),
+		unixOrZero(c.LastSeen),
+		c.ReadOutboxMaxID,
+		boolToInt(c.Archived),
 	)
 	if err != nil {
 		return fmt.Errorf("save chat %d: %w", c.ID, err)
@@ -608,6 +621,7 @@ func (r *Repo) GetChats(ctx context.Context) ([]domain.Chat, error) {
 	// not bytes, so this cannot split a rune.
 	rows, err := r.db.QueryContext(ctx, `
         SELECT c.id, c.type, c.title, c.username, c.last_message_date, c.unread_count, c.pinned,
+               c.muted_until, c.unread_mark, c.online, c.last_seen, c.read_outbox_max_id, c.archived,
                (SELECT substr(m.text, 1, 200) FROM messages m
                  WHERE m.chat_id = c.id
                  ORDER BY m.date DESC, m.id DESC
@@ -629,11 +643,21 @@ func (r *Repo) GetChats(ctx context.Context) ([]domain.Chat, error) {
 			username sql.NullString
 			lastDate sql.NullInt64
 			pinned   int
+			muted    int64
+			mark     int
+			online   int
+			lastSeen int64
+			archived int
 			preview  sql.NullString
 		)
-		if err := rows.Scan(&c.ID, &typ, &title, &username, &lastDate, &c.UnreadCount, &pinned, &preview); err != nil {
+		if err := rows.Scan(&c.ID, &typ, &title, &username, &lastDate, &c.UnreadCount, &pinned,
+			&muted, &mark, &online, &lastSeen, &c.ReadOutboxMaxID, &archived, &preview); err != nil {
 			return nil, fmt.Errorf("scan chat: %w", err)
 		}
+		c.MutedUntil = timeOrZero(muted)
+		c.UnreadMark = mark != 0
+		c.Online = online != 0
+		c.LastSeen = timeOrZero(lastSeen)
 		c.LastMessagePreview = preview.String
 		c.Type = domain.ChatType(typ)
 		c.Title = title.String
@@ -642,6 +666,7 @@ func (r *Repo) GetChats(ctx context.Context) ([]domain.Chat, error) {
 			c.LastMessageDate = time.Unix(lastDate.Int64, 0).UTC()
 		}
 		c.Pinned = pinned != 0
+		c.Archived = archived != 0
 		out = append(out, c)
 	}
 	if err := rows.Err(); err != nil {
@@ -721,9 +746,10 @@ const messageUpsertSQL = `
             id, chat_id, from_id, date, text, reply_to, raw_blob,
             media_kind, media_id, media_access_hash, media_file_reference,
             media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-            media_duration, outgoing
+            media_duration, outgoing, reactions, media_waveform, entities, edit_date, buttons,
+            forward, pinned
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chat_id, id) DO UPDATE SET
             from_id              = excluded.from_id,
             date                 = excluded.date,
@@ -740,7 +766,14 @@ const messageUpsertSQL = `
             media_mime_type      = excluded.media_mime_type,
             media_thumb_size     = excluded.media_thumb_size,
             media_duration       = excluded.media_duration,
-            outgoing             = excluded.outgoing
+            outgoing             = excluded.outgoing,
+            reactions            = excluded.reactions,
+            media_waveform       = excluded.media_waveform,
+            entities             = excluded.entities,
+            edit_date            = excluded.edit_date,
+            buttons              = excluded.buttons,
+            forward              = excluded.forward,
+            pinned               = excluded.pinned
     `
 
 // messageInsertArgs builds the positional argument slice for
@@ -758,6 +791,7 @@ func messageInsertArgs(m domain.Message) []any {
 		mediaMime sql.NullString
 		mediaThSz sql.NullString
 		mediaDur  int
+		mediaWave []byte
 	)
 	if m.Media != nil {
 		mediaKind = sql.NullString{String: string(m.Media.Kind), Valid: m.Media.Kind != ""}
@@ -772,6 +806,7 @@ func messageInsertArgs(m domain.Message) []any {
 		mediaMime = nullableString(m.Media.MimeType)
 		mediaThSz = nullableString(m.Media.ThumbSize)
 		mediaDur = m.Media.Duration
+		mediaWave = m.Media.Waveform
 	}
 	return []any{
 		m.ID,
@@ -792,6 +827,10 @@ func messageInsertArgs(m domain.Message) []any {
 		mediaThSz,
 		mediaDur,
 		m.Outgoing,
+		encodeReactions(m.Reactions),
+		mediaWave,
+		domain.EncodeEntities(m.Entities),
+		unixOrZero(m.EditDate), domain.EncodeButtons(m.Buttons), domain.EncodeForward(m.Forwarded), boolToInt(m.Pinned),
 	}
 }
 
@@ -872,8 +911,39 @@ const messageSelectColumns = `
         SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                media_kind, media_id, media_access_hash, media_file_reference,
                media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-               media_duration, outgoing
+               media_duration, outgoing, reactions, media_waveform, entities, edit_date, buttons, forward, pinned
     `
+
+// ErrMessageNotFound is returned by Message when the mirror holds no such
+// row. It is a distinct error rather than a zero value because the callers
+// that ask for one message by id — editing it, quoting it — must not act on
+// an empty message as though it were real.
+var ErrMessageNotFound = errors.New("message not found")
+
+// Message returns a single message by chat and id.
+//
+// The chat is part of the key, not a filter for tidiness: a channel numbers
+// its own messages from one, so id 42 exists in several chats at once and
+// means something different in each. Every other read in this file is scoped
+// the same way, for the same reason.
+func (r *Repo) Message(ctx context.Context, chatID, messageID int64) (domain.Message, error) {
+	rows, err := r.db.QueryContext(ctx,
+		messageSelectColumns+` FROM messages WHERE chat_id = ? AND id = ? LIMIT 1`,
+		chatID, messageID)
+	if err != nil {
+		return domain.Message{}, fmt.Errorf("query message %d/%d: %w", chatID, messageID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	msgs, err := scanMessages(rows)
+	if err != nil {
+		return domain.Message{}, err
+	}
+	if len(msgs) == 0 {
+		return domain.Message{}, fmt.Errorf("%w: chat=%d id=%d", ErrMessageNotFound, chatID, messageID)
+	}
+	return msgs[0], nil
+}
 
 // scanMessages drains rows into a slice of domain.Message, parsing the
 // media columns into a *MediaInfo when media_kind is non-NULL.
@@ -897,12 +967,19 @@ func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 			mediaMime sql.NullString
 			mediaThSz sql.NullString
 			mediaDur  sql.NullInt64
+			reactions sql.NullString
+			mediaWave []byte
+			entities  sql.NullString
+			editDate  int64
+			buttons   sql.NullString
+			forward   sql.NullString
+			pinned    int
 		)
 		if err := rows.Scan(
 			&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &raw,
 			&mediaKind, &mediaID, &mediaAH, &mediaRef,
 			&mediaDC, &mediaName, &mediaSize, &mediaMime, &mediaThSz,
-			&mediaDur, &m.Outgoing,
+			&mediaDur, &m.Outgoing, &reactions, &mediaWave, &entities, &editDate, &buttons, &forward, &pinned,
 		); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
@@ -923,8 +1000,15 @@ func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 				MimeType:      mediaMime.String,
 				ThumbSize:     mediaThSz.String,
 				Duration:      int(mediaDur.Int64),
+				Waveform:      mediaWave,
 			}
 		}
+		m.Reactions = decodeReactions(reactions.String)
+		m.Entities = domain.DecodeEntities(entities.String)
+		m.EditDate = timeOrZero(editDate)
+		m.Buttons = domain.DecodeButtons(buttons.String)
+		m.Forwarded = domain.DecodeForward(forward.String)
+		m.Pinned = pinned != 0
 		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -1022,4 +1106,139 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// SetReactions replaces the reactions stored against one message.
+//
+// Deliberately not part of the message upsert. A reaction update carries no
+// message body, so writing it through SaveMessage would blank the text of
+// every message somebody reacted to. It also does not create a row: a
+// reaction on a message outside the fetched history is the ordinary case, and
+// inventing an empty message to hang it on would put a blank line in the
+// thread.
+func (r *Repo) SetReactions(ctx context.Context, chatID, messageID int64, rs []domain.Reaction) error {
+	if r.readOnly.Load() {
+		return ErrReadOnly
+	}
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE messages SET reactions = ? WHERE chat_id = ? AND id = ?`,
+		encodeReactions(rs), chatID, messageID)
+	if err != nil {
+		return fmt.Errorf("set reactions %d/%d: %w", chatID, messageID, err)
+	}
+	return nil
+}
+
+// unixOrZero stores a time as seconds, with the zero time as 0 — the
+// column default, and what "never" reads as on the way back.
+func unixOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UTC().Unix()
+}
+
+func timeOrZero(unix int64) time.Time {
+	if unix == 0 {
+		return time.Time{}
+	}
+	return time.Unix(unix, 0).UTC()
+}
+
+// The four setters below each change one fact about a dialog and nothing
+// else, because each arrives on its own update that says nothing about the
+// rest of the row — rewriting the row from a pin toggle would zero the
+// unread count the sync wrote a minute earlier.
+
+// SetPinned records whether the chat is pinned to the top.
+func (r *Repo) SetPinned(ctx context.Context, chatID int64, pinned bool) error {
+	return r.setChatField(ctx, `UPDATE chats SET pinned = ? WHERE id = ?`, boolToInt(pinned), chatID)
+}
+
+// SetMutedUntil records when notifications resume; the zero time unmutes.
+func (r *Repo) SetMutedUntil(ctx context.Context, chatID int64, until time.Time) error {
+	return r.setChatField(ctx, `UPDATE chats SET muted_until = ? WHERE id = ?`, unixOrZero(until), chatID)
+}
+
+// SetUnread replaces the unread count with what the server reports.
+func (r *Repo) SetUnread(ctx context.Context, chatID int64, count int) error {
+	if count < 0 {
+		count = 0
+	}
+	return r.setChatField(ctx, `UPDATE chats SET unread_count = ? WHERE id = ?`, count, chatID)
+}
+
+// SetUnreadMark records the by-hand unread dot.
+func (r *Repo) SetUnreadMark(ctx context.Context, chatID int64, marked bool) error {
+	return r.setChatField(ctx, `UPDATE chats SET unread_mark = ? WHERE id = ?`, boolToInt(marked), chatID)
+}
+
+// SetPresence records whether the other party of a private chat is online
+// and when they were last seen. A chat that is not a person is simply not
+// updated: the row is addressed by the user's id, which is the chat's.
+func (r *Repo) SetPresence(ctx context.Context, userID int64, online bool, lastSeen time.Time) error {
+	return r.setChatField(ctx, `UPDATE chats SET online = ?, last_seen = ? WHERE id = ?`, boolToInt(online), unixOrZero(lastSeen), userID)
+}
+
+// SaveChatIfMissing stores a chat row only when there is none: a chat
+// reached by its handle carries the name and the kind and nothing about
+// the dialog, and writing it over a listed chat would zero the unread
+// count, the pin and the mute the list already shows.
+func (r *Repo) SaveChatIfMissing(ctx context.Context, c domain.Chat) error {
+	if r.readOnly.Load() {
+		return ErrReadOnly
+	}
+	_, err := r.db.ExecContext(ctx, `
+        INSERT INTO chats (id, type, title, username, last_message_date, unread_count, pinned,
+                           muted_until, unread_mark, online, last_seen, read_outbox_max_id, archived)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO NOTHING
+    `,
+		c.ID, string(c.Type), c.Title, c.Username, nullableUnix(c.LastMessageDate), c.UnreadCount,
+		boolToInt(c.Pinned), unixOrZero(c.MutedUntil), boolToInt(c.UnreadMark), boolToInt(c.Online),
+		unixOrZero(c.LastSeen), c.ReadOutboxMaxID, boolToInt(c.Archived),
+	)
+	if err != nil {
+		return fmt.Errorf("insert chat if missing: %w", err)
+	}
+	return nil
+}
+
+// SetArchived moves a chat into, or out of, the archive.
+func (r *Repo) SetArchived(ctx context.Context, chatID int64, archived bool) error {
+	return r.setChatField(ctx, `UPDATE chats SET archived = ? WHERE id = ?`, boolToInt(archived), chatID)
+}
+
+// SetPinnedMessages flags, or unflags, the given messages of a chat as
+// pinned. Rows the mirror does not hold are simply not there to flag.
+func (r *Repo) SetPinnedMessages(ctx context.Context, chatID int64, ids []int64, pinned bool) error {
+	if r.readOnly.Load() {
+		return ErrReadOnly
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	for _, id := range ids {
+		if _, err := r.db.ExecContext(ctx, `UPDATE messages SET pinned = ? WHERE chat_id = ? AND id = ?`, boolToInt(pinned), chatID, id); err != nil {
+			return fmt.Errorf("set pinned %d/%d: %w", chatID, id, err)
+		}
+	}
+	return nil
+}
+
+// SetReadOutbox records how far the other side has read, and only ever
+// forward: updates are not guaranteed to arrive in order, and a stale one
+// must not take a tick away.
+func (r *Repo) SetReadOutbox(ctx context.Context, chatID, maxID int64) error {
+	return r.setChatField(ctx, `UPDATE chats SET read_outbox_max_id = MAX(read_outbox_max_id, ?) WHERE id = ?`, maxID, chatID)
+}
+
+func (r *Repo) setChatField(ctx context.Context, query string, args ...any) error {
+	if r.readOnly.Load() {
+		return ErrReadOnly
+	}
+	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("update chat: %w", err)
+	}
+	return nil
 }

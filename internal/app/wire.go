@@ -133,6 +133,10 @@ type App struct {
 	ReindexSvc *search.ReindexService
 	LazyIndex  *search.LazyTrigger
 	SearchSvc  *search.Service
+	// RemoteSearch is the server-side fallback of the overlay, set by
+	// AttachClient; nil while logged out, and the overlay's Tab then
+	// does nothing.
+	RemoteSearch *search.RemoteService
 
 	// Frecency feeds the command palette (top chats by recency × visit
 	// count) and is updated on every palette-driven chat switch.
@@ -160,6 +164,15 @@ type App struct {
 	// Read acknowledges opened chats to Telegram. Nil until a session is
 	// attached, so a cache-only launch simply never marks anything read.
 	Read *coresync.ReadService
+	// Folders reads the account's chat folders. Nil until a session is
+	// attached; the chat list then simply has no tabs, which is what an
+	// account without folders looks like anyway.
+	Folders *tgclient.FoldersFetcher
+
+	// Actions edits and deletes messages that already exist. Nil until a
+	// session is attached: both are round trips, and a cache-only launch
+	// has nothing to send them to.
+	Actions *coresync.ActionService
 	// Rediscover refreshes the chat list when the live path invents a chat,
 	// which is the only way such a chat ever gets a title. Built by the cmd
 	// layer, which is the first place Dialogs exists.
@@ -418,8 +431,13 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 		opt(&attachOpts)
 	}
 
-	historyFetcher := tgclient.NewHistoryFetcher(client.API())
+	historyFetcher := tgclient.NewHistoryFetcher(client.API()).WithSelf(client.Self())
 	a.HistoryFetcher = historyFetcher
+	// The server-side search: one messages.searchGlobal per press of
+	// Tab in the overlay, hits mirrored so the next local search has
+	// them.
+	a.RemoteSearch = search.NewRemoteService(
+		tgclient.NewSearcher(client.API(), client.Self()), a.Repo, a.Peers, a.Log)
 
 	a.History = coresync.NewHistoryService(historyFetcher, peerLookupAdapter{peers: a.Peers}, a.Repo, a.Bus, a.Log)
 	a.Read = coresync.NewReadService(
@@ -444,17 +462,41 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 		a.Peers,
 		a.Bus,
 		a.Log,
-		coresync.DialogsConfig{},
+		// Two pages of the archive after the main list: the chats people
+		// hide there, at a fraction of the main walk's request budget.
+		coresync.DialogsConfig{ArchivePages: 2},
 	); err != nil {
 		a.Log.Warn("attach: dialogs service init failed", "err", err)
 	} else {
 		a.Dialogs = dialogs
 	}
 
-	sender := tgclient.NewSender(client.API(), peerResolverAdapter{peers: a.Peers})
-	a.Sender = coresync.NewSendService(senderAdapter{sender: sender}, outgoingStoreAdapter{repo: a.Repo}, a.Bus, a.Log, coresync.SendConfig{}).
-		WithBackgroundContext(bgCtx).
-		WithRateLimiter(a.SendGuard)
+	a.Folders = tgclient.NewFoldersFetcher(client.API())
+
+	// The edit path refuses somebody else's message without a round trip by
+	// reading the direction migration 0010 stores, so no self-id lookup is
+	// plumbed through here.
+	a.Actions = coresync.NewActionService(
+		tgclient.NewEditor(client.API(), peerResolverAdapter{peers: a.Peers}),
+		tgclient.NewDeleter(client.API(), peerResolverAdapter{peers: a.Peers}),
+		tgclient.NewForwarder(client.API(), peerResolverAdapter{peers: a.Peers}),
+		tgclient.NewReactor(client.API(), peerResolverAdapter{peers: a.Peers}),
+		a.Repo, a.Bus, a.Log).
+		// Forwarding creates messages, so it goes through the same guard
+		// as text and media rather than around it.
+		WithRateLimiter(a.SendGuard).
+		// The chat-level actions: one request per keypress over a chat
+		// that already exists, so none of them creates a message.
+		WithDialogs(
+			tgclient.NewDialogActor(client.API(), peerResolverAdapter{peers: a.Peers}),
+			tgclient.NewReader(client.API(), peerResolverAdapter{peers: a.Peers}),
+			a.Repo).
+		// A conversation not in the list yet, reached by its handle: one
+		// request per name the user typed.
+		WithResolver(tgclient.NewUsernameResolver(client.API()), a.Repo, a.Peers).
+		// A bot's button: one callback per explicit press over a message
+		// that exists; nothing here creates a message.
+		WithBots(tgclient.NewBotActor(client.API(), peerResolverAdapter{peers: a.Peers}))
 
 	// Preserve a dispatcher installed before attach. The cmd layer has to
 	// build one ahead of the client (gotd takes the update handler at
@@ -464,6 +506,16 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 	if a.Updates == nil {
 		a.Updates = tgclient.NewUpdatesDispatcher(a.Bus, a.Log)
 	}
+	a.Updates.WithSelf(client.Self())
+
+	// The sender announces what it sent through the dispatcher: Telegram
+	// does not push a message back to the session that sent it, so this
+	// is the only way the account's own messages reach the mirror before
+	// the chat is next reopened.
+	sender := tgclient.NewSender(client.API(), peerResolverAdapter{peers: a.Peers}, tgclient.WithEcho(a.Updates))
+	a.Sender = coresync.NewSendService(senderAdapter{sender: sender}, outgoingStoreAdapter{repo: a.Repo}, a.Bus, a.Log, coresync.SendConfig{}).
+		WithBackgroundContext(bgCtx).
+		WithRateLimiter(a.SendGuard)
 
 	// The polling fallback is opt-in and stays off by default: it is steady
 	// background traffic on an account Telegram already watches more closely

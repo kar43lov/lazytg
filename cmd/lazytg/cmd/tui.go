@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
@@ -10,6 +12,7 @@ import (
 	"github.com/kar43lov/lazytg/internal/app"
 	"github.com/kar43lov/lazytg/internal/core/events"
 	"github.com/kar43lov/lazytg/internal/core/files"
+	"github.com/kar43lov/lazytg/internal/core/notify"
 	uiapp "github.com/kar43lov/lazytg/internal/ui/app"
 	"github.com/kar43lov/lazytg/internal/ui/input"
 	"github.com/kar43lov/lazytg/internal/ui/palette"
@@ -110,6 +113,9 @@ func runTUI(cmd *cobra.Command, _ []string) error {
 	// quiet no-op" so a logged-out session does not crash on Ctrl-D
 	// or Ctrl-U.
 	searchModel := uisearch.New(runtime.SearchSvc, 0, logger)
+	if runtime.RemoteSearch != nil {
+		searchModel = searchModel.WithRemote(runtime.RemoteSearch)
+	}
 	paletteModel := palette.New(runtime.Frecency, runtime.Repo, logger)
 
 	// runtime.Client is set by AttachClient and nowhere else, so it is the
@@ -133,6 +139,12 @@ func runTUI(cmd *cobra.Command, _ []string) error {
 	if runtime.DownloadSvc != nil {
 		deps.Downloader = runtime.DownloadSvc
 	}
+	// Nil when the launch is cache-only. The edit and delete chords then
+	// say so rather than appearing to work: a deletion that happened only
+	// on this screen is the one outcome worse than none.
+	if runtime.Actions != nil {
+		deps.Actions = runtime.Actions
+	}
 	// A missing viewer is not a reason to refuse to start: the open
 	// gesture degrades to a plain download, which is what lazytg did
 	// before it could open anything. The reason is logged once, here,
@@ -144,6 +156,18 @@ func runTUI(cmd *cobra.Command, _ []string) error {
 	}
 	if runtime.UploadSvc != nil {
 		deps.Uploader = runtime.UploadSvc
+	}
+	if runtime.Client != nil {
+		deps.SelfID = runtime.Client.Self().ID
+	}
+	// Desktop notifications leave the terminal, so they are the user's
+	// to switch on; a platform with no notifier says so once, here.
+	if strings.EqualFold(os.Getenv("LAZYTG_NOTIFY"), "desktop") {
+		if notifier, err := notify.New(logger); err != nil {
+			logger.Warn("notify: desktop notifications requested but unavailable", "err", err)
+		} else {
+			deps.Notifier = notifier
+		}
 	}
 	if runtime.Backfill != nil {
 		deps.Backfiller = runtime.Backfill

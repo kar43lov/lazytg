@@ -6,6 +6,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/kar43lov/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/core/markdown"
 )
 
 // OutgoingMessage is the projection of an in-flight outgoing message
@@ -55,18 +56,18 @@ func RenderOptimistic(msg OutgoingMessage) string {
 	switch msg.State {
 	case events.OutgoingStatePending:
 		glyph = pendingStyle.Render("⏳")
-		body = msg.Text
+		body = previewMarkup(msg.Text)
 	case events.OutgoingStateFailed:
 		glyph = failedStyle.Render("✗")
-		body = msg.Text
+		body = previewMarkup(msg.Text)
 		if msg.Error != "" {
 			body += "\n" + failedStyle.Render("error: "+msg.Error)
 		}
 	case events.OutgoingStateSent:
-		body = msg.Text
+		body = previewMarkup(msg.Text)
 	default:
 		glyph = "?"
-		body = msg.Text
+		body = previewMarkup(msg.Text)
 	}
 	if msg.SentAt.IsZero() {
 		// No dispatch time recorded (a state event that arrived before the
@@ -84,3 +85,12 @@ func RenderOptimistic(msg OutgoingMessage) string {
 // "you" rather than the numeric id: the id is meaningless to the reader, and
 // the row is by definition theirs.
 const selfAuthorLabel = "you"
+
+// previewMarkup draws an in-flight message the way it will look once the
+// server echoes it back: the markup the composer accepts, rendered as the
+// spans it becomes. Without this the row reads "**bold**" for a second and
+// then changes shape, which looks like a bug rather than a delivery.
+func previewMarkup(src string) string {
+	text, es := markdown.Parse(src)
+	return renderEntities(text, es, false)
+}

@@ -34,6 +34,11 @@ type QueryChangedMsg struct{ Query string }
 // rank the just-visited chat higher.
 type SelectedMsg struct{ ChatID int64 }
 
+// OpenUsernameMsg is emitted on Enter when the query names a public handle
+// that matches nothing in the list — "@durov", "t.me/durov" — and the
+// user wants the conversation that is not here yet.
+type OpenUsernameMsg struct{ Username string }
+
 // LoadedMsg is the result of Open()'s candidate-list refresh: the
 // frecency-ranked top-N chat ids merged with whatever the chat list
 // can supply for chats that have never been visited. The palette

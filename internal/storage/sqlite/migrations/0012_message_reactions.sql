@@ -1,0 +1,28 @@
+-- 0012_message_reactions: who reacted to a message, and with what.
+--
+-- Reactions are half of how people answer each other on Telegram — an
+-- acknowledgement that costs neither party a notification-worthy message —
+-- and a client that does not show them presents a conversation with the
+-- replies removed. Rendering them takes counts per emoji plus one bit: did
+-- this account react, and with which one, because that is what decides
+-- whether pressing the key adds a reaction or takes it back.
+--
+-- Stored as JSON in one column rather than in a table of its own. The thread
+-- reads messages a page at a time and renders each row whole; a side table
+-- would put a join or a second query on the one path whose latency the user
+-- feels, to normalise a list that is never queried across messages. JSON
+-- rather than a packed string because the key is an emoji chosen by Telegram
+-- and any separator character is a guess about what an emoji cannot contain.
+--
+-- Existing rows default to the empty string, which reads as "no reactions"
+-- and is also what an unreacted message stores. They are not backfilled: the
+-- reactions arrive with the message, and re-fetching history to colour in old
+-- rows would spend requests on an account already watched for running an
+-- unofficial client. An ordinary backfill picks them up.
+--
+-- Custom (premium) reactions are deliberately not stored. They are a document
+-- id rather than a character, so showing one means downloading a sticker and
+-- drawing it; until that exists, storing the id would leave the reader with a
+-- count attached to nothing.
+
+ALTER TABLE messages ADD COLUMN reactions TEXT NOT NULL DEFAULT '';

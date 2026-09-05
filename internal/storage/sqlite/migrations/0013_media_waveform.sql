@@ -1,0 +1,21 @@
+-- 0013_media_waveform: the shape of a voice message.
+--
+-- A voice message is the one attachment whose contents a terminal can
+-- genuinely show. It cannot play the audio, but Telegram sends the waveform
+-- alongside it — the same one every official client draws behind the play
+-- button — and a row of block characters carries what a badge cannot: whether
+-- this is somebody saying "ok" or two minutes of argument, where the pauses
+-- are, whether it is silence somebody sent by accident.
+--
+-- Stored as the bytes Telegram sends: five bits per sample, packed. Unpacking
+-- on read rather than on write keeps the column exactly what the wire
+-- carried, so a rendering change needs no migration and a row written by an
+-- older build is not wrong, only unread.
+--
+-- Existing rows keep NULL, which renders as no waveform — the badge it had
+-- before. They are not backfilled: the data arrives with the message, and
+-- re-fetching history for a decoration would spend requests on an account
+-- already watched for running an unofficial client. An ordinary backfill
+-- picks it up.
+
+ALTER TABLE messages ADD COLUMN media_waveform BLOB;

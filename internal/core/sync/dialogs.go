@@ -37,10 +37,14 @@ type DialogCursor struct {
 	PeerID         int64
 	PeerAccessHash int64
 	PeerType       string
+	// Folder is which of Telegram's dialog folders the walk is over: 0
+	// the main list, 1 the archive. It rides on the cursor so a provider
+	// needs no second method and a page's Next keeps the folder.
+	Folder int
 }
 
 // IsZero reports whether the cursor is the initial position.
-func (c DialogCursor) IsZero() bool { return c == DialogCursor{} }
+func (c DialogCursor) IsZero() bool { return c == DialogCursor{Folder: c.Folder} }
 
 // DialogPage is one response worth of dialogs. Peers travels alongside Chats
 // because a chat is useless without its access_hash: every later call —
@@ -57,6 +61,15 @@ type DialogPage struct {
 // satisfied by *internal/tg.DialogsFetcher in production.
 type DialogsProvider interface {
 	FetchDialogs(ctx context.Context, limit int, cursor DialogCursor) (DialogPage, error)
+}
+
+// SelfDialogProvider is the optional half of a DialogsProvider: the chat the
+// account has with itself, which the server lists only once something has
+// been written there. A provider that implements it gets that chat added
+// to the list when the server left it out, the way every official client
+// shows Saved Messages from day one.
+type SelfDialogProvider interface {
+	SelfDialog(ctx context.Context) (domain.Chat, domain.Peer, error)
 }
 
 // ChatStore is the storage surface for the chat list — a subset of
@@ -79,6 +92,10 @@ type DialogsConfig struct {
 	BatchSize int
 	MaxPages  int
 	PageDelay time.Duration
+	// ArchivePages is how many pages of the archive folder the sync
+	// walks after the main list; zero skips the archive. A ban-risk cap
+	// like MaxPages: the archive is a second list of the same shape.
+	ArchivePages int
 }
 
 // DialogsService fills the local chat list from Telegram. Until it runs the
@@ -94,6 +111,8 @@ type DialogsService struct {
 	batchSize int
 	maxPages  int
 	pageDelay time.Duration
+	// archivePages caps the archive walk; zero means none.
+	archivePages int
 }
 
 // NewDialogsService wires a DialogsService. log may be nil (a discard logger
@@ -129,6 +148,8 @@ func NewDialogsService(provider DialogsProvider, chats ChatStore, peers PeerStor
 		batchSize: cfg.BatchSize,
 		maxPages:  cfg.MaxPages,
 		pageDelay: cfg.PageDelay,
+
+		archivePages: cfg.ArchivePages,
 	}, nil
 }
 
@@ -140,34 +161,65 @@ func NewDialogsService(provider DialogsProvider, chats ChatStore, peers PeerStor
 // A fetch failure does stop the walk, but chats already persisted stay, and
 // the count returned reflects them, so the caller can report partial success.
 func (s *DialogsService) Sync(ctx context.Context) (int, error) {
-	var cursor DialogCursor
+	seen, stored, complete, err := s.walk(ctx, 0, s.maxPages)
+	if err != nil {
+		return stored, err
+	}
+	if s.archivePages > 0 {
+		// The archive is a second list of the same shape, walked with its
+		// own cap. An empty first page there is the ordinary case — most
+		// accounts archive nothing — and closes the walk as complete; the
+		// main walk already stands guard against a server answering badly.
+		archived, storedArchived, archiveComplete, err := s.walk(ctx, 1, s.archivePages)
+		if err != nil {
+			return stored, err
+		}
+		seen = append(seen, archived...)
+		stored += storedArchived
+		complete = complete && archiveComplete
+	}
+
+	seen, added := s.ensureSelf(ctx, seen)
+	stored += added
+	s.prune(ctx, seen, complete)
+	s.log.Info("dialogs: sync finished", "chats", stored)
+	return stored, nil
+}
+
+// walk pages through one folder of the dialog list, persisting every chat
+// it finds. It returns the ids the server listed, how many were stored,
+// and whether the list was seen to its end — which is what makes pruning
+// the chats it did not list safe.
+func (s *DialogsService) walk(ctx context.Context, folder, maxPages int) ([]int64, int, bool, error) {
+	cursor := DialogCursor{Folder: folder}
 	stored := 0
-	// Every chat id the server listed, and whether the walk saw the list to
-	// its end. Both are needed to prune deleted chats safely; see below.
 	seen := make([]int64, 0, s.batchSize)
 	complete := false
 
-	for page := 0; page < s.maxPages; page++ {
+	for page := 0; page < maxPages; page++ {
 		if err := ctx.Err(); err != nil {
-			return stored, err
+			return seen, stored, false, err
 		}
 
 		p, err := s.provider.FetchDialogs(ctx, s.batchSize, cursor)
 		if err != nil {
-			return stored, fmt.Errorf("dialogs: fetch page %d: %w", page, err)
+			return seen, stored, false, fmt.Errorf("dialogs: fetch page %d of folder %d: %w", page, folder, err)
 		}
 		if len(p.Chats) == 0 {
-			// An empty first page could mean an account with no dialogs, or a
-			// server that answered badly. The two are indistinguishable from
-			// here and only one of them makes deleting the whole mirror
-			// correct, so the walk ends without claiming completeness.
+			// An empty first page of the main list could mean an account
+			// with no dialogs, or a server that answered badly. The two are
+			// indistinguishable from here and only one of them makes
+			// deleting the whole mirror correct, so the walk ends without
+			// claiming completeness. An empty archive is just empty.
+			complete = folder != 0
 			break
 		}
 
-		for _, c := range p.Chats {
+		for i := range p.Chats {
+			p.Chats[i].Archived = folder != 0
 			// Recorded before persisting: a chat that failed to save still
 			// exists on the server and must not be pruned as deleted.
-			seen = append(seen, c.ID)
+			seen = append(seen, p.Chats[i].ID)
 		}
 		stored += s.persist(ctx, p)
 
@@ -179,9 +231,9 @@ func (s *DialogsService) Sync(ctx context.Context) (int, error) {
 			// "this is all the chats there are".
 			if len(p.Chats) >= s.batchSize {
 				s.log.Warn("dialogs: list truncated — page was full but carried no usable cursor",
-					"page", page, "chats_in_page", len(p.Chats))
+					"folder", folder, "page", page, "chats_in_page", len(p.Chats))
 			} else {
-				s.log.Debug("dialogs: reached the end of the list", "page", page)
+				s.log.Debug("dialogs: reached the end of the list", "folder", folder, "page", page)
 				complete = true
 			}
 			break
@@ -190,22 +242,50 @@ func (s *DialogsService) Sync(ctx context.Context) (int, error) {
 		// this one verbatim. The page cap keeps that finite, but it still costs
 		// identical round-trips whose only effect is a worse behavioural
 		// footprint — exactly what the pacing above exists to avoid.
-		if p.Next == cursor {
-			s.log.Warn("dialogs: cursor did not advance, stopping walk", "page", page)
+		next := p.Next
+		next.Folder = folder
+		if next == cursor {
+			s.log.Warn("dialogs: cursor did not advance, stopping walk", "folder", folder, "page", page)
 			break
 		}
-		cursor = p.Next
+		cursor = next
 
 		select {
 		case <-ctx.Done():
-			return stored, ctx.Err()
+			return seen, stored, false, ctx.Err()
 		case <-time.After(s.pageDelay):
 		}
 	}
+	return seen, stored, complete, nil
+}
 
-	s.prune(ctx, seen, complete)
-	s.log.Info("dialogs: sync finished", "chats", stored)
-	return stored, nil
+// ensureSelf adds Saved Messages when the server's list did not carry it.
+// Only then: a row the server did list already has its date and its unread
+// count, and rewriting it from the bare user record would zero both. The id
+// joins the seen list so the prune that follows keeps the row.
+func (s *DialogsService) ensureSelf(ctx context.Context, seen []int64) ([]int64, int) {
+	sp, ok := s.provider.(SelfDialogProvider)
+	if !ok {
+		return seen, 0
+	}
+	chat, peer, err := sp.SelfDialog(ctx)
+	if err != nil {
+		s.log.Warn("dialogs: saved messages not added", "err", err)
+		return seen, 0
+	}
+	if chat.ID == 0 {
+		return seen, 0
+	}
+	for _, id := range seen {
+		if id == chat.ID {
+			return seen, 0
+		}
+	}
+	stored := s.persist(ctx, DialogPage{Chats: []domain.Chat{chat}, Peers: []domain.Peer{peer}})
+	if stored == 0 {
+		return seen, 0
+	}
+	return append(seen, chat.ID), stored
 }
 
 // prune removes chats the server stopped listing — the only way a chat
@@ -263,6 +343,11 @@ func (s *DialogsService) persist(ctx context.Context, p DialogPage) int {
 		stored++
 		if s.bus != nil {
 			s.bus.Publish(events.DialogUpdated{ChatID: c.ID})
+			if c.Draft != "" {
+				// The draft is not stored; whoever composes for this
+				// chat learns it from the event.
+				s.bus.Publish(events.DraftChanged{ChatID: c.ID, Text: c.Draft})
+			}
 		}
 	}
 	return stored

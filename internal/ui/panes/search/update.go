@@ -48,7 +48,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 // reset to 0 so a new query always starts with the best-ranked hit
 // highlighted.
 func (m Model) applyResults(msg ResultsMsg) (Model, tea.Cmd) {
+	if msg.Remote {
+		return m.applyRemoteResults(msg)
+	}
 	m.loading = false
+	m.remoteShown = false
 	if msg.Err != nil {
 		m.err = msg.Err
 		m.hits = nil
@@ -60,6 +64,25 @@ func (m Model) applyResults(msg ResultsMsg) (Model, tea.Cmd) {
 	if m.cursor >= len(m.hits) {
 		m.cursor = 0
 	}
+	return m, nil
+}
+
+// applyRemoteResults lands a server answer. One asked for an earlier
+// query is dropped: the user typed since, and the local hits on screen
+// belong to what they typed.
+func (m Model) applyRemoteResults(msg ResultsMsg) (Model, tea.Cmd) {
+	if msg.Generation != m.queryGeneration {
+		return m, nil
+	}
+	m.remoteLoading = false
+	if msg.Err != nil {
+		m.err = msg.Err
+		return m, nil
+	}
+	m.err = nil
+	m.hits = msg.Hits
+	m.cursor = 0
+	m.remoteShown = true
 	return m, nil
 }
 
@@ -79,6 +102,7 @@ func (m Model) applyDebounceTick(msg debounceTickMsg) (Model, tea.Cmd) {
 		m.cursor = 0
 		m.err = nil
 		m.loading = false
+		m.remoteShown = false
 		return m, nil
 	}
 	if q == m.lastQuery && !m.loading {
@@ -90,6 +114,7 @@ func (m Model) applyDebounceTick(msg debounceTickMsg) (Model, tea.Cmd) {
 	}
 	m.lastQuery = q
 	m.loading = true
+	m.remoteShown = false
 	return m, m.runSearch(q)
 }
 
@@ -100,6 +125,8 @@ func (m Model) handleKey(k tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch k.Code {
 	case tea.KeyEscape:
 		return m.Close(), func() tea.Msg { return ClosedMsg{} }
+	case tea.KeyTab:
+		return m.runRemote()
 	case tea.KeyEnter:
 		if len(m.hits) == 0 {
 			return m, nil

@@ -3,6 +3,7 @@ package tg
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -448,5 +449,169 @@ func TestUserTitle(t *testing.T) {
 				t.Fatalf("userTitle = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// stubDialogsWithSelf is the dialog stub plus the one users call the self
+// lookup needs.
+type stubDialogsWithSelf struct {
+	stubGetDialogs
+	self *tg.User
+	err  error
+}
+
+func (s *stubDialogsWithSelf) UsersGetUsers(_ context.Context, ids []tg.InputUserClass) ([]tg.UserClass, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if len(ids) != 1 {
+		return nil, fmt.Errorf("asked for %d users, want exactly self", len(ids))
+	}
+	if _, ok := ids[0].(*tg.InputUserSelf); !ok {
+		return nil, fmt.Errorf("asked for %T, want InputUserSelf", ids[0])
+	}
+	return []tg.UserClass{s.self}, nil
+}
+
+func TestDialogsFetcher_SelfDialogIsSavedMessages(t *testing.T) {
+	t.Parallel()
+
+	stub := &stubDialogsWithSelf{self: &tg.User{ID: 8385, AccessHash: 0xABC, FirstName: "Me", Username: "me", Self: true}}
+	chat, peer, err := NewDialogsFetcher(stub).SelfDialog(context.Background())
+	if err != nil {
+		t.Fatalf("SelfDialog: %v", err)
+	}
+	if chat.ID != 8385 || chat.Title != SavedMessagesTitle || chat.Type != domain.ChatTypePrivate {
+		t.Fatalf("chat = %+v", chat)
+	}
+	if peer.ID != 8385 || peer.AccessHash != 0xABC || peer.Type != domain.ChatTypePrivate {
+		t.Fatalf("peer = %+v", peer)
+	}
+}
+
+func TestDialogsFetcher_SelfDialogNeedsTheUsersCall(t *testing.T) {
+	t.Parallel()
+
+	if _, _, err := NewDialogsFetcher(&stubGetDialogs{}).SelfDialog(context.Background()); err == nil {
+		t.Fatal("a client without users.getUsers reported a self dialog")
+	}
+}
+
+// When the server does list the dialog with yourself, it is named the way
+// every official client names it rather than after the account.
+func TestDialogsFetcher_ListedSelfDialogIsSavedMessages(t *testing.T) {
+	t.Parallel()
+
+	me := &tg.User{ID: 8385, AccessHash: 1, FirstName: "Pavel", Self: true, Status: &tg.UserStatusOnline{Expires: 1}}
+	at := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	stub := &stubGetDialogs{responses: []tg.MessagesDialogsClass{&tg.MessagesDialogs{
+		Dialogs:  []tg.DialogClass{dialogAt(&tg.PeerUser{UserID: 8385}, 1, 0, false)},
+		Messages: []tg.MessageClass{topMessage(1, &tg.PeerUser{UserID: 8385}, at)},
+		Users:    []tg.UserClass{me},
+	}}}
+	page, err := NewDialogsFetcher(stub).FetchDialogs(context.Background(), 10, coresync.DialogCursor{})
+	if err != nil {
+		t.Fatalf("FetchDialogs: %v", err)
+	}
+	if len(page.Chats) != 1 || page.Chats[0].Title != SavedMessagesTitle {
+		t.Fatalf("chats = %+v, want Saved Messages", page.Chats)
+	}
+	if page.Chats[0].Online || !page.Chats[0].LastSeen.IsZero() {
+		t.Fatalf("the chat with yourself shows a presence: %+v", page.Chats[0])
+	}
+}
+
+// Muted, marked unread, online, last seen: all four arrive on the dialog
+// page and are kept.
+func TestDialogsFetcher_KeepsTheListFacts(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	seen := at.Add(-time.Hour)
+	friend := &tg.User{ID: 42, AccessHash: 1, FirstName: "Friend", Status: &tg.UserStatusOffline{WasOnline: int(seen.Unix())}}
+	other := &tg.User{ID: 43, AccessHash: 1, FirstName: "Online", Status: &tg.UserStatusOnline{Expires: int(at.Unix()) + 60}}
+	d1, _ := dialogAt(&tg.PeerUser{UserID: 42}, 1, 2, false).(*tg.Dialog)
+	d1.UnreadMark = true
+	d1.ReadOutboxMaxID = 1
+	d1.NotifySettings.SetMuteUntil(2147483647)
+	d2, _ := dialogAt(&tg.PeerUser{UserID: 43}, 2, 0, false).(*tg.Dialog)
+	stub := &stubGetDialogs{responses: []tg.MessagesDialogsClass{&tg.MessagesDialogs{
+		Dialogs:  []tg.DialogClass{d1, d2},
+		Messages: []tg.MessageClass{topMessage(1, &tg.PeerUser{UserID: 42}, at), topMessage(2, &tg.PeerUser{UserID: 43}, at)},
+		Users:    []tg.UserClass{friend, other},
+	}}}
+	page, err := NewDialogsFetcher(stub).FetchDialogs(context.Background(), 10, coresync.DialogCursor{})
+	if err != nil {
+		t.Fatalf("FetchDialogs: %v", err)
+	}
+	if len(page.Chats) != 2 {
+		t.Fatalf("chats = %+v", page.Chats)
+	}
+	c := page.Chats[0]
+	if c.ReadOutboxMaxID != 1 {
+		t.Fatalf("read pointer = %d, want 1", c.ReadOutboxMaxID)
+	}
+	if !c.UnreadMark || !c.Muted(at) || c.Online || !c.LastSeen.Equal(seen) {
+		t.Fatalf("first chat lost a fact: %+v", c)
+	}
+	if o := page.Chats[1]; !o.Online || o.Muted(at) || o.UnreadMark {
+		t.Fatalf("second chat: %+v", o)
+	}
+}
+
+// A draft left on another device rides on the dialog page, with its
+// formatting folded back into markup so it can be finished here.
+func TestDialogsFetcher_CarriesTheDraft(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	d, _ := dialogAt(&tg.PeerUser{UserID: 42}, 1, 0, false).(*tg.Dialog)
+	d.SetDraft(&tg.DraftMessage{Message: "call me later", Entities: []tg.MessageEntityClass{&tg.MessageEntityBold{Offset: 0, Length: 4}}})
+	stub := &stubGetDialogs{responses: []tg.MessagesDialogsClass{&tg.MessagesDialogs{
+		Dialogs:  []tg.DialogClass{d},
+		Messages: []tg.MessageClass{topMessage(1, &tg.PeerUser{UserID: 42}, at)},
+		Users:    []tg.UserClass{&tg.User{ID: 42, AccessHash: 1, FirstName: "Friend"}},
+	}}}
+	page, err := NewDialogsFetcher(stub).FetchDialogs(context.Background(), 10, coresync.DialogCursor{})
+	if err != nil {
+		t.Fatalf("FetchDialogs: %v", err)
+	}
+	if got := page.Chats[0].Draft; got != "**call** me later" {
+		t.Fatalf("draft = %q", got)
+	}
+	if got := draftText(&tg.DraftMessageEmpty{}); got != "" {
+		t.Fatalf("an empty draft reads %q", got)
+	}
+}
+
+// The archive is folder 1 on the request; the main list is asked for the
+// way it always was, with no folder at all. A page's cursor keeps the folder.
+func TestDialogsFetcher_AsksForTheArchiveByFolder(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	full := &tg.MessagesDialogsSlice{Count: 500}
+	for i := 1; i <= 100; i++ {
+		full.Dialogs = append(full.Dialogs, dialogAt(&tg.PeerUser{UserID: int64(i)}, i, 0, false))
+		full.Messages = append(full.Messages, topMessage(i, &tg.PeerUser{UserID: int64(i)}, at.Add(time.Duration(i)*time.Second)))
+		full.Users = append(full.Users, &tg.User{ID: int64(i), AccessHash: 1, FirstName: "u"})
+	}
+	stub := &stubGetDialogs{responses: []tg.MessagesDialogsClass{full, full}}
+	f := NewDialogsFetcher(stub)
+	if _, err := f.FetchDialogs(context.Background(), 100, coresync.DialogCursor{}); err != nil {
+		t.Fatalf("main: %v", err)
+	}
+	page, err := f.FetchDialogs(context.Background(), 100, coresync.DialogCursor{Folder: 1})
+	if err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	if _, set := stub.calls[0].GetFolderID(); set {
+		t.Fatal("the main list was asked with a folder id")
+	}
+	if id, set := stub.calls[1].GetFolderID(); !set || id != 1 {
+		t.Fatalf("the archive was asked with folder %d (set=%v)", id, set)
+	}
+	if !page.HasMore || page.Next.Folder != 1 {
+		t.Fatalf("the archive page's cursor lost its folder: %+v", page.Next)
 	}
 }

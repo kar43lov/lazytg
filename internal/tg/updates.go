@@ -29,6 +29,8 @@ import (
 type UpdatesDispatcher struct {
 	bus *events.Bus
 	log *slog.Logger
+	// self names the account's own chat; see Self.
+	self *Self
 
 	mu    sync.Mutex
 	cache *list.List // doubly-linked LRU; back = most-recent
@@ -95,6 +97,12 @@ func (d *UpdatesDispatcher) Manager(storage updates.StateStorage, hasher updates
 	})
 }
 
+// WithSelf tells the dispatcher which chat is the account's own.
+func (d *UpdatesDispatcher) WithSelf(self *Self) *UpdatesDispatcher {
+	d.self = self
+	return d
+}
+
 // SeenMessage reports whether this message has already been published, and
 // records it when it has not. It is the same LRU the live path dedupes
 // against, exported so the polling fallback shares one filter with it rather
@@ -119,8 +127,21 @@ func (d *UpdatesDispatcher) HandlerFunc() telegram.UpdateHandlerFunc {
 // (UpdatesCombined, Updates, UpdateShortMessage, …) into individual
 // UpdateClass elements and dispatch each one.
 func (d *UpdatesDispatcher) handle(ctx context.Context, u tg.UpdatesClass) error {
+	dir := containerDirectory(u)
 	for _, single := range flattenUpdates(u) {
-		d.dispatch(ctx, single)
+		d.dispatch(ctx, single, dir)
+	}
+	return nil
+}
+
+// containerDirectory names the users and chats an update container came
+// with — what a forwarded message needs to say who wrote it.
+func containerDirectory(u tg.UpdatesClass) nameDirectory {
+	switch c := u.(type) {
+	case *tg.Updates:
+		return directoryOf(c.Users, c.Chats)
+	case *tg.UpdatesCombined:
+		return directoryOf(c.Users, c.Chats)
 	}
 	return nil
 }
@@ -128,12 +149,26 @@ func (d *UpdatesDispatcher) handle(ctx context.Context, u tg.UpdatesClass) error
 // dispatch routes a single update into the bus. Unknown variants are
 // dropped after a debug log — the server may add new types over time and
 // silently ignoring them is the right default for an unofficial client.
-func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass) {
+func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass, dir nameDirectory) {
 	switch upd := u.(type) {
 	case *tg.UpdateNewMessage:
-		d.publishMessage(upd.Message)
+		d.publishMessage(upd.Message, false, dir)
 	case *tg.UpdateNewChannelMessage:
-		d.publishMessage(upd.Message)
+		d.publishMessage(upd.Message, false, dir)
+	case *tg.UpdateEditMessage:
+		d.publishMessage(upd.Message, true, dir)
+	case *tg.UpdateEditChannelMessage:
+		d.publishMessage(upd.Message, true, dir)
+	case *tg.UpdateFolderPeers:
+		for _, fp := range upd.FolderPeers {
+			if id := chatIDFromPeer(fp.Peer); id != 0 {
+				d.publish(events.ChatArchived{ChatID: id, Archived: fp.FolderID == 1})
+			}
+		}
+	case *tg.UpdatePinnedMessages:
+		d.publish(events.MessagesPinned{ChatID: chatIDFromPeer(upd.Peer), IDs: intsToInt64(upd.Messages), Pinned: upd.Pinned})
+	case *tg.UpdatePinnedChannelMessages:
+		d.publish(events.MessagesPinned{ChatID: upd.ChannelID, IDs: intsToInt64(upd.Messages), Pinned: upd.Pinned})
 	case *tg.UpdateDeleteMessages:
 		// No peer in this variant, by design on Telegram's side: message ids
 		// are unique across all private chats and basic groups for one
@@ -142,8 +177,49 @@ func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass) {
 		d.publishDeleted(0, upd.Messages)
 	case *tg.UpdateDeleteChannelMessages:
 		d.publishDeleted(upd.ChannelID, upd.Messages)
-	case *tg.UpdateEditMessage, *tg.UpdateEditChannelMessage:
-		d.log.Debug("update: edit ignored in v0.1", "type", u.TypeName())
+	case *tg.UpdateUserTyping:
+		// A private dialog is named by the user typing in it: there is
+		// only one other person, so they are both the chat and the typer.
+		d.publishTyping(upd.UserID, upd.UserID, upd.Action, time.Now())
+	case *tg.UpdateChatUserTyping:
+		d.publishTyping(upd.ChatID, chatIDFromPeer(upd.FromID), upd.Action, time.Now())
+	case *tg.UpdateChannelUserTyping:
+		d.publishTyping(upd.ChannelID, chatIDFromPeer(upd.FromID), upd.Action, time.Now())
+	case *tg.UpdateMessageReactions:
+		d.publishReactions(upd)
+	case *tg.UpdateReadHistoryInbox:
+		d.publish(events.ChatReadInbox{ChatID: chatIDFromPeer(upd.Peer), MaxID: int64(upd.MaxID), StillUnread: upd.StillUnreadCount})
+	case *tg.UpdateReadChannelInbox:
+		d.publish(events.ChatReadInbox{ChatID: upd.ChannelID, MaxID: int64(upd.MaxID), StillUnread: upd.StillUnreadCount})
+	case *tg.UpdateDraftMessage:
+		d.publish(events.DraftChanged{ChatID: chatIDFromPeer(upd.Peer), Text: draftText(upd.Draft)})
+	case *tg.UpdateReadHistoryOutbox:
+		d.publish(events.ChatReadOutbox{ChatID: chatIDFromPeer(upd.Peer), MaxID: int64(upd.MaxID)})
+	case *tg.UpdateReadChannelOutbox:
+		d.publish(events.ChatReadOutbox{ChatID: upd.ChannelID, MaxID: int64(upd.MaxID)})
+	case *tg.UpdateDialogPinned:
+		if id := dialogPeerID(upd.Peer); id != 0 {
+			d.publish(events.ChatPinned{ChatID: id, Pinned: upd.Pinned})
+		}
+	case *tg.UpdateDialogUnreadMark:
+		if id := dialogPeerID(upd.Peer); id != 0 {
+			d.publish(events.ChatUnreadMark{ChatID: id, Unread: upd.Unread})
+		}
+	case *tg.UpdateNotifySettings:
+		// Only a setting on one chat is a fact about that chat. The
+		// class-wide defaults (all users, all groups) are a policy this
+		// client does not model; a chat inherits nothing from them here.
+		if np, ok := upd.Peer.(*tg.NotifyPeer); ok {
+			d.publish(events.ChatMuted{ChatID: chatIDFromPeer(np.Peer), Until: muteUntilOf(upd.NotifySettings)})
+		}
+	case *tg.UpdateUserStatus:
+		if d.self.Owns(upd.UserID) {
+			// Your own presence is not news, and the chat with yourself
+			// does not show it.
+			return
+		}
+		online, lastSeen := presenceOf(upd.Status)
+		d.publish(events.PeerPresence{UserID: upd.UserID, Online: online, LastSeen: lastSeen})
 	default:
 		d.log.Debug("update: unhandled type", "type", u.TypeName())
 	}
@@ -151,10 +227,27 @@ func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass) {
 
 // publishMessage converts a gotd MessageClass into a domain MessageReceived
 // and publishes it after deduplication.
-func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass) {
+//
+// edited marks a rewrite of a message already delivered. It skips the
+// dedup on purpose: the cache exists to stop one arrival rendering twice,
+// and an edit is a second arrival of the same id by design — the same
+// message, changed. Telegram also sends an edit update when a reaction
+// lands on a message; the reactions come along on the message here, which
+// is fine, and the row is replaced rather than appended by every consumer.
+func intsToInt64(in []int) []int64 {
+	out := make([]int64, 0, len(in))
+	for _, v := range in {
+		out = append(out, int64(v))
+	}
+	return out
+}
+
+func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass, edited bool, dir nameDirectory) {
 	m, ok := mc.(*tg.Message)
 	if !ok {
-		// MessageEmpty / MessageService — nothing useful to render in v0.1.
+		if svc, isService := mc.(*tg.MessageService); isService {
+			d.publishService(svc)
+		}
 		return
 	}
 	chatID := chatIDFromPeer(m.PeerID)
@@ -164,18 +257,43 @@ func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass) {
 		return
 	}
 	key := dedupKey{chatID: chatID, messageID: int64(m.ID)}
-	if d.seen(key) {
+	if !edited && d.seen(key) {
 		return
 	}
 	d.bus.Publish(events.MessageReceived{
 		ChatID:    chatID,
 		MessageID: int64(m.ID),
-		Text:      m.Message,
+		Text:      messageText(m),
 		FromID:    senderOf(m, chatID),
 		Date:      time.Unix(int64(m.Date), 0).UTC(),
 		Media:     MediaFromMessage(m),
 		ChatType:  chatTypeFromPeer(m.PeerID),
-		Outgoing:  m.Out,
+		Outgoing:  m.Out || d.self.Owns(chatID),
+		ReplyTo:   replyToOf(m),
+		Reactions: ReactionsFromMessage(m),
+		Entities:  EntitiesFromMessage(m),
+		Edited:    edited,
+		EditDate:  editDateOf(m),
+		Buttons:   ButtonsFromMessage(m),
+		Forwarded: forwardOf(m, dir),
+		Pinned:    m.Pinned,
+	})
+}
+
+// publishReactions converts a reaction update into a bus event.
+//
+// Not deduplicated against the message LRU: that cache stops the same arrival
+// being rendered twice, and reactions on one message change repeatedly by
+// design — a second update for the same message is the point, not a repeat.
+func (d *UpdatesDispatcher) publishReactions(upd *tg.UpdateMessageReactions) {
+	chatID := chatIDFromPeer(upd.Peer)
+	if chatID == 0 {
+		return
+	}
+	d.bus.Publish(events.MessageReactionsChanged{
+		ChatID:    chatID,
+		MessageID: int64(upd.MsgID),
+		Reactions: decodeReactions(upd.Reactions),
 	})
 }
 
@@ -305,4 +423,57 @@ func shortChatToUpdateMessage(s *tg.UpdateShortChatMessage) tg.UpdateClass {
 	m.PeerID = &tg.PeerChat{ChatID: s.ChatID}
 	m.SetFromID(&tg.PeerUser{UserID: s.FromID})
 	return &tg.UpdateNewMessage{Message: m, Pts: s.Pts, PtsCount: s.PtsCount}
+}
+
+// publish is the one place list-fact events leave the dispatcher; a zero
+// chat id names nothing and is dropped here rather than in every consumer.
+func (d *UpdatesDispatcher) publish(ev events.Event) {
+	switch typed := ev.(type) {
+	case events.ChatReadInbox:
+		if typed.ChatID == 0 {
+			return
+		}
+	case events.ChatMuted:
+		if typed.ChatID == 0 {
+			return
+		}
+	case events.PeerPresence:
+		if typed.UserID == 0 {
+			return
+		}
+	}
+	d.bus.Publish(ev)
+}
+
+// dialogPeerID names the chat a dialog-level update is about, or 0 for the
+// archive folder pseudo-peer.
+func dialogPeerID(p tg.DialogPeerClass) int64 {
+	dp, ok := p.(*tg.DialogPeer)
+	if !ok {
+		return 0
+	}
+	return chatIDFromPeer(dp.Peer)
+}
+
+// publishService is publishMessage for Telegram's own lines: somebody
+// joined, a message was pinned, a call ended. Same dedup, same event.
+func (d *UpdatesDispatcher) publishService(m *tg.MessageService) {
+	chatID := chatIDFromPeer(m.PeerID)
+	if chatID == 0 {
+		return
+	}
+	if d.seen(dedupKey{chatID: chatID, messageID: int64(m.ID)}) {
+		return
+	}
+	row := convertService(m, chatID, d.self)
+	d.bus.Publish(events.MessageReceived{
+		ChatID:    chatID,
+		MessageID: row.ID,
+		Text:      row.Text,
+		FromID:    row.FromID,
+		Date:      row.Date,
+		ChatType:  chatTypeFromPeer(m.PeerID),
+		Outgoing:  row.Outgoing,
+		ReplyTo:   row.ReplyTo,
+	})
 }

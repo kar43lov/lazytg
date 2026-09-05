@@ -97,6 +97,10 @@ type ClientConfig struct {
 // deadlock; only the most recent error is preserved (subsequent writes
 // non-blocking-drop when the buffer is full — newer error wins).
 type Client struct {
+	// self is the account's own id once the session is authorized. See
+	// Self for why the converters need it.
+	self Self
+
 	// cfg is kept so a new gotd client can be built for the next session.
 	// gotd's Client is single-use: Run cancels the client context on the way
 	// out, and the next Run returns "client already closed" without touching
@@ -419,5 +423,16 @@ func (c *Client) IsAuthorized(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("auth status: %w", err)
 	}
+	if status.Authorized && status.User != nil {
+		c.self.Set(status.User.GetID())
+	}
 	return status.Authorized, nil
+}
+
+// Self is the account's own id, filled in by IsAuthorized.
+func (c *Client) Self() *Self {
+	if c == nil {
+		return nil
+	}
+	return &c.self
 }

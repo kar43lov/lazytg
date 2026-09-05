@@ -20,6 +20,25 @@ type LiveStore interface {
 	// chat id means the update named no chat, which is how deletions in
 	// private chats and basic groups arrive.
 	DeleteMessages(ctx context.Context, chatID int64, ids []int64) (int64, error)
+	// SetReactions replaces the reactions stored against one message. It
+	// touches nothing else about the row, because a reaction update says
+	// nothing about the message body and rewriting the whole row from an
+	// update that does not carry it would blank the text.
+	SetReactions(ctx context.Context, chatID, messageID int64, rs []domain.Reaction) error
+	// The chat-list facts. Each changes one column of the chat row, because
+	// each arrives on its own update that says nothing about the rest.
+	SetUnread(ctx context.Context, chatID int64, count int) error
+	SetPinned(ctx context.Context, chatID int64, pinned bool) error
+	SetMutedUntil(ctx context.Context, chatID int64, until time.Time) error
+	SetUnreadMark(ctx context.Context, chatID int64, marked bool) error
+	// SetReadOutbox moves the other side's read pointer forward; a value
+	// below the stored one is kept out, because updates arrive unordered.
+	SetReadOutbox(ctx context.Context, chatID, maxID int64) error
+	// SetArchived moves a chat into or out of the archive.
+	SetArchived(ctx context.Context, chatID int64, archived bool) error
+	// SetPinnedMessages flags or unflags messages the mirror holds.
+	SetPinnedMessages(ctx context.Context, chatID int64, ids []int64, pinned bool) error
+	SetPresence(ctx context.Context, userID int64, online bool, lastSeen time.Time) error
 	// EnsureChat creates the parent chats row when the peer is unknown and
 	// leaves an existing row untouched. Without it a message from a chat
 	// outside the synced dialog window fails its foreign key and is lost.
@@ -121,8 +140,28 @@ func (s *LiveService) drain(ctx context.Context, ch <-chan events.Event) error {
 				s.persist(ctx, typed)
 			case events.MessagesDeleted:
 				s.forget(ctx, typed)
+			case events.MessageReactionsChanged:
+				s.applyReactions(ctx, typed)
 			case events.ChatOpened:
 				s.openChat.Store(typed.ChatID)
+			case events.ChatReadInbox:
+				s.applyChatFact(ctx, typed.ChatID, "read", s.store.SetUnread(ctx, typed.ChatID, typed.StillUnread))
+			case events.ChatPinned:
+				s.applyChatFact(ctx, typed.ChatID, "pin", s.store.SetPinned(ctx, typed.ChatID, typed.Pinned))
+			case events.ChatMuted:
+				s.applyChatFact(ctx, typed.ChatID, "mute", s.store.SetMutedUntil(ctx, typed.ChatID, typed.Until))
+			case events.ChatUnreadMark:
+				s.applyChatFact(ctx, typed.ChatID, "unread mark", s.store.SetUnreadMark(ctx, typed.ChatID, typed.Unread))
+			case events.ChatReadOutbox:
+				s.applyChatFact(ctx, typed.ChatID, "read outbox", s.store.SetReadOutbox(ctx, typed.ChatID, typed.MaxID))
+			case events.ChatArchived:
+				s.applyChatFact(ctx, typed.ChatID, "archive", s.store.SetArchived(ctx, typed.ChatID, typed.Archived))
+			case events.MessagesPinned:
+				if err := s.store.SetPinnedMessages(ctx, typed.ChatID, typed.IDs, typed.Pinned); err != nil {
+					s.log.Warn("live: pinned flag not recorded", "chat_id", typed.ChatID, "err", err)
+				}
+			case events.PeerPresence:
+				s.applyChatFact(ctx, typed.UserID, "presence", s.store.SetPresence(ctx, typed.UserID, typed.Online, typed.LastSeen))
 			}
 		}
 	}
@@ -147,6 +186,19 @@ func (s *LiveService) forget(ctx context.Context, ev events.MessagesDeleted) {
 	if removed != int64(len(ev.MessageIDs)) {
 		s.log.Debug("live: deleted fewer messages than reported",
 			"chat_id", ev.ChatID, "reported", len(ev.MessageIDs), "removed", removed)
+	}
+}
+
+// applyReactions writes a reaction change into the mirror.
+//
+// A message the mirror does not hold is the ordinary case rather than an
+// error: reactions arrive for the whole account, including chats whose
+// history was never fetched. The store reports it and nothing is logged at a
+// level anybody watches.
+func (s *LiveService) applyReactions(ctx context.Context, ev events.MessageReactionsChanged) {
+	if err := s.store.SetReactions(ctx, ev.ChatID, ev.MessageID, ev.Reactions); err != nil {
+		s.log.Debug("live: reactions not stored",
+			"chat_id", ev.ChatID, "message_id", ev.MessageID, "err", err)
 	}
 }
 
@@ -186,13 +238,20 @@ func (s *LiveService) persist(ctx context.Context, ev events.MessageReceived) {
 		}
 	}
 	if err := s.store.SaveMessage(ctx, domain.Message{
-		ID:       ev.MessageID,
-		ChatID:   ev.ChatID,
-		FromID:   ev.FromID,
-		Date:     ev.Date,
-		Text:     ev.Text,
-		Media:    ev.Media,
-		Outgoing: ev.Outgoing,
+		ID:        ev.MessageID,
+		ChatID:    ev.ChatID,
+		FromID:    ev.FromID,
+		Date:      ev.Date,
+		Text:      ev.Text,
+		Media:     ev.Media,
+		Outgoing:  ev.Outgoing,
+		ReplyTo:   ev.ReplyTo,
+		Entities:  ev.Entities,
+		EditDate:  ev.EditDate,
+		Reactions: ev.Reactions,
+		Buttons:   ev.Buttons,
+		Forwarded: ev.Forwarded,
+		Pinned:    ev.Pinned,
 	}); err != nil {
 		s.log.Error("live: save message failed",
 			"chat_id", ev.ChatID, "message_id", ev.MessageID, "err", err)
@@ -227,10 +286,25 @@ func (s *LiveService) persist(ctx context.Context, ev events.MessageReceived) {
 // idempotent means having SaveMessage report whether the row was new, which is
 // a wider contract change than an over-count that heals itself is worth.
 func (s *LiveService) countUnread(ctx context.Context, ev events.MessageReceived) {
-	if ev.Outgoing || ev.ChatID == 0 || ev.ChatID == s.openChat.Load() {
+	// An edit is the same message again, not one more to read.
+	if ev.Edited || ev.Outgoing || ev.ChatID == 0 || ev.ChatID == s.openChat.Load() {
 		return
 	}
 	if err := s.store.IncrementUnread(ctx, ev.ChatID); err != nil {
 		s.log.Warn("live: unread counter not raised", "chat_id", ev.ChatID, "err", err)
+	}
+}
+
+// applyChatFact reports the outcome of one list-fact write and, when it
+// took, tells the chat list to reload. A chat the mirror does not hold is
+// a no-op at the store, which is right: the facts describe a row, and a
+// row that does not exist has nothing to describe.
+func (s *LiveService) applyChatFact(_ context.Context, chatID int64, what string, err error) {
+	if err != nil {
+		s.log.Warn("live: chat "+what+" not recorded", "chat_id", chatID, "err", err)
+		return
+	}
+	if s.bus != nil {
+		s.bus.Publish(events.DialogUpdated{ChatID: chatID})
 	}
 }

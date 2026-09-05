@@ -33,6 +33,11 @@ type QueryChangedMsg struct{ Query string }
 type ResultsMsg struct {
 	Hits []search.Hit
 	Err  error
+	// Remote marks an answer from the server (Tab), Generation the
+	// query generation it was asked for: a slow server answer must
+	// not replace the local hits of a query typed since.
+	Remote     bool
+	Generation uint64
 }
 
 // JumpMsg is emitted by the overlay when the user presses Enter on

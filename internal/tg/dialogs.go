@@ -2,6 +2,7 @@ package tg
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/gotd/td/tgerr"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/markdown"
 	coresync "github.com/kar43lov/lazytg/internal/core/sync"
 )
 
@@ -45,12 +47,18 @@ func (d *DialogsFetcher) FetchDialogs(ctx context.Context, limit int, cursor cor
 		return coresync.DialogPage{}, err
 	}
 
-	res, err := d.api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
+	req := &tg.MessagesGetDialogsRequest{
 		Limit:      limit,
 		OffsetDate: cursor.Date,
 		OffsetID:   cursor.ID,
 		OffsetPeer: offsetPeer,
-	})
+	}
+	if cursor.Folder != 0 {
+		// The archive is folder 1; the main list is what an unset folder
+		// answers with, the way it always did.
+		req.SetFolderID(cursor.Folder)
+	}
+	res, err := d.api.MessagesGetDialogs(ctx, req)
 	if err != nil {
 		if wait, ok := tgerr.AsFloodWait(err); ok {
 			return coresync.DialogPage{}, &coresync.FloodWaitError{RetryAfter: wait}
@@ -65,7 +73,11 @@ func (d *DialogsFetcher) FetchDialogs(ctx context.Context, limit int, cursor cor
 		// new data" rather than an error.
 		return coresync.DialogPage{}, nil
 	}
-	return decodeDialogs(mod, limit), nil
+	page := decodeDialogs(mod, limit)
+	if page.HasMore {
+		page.Next.Folder = cursor.Folder
+	}
+	return page, nil
 }
 
 // cursorPeer turns a paging cursor into the InputPeer that getDialogs expects.
@@ -158,13 +170,38 @@ func resolveDialog(
 	chats map[int64]tg.ChatClass,
 	dates map[peerMessageKey]time.Time,
 ) (domain.Chat, domain.Peer, bool) {
-	chat := domain.Chat{
-		UnreadCount: dlg.UnreadCount,
-		Pinned:      dlg.Pinned,
+	chat, peer, ok := resolvePeer(dlg.Peer, users, chats)
+	if !ok {
+		return domain.Chat{}, domain.Peer{}, false
 	}
+	chat.UnreadCount = dlg.UnreadCount
+	chat.Pinned = dlg.Pinned
+	chat.UnreadMark = dlg.UnreadMark
+	chat.MutedUntil = muteUntilOf(dlg.NotifySettings)
+	chat.ReadOutboxMaxID = int64(dlg.ReadOutboxMaxID)
+	chat.Draft = draftText(dlg.Draft)
+
+	if ts, ok := dates[peerMessageKey{peerID: chat.ID, msgID: dlg.TopMessage}]; ok {
+		chat.LastMessageDate = ts
+	}
+	return chat, peer, true
+}
+
+// resolvePeer maps a peer reference onto the chat it names and the Peer
+// needed to address it, from the user and chat objects that came with it.
+// It carries what the object itself says — name, handle, kind, presence —
+// and nothing about a dialog, so it serves the dialog page and a resolved
+// username alike. False when the object is missing: inventing an access
+// hash produces a chat that errors on open.
+func resolvePeer(
+	ref tg.PeerClass,
+	users map[int64]*tg.User,
+	chats map[int64]tg.ChatClass,
+) (domain.Chat, domain.Peer, bool) {
+	var chat domain.Chat
 	var peer domain.Peer
 
-	switch p := dlg.Peer.(type) {
+	switch p := ref.(type) {
 	case *tg.PeerUser:
 		u, ok := users[p.UserID]
 		if !ok {
@@ -173,6 +210,14 @@ func resolveDialog(
 		chat.ID = p.UserID
 		chat.Type = domain.ChatTypePrivate
 		chat.Title = userTitle(u)
+		chat.Online, chat.LastSeen = presenceOf(u.Status)
+		if u.Self {
+			// The dialog with yourself. Every official client names it
+			// rather than showing the account's own name twice, and none
+			// tells you when you were last seen.
+			chat.Title = SavedMessagesTitle
+			chat.Online, chat.LastSeen = false, time.Time{}
+		}
 		chat.Username = u.Username
 		peer = domain.Peer{ID: p.UserID, Type: domain.ChatTypePrivate, AccessHash: u.AccessHash}
 
@@ -212,10 +257,6 @@ func resolveDialog(
 
 	default:
 		return domain.Chat{}, domain.Peer{}, false
-	}
-
-	if ts, ok := dates[peerMessageKey{peerID: chat.ID, msgID: dlg.TopMessage}]; ok {
-		chat.LastMessageDate = ts
 	}
 	return chat, peer, true
 }
@@ -296,4 +337,82 @@ func dialogsHaveMore(mod tg.ModifiedMessagesDialogs, limit int) bool {
 		return false
 	}
 	return limit > 0 && len(mod.GetDialogs()) >= limit
+}
+
+// draftText is a server-side draft as the composer would take it: the
+// text with its formatting folded back into markup, so a bold word typed
+// on the phone stays bold when it is finished here. Empty for no draft.
+func draftText(d tg.DraftMessageClass) string {
+	m, ok := d.(*tg.DraftMessage)
+	if !ok || m == nil {
+		return ""
+	}
+	return markdown.Render(m.Message, entitiesFromWire(m.Message, m.Entities))
+}
+
+// SavedMessagesTitle is what the dialog with the account itself is called.
+// The name every official client uses, so a user looking for it finds it
+// under the words they already know.
+const SavedMessagesTitle = "Saved Messages"
+
+// UsersGetUsersClient is the one call SelfDialog needs beyond the dialog
+// list. Optional on the fetcher's API: the tests' dialog stubs do not
+// implement it, and the production client does.
+type UsersGetUsersClient interface {
+	UsersGetUsers(ctx context.Context, id []tg.InputUserClass) ([]tg.UserClass, error)
+}
+
+// SelfDialog describes the account's own chat — Saved Messages — whether or
+// not the server lists it. Telegram returns that dialog only once something
+// has been written there, and every official client shows it regardless,
+// because it is where people keep the things they send themselves. One
+// request, at sync, against the account's own record.
+func (d *DialogsFetcher) SelfDialog(ctx context.Context) (domain.Chat, domain.Peer, error) {
+	api, ok := d.api.(UsersGetUsersClient)
+	if !ok {
+		return domain.Chat{}, domain.Peer{}, errors.New("self dialog: users.getUsers is not available on this client")
+	}
+	users, err := api.UsersGetUsers(ctx, []tg.InputUserClass{&tg.InputUserSelf{}})
+	if err != nil {
+		if wait, ok := tgerr.AsFloodWait(err); ok {
+			return domain.Chat{}, domain.Peer{}, &coresync.FloodWaitError{RetryAfter: wait}
+		}
+		return domain.Chat{}, domain.Peer{}, fmt.Errorf("users.getUsers(self): %w", err)
+	}
+	if len(users) == 0 {
+		return domain.Chat{}, domain.Peer{}, errors.New("self dialog: the server returned no user")
+	}
+	u, ok := users[0].(*tg.User)
+	if !ok {
+		return domain.Chat{}, domain.Peer{}, fmt.Errorf("self dialog: unexpected %T", users[0])
+	}
+	chat := domain.Chat{ID: u.ID, Type: domain.ChatTypePrivate, Title: SavedMessagesTitle, Username: u.Username}
+	peer := domain.Peer{ID: u.ID, Type: domain.ChatTypePrivate, AccessHash: u.AccessHash}
+	return chat, peer, nil
+}
+
+// muteUntilOf reads when notifications resume off a dialog's settings. Zero
+// when the dialog is not muted, and a date in 2038 for "forever", stored as
+// it comes so a later unmute from the server and a local one agree.
+func muteUntilOf(ns tg.PeerNotifySettings) time.Time {
+	until, ok := ns.GetMuteUntil()
+	if !ok || until <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(int64(until), 0).UTC()
+}
+
+// presenceOf reads a user's status: online now, or when they were last —
+// zero when Telegram says only "recently" or nothing, which is what it says
+// for people who hide it, and the list shows nothing rather than guessing.
+func presenceOf(status tg.UserStatusClass) (online bool, lastSeen time.Time) {
+	switch s := status.(type) {
+	case *tg.UserStatusOnline:
+		return true, time.Time{}
+	case *tg.UserStatusOffline:
+		if s.WasOnline > 0 {
+			return false, time.Unix(int64(s.WasOnline), 0).UTC()
+		}
+	}
+	return false, time.Time{}
 }

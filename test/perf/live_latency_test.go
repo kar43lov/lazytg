@@ -63,6 +63,10 @@ func (s *inMemoryStore) DeleteMessages(_ context.Context, _ int64, ids []int64) 
 	return int64(len(ids)), nil
 }
 
+func (s *inMemoryStore) SetReactions(context.Context, int64, int64, []domain.Reaction) error {
+	return nil
+}
+
 func (s *inMemoryStore) IncrementUnread(_ context.Context, _ int64) error { return nil }
 
 func (s *inMemoryStore) EnsureChat(_ context.Context, _ int64, _ domain.ChatType, _ time.Time) (bool, error) {
@@ -285,3 +289,13 @@ func BenchmarkLiveUpdateLatency(b *testing.B) {
 	<-done
 	b.ReportMetric(float64(live.LastIngestLatency().Microseconds()), "last_us/op")
 }
+
+// The list-fact setters satisfy LiveStore; the latency probe never sends them.
+func (s *inMemoryStore) SetUnread(context.Context, int64, int) error                   { return nil }
+func (s *inMemoryStore) SetPinned(context.Context, int64, bool) error                  { return nil }
+func (s *inMemoryStore) SetMutedUntil(context.Context, int64, time.Time) error         { return nil }
+func (s *inMemoryStore) SetUnreadMark(context.Context, int64, bool) error              { return nil }
+func (s *inMemoryStore) SetPresence(context.Context, int64, bool, time.Time) error     { return nil }
+func (s *inMemoryStore) SetReadOutbox(context.Context, int64, int64) error             { return nil }
+func (s *inMemoryStore) SetPinnedMessages(context.Context, int64, []int64, bool) error { return nil }
+func (s *inMemoryStore) SetArchived(context.Context, int64, bool) error                { return nil }

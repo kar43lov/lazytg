@@ -45,7 +45,11 @@ func (m Model) View(width, height int) string {
 	case len(m.items) == 0:
 		body.WriteString(paletteOverlayHint.Render("no chats yet — try /login or wait for sync"))
 	case len(m.filtered) == 0:
-		body.WriteString(paletteOverlayHint.Render("no matches"))
+		if name := UsernameFrom(m.input.Value()); name != "" {
+			body.WriteString(paletteOverlayHint.Render("no matches — Enter opens @" + name))
+		} else {
+			body.WriteString(paletteOverlayHint.Render("no matches (type @name or t.me/name to open a chat that is not here)"))
+		}
 	default:
 		body.WriteString(m.renderRows())
 	}

@@ -15,23 +15,49 @@ import "charm.land/bubbles/v2/key"
 // the snake_case mapping table in loader.go. New bindings must be registered
 // in three places: this struct, defaults(), and bindingFields() in loader.go.
 type Keymap struct {
-	Send        key.Binding
-	Newline     key.Binding
-	Reply       key.Binding
-	OpenEditor  key.Binding
-	ToggleHelp  key.Binding
-	FocusNext   key.Binding
-	FocusPrev   key.Binding
-	NextChat    key.Binding
-	PrevChat    key.Binding
-	ScrollUp    key.Binding
-	ScrollDown  key.Binding
-	Search      key.Binding
-	OpenPalette key.Binding
-	Download    key.Binding
-	OpenMedia   key.Binding
-	Attach      key.Binding
-	Quit        key.Binding
+	Send           key.Binding
+	Newline        key.Binding
+	Reply          key.Binding
+	OpenEditor     key.Binding
+	ToggleHelp     key.Binding
+	FocusNext      key.Binding
+	FocusPrev      key.Binding
+	NextChat       key.Binding
+	PrevChat       key.Binding
+	ScrollUp       key.Binding
+	ScrollDown     key.Binding
+	Search         key.Binding
+	OpenPalette    key.Binding
+	Download       key.Binding
+	OpenMedia      key.Binding
+	NextFolder     key.Binding
+	PrevFolder     key.Binding
+	ShowImage      key.Binding
+	MarkMessage    key.Binding
+	ForwardMessage key.Binding
+	ReactMessage   key.Binding
+	JumpToReply    key.Binding
+	JumpBack       key.Binding
+	EmojiPicker    key.Binding
+	// CompleteEmoji shares its key with FocusNext on purpose. Tab means
+	// "finish what I am typing" everywhere a shell or an editor is
+	// involved, and it only reaches the composer when there is a
+	// `:shortcode` under the cursor to finish — otherwise it cycles focus
+	// as before. Rebinding either one leaves the other alone.
+	CompleteEmoji key.Binding
+	CopyMessage   key.Binding
+	CopyLink      key.Binding
+	PressButton   key.Binding
+	EditMessage   key.Binding
+	DeleteMsg     key.Binding
+	Attach        key.Binding
+	Quit          key.Binding
+	// The three chat-list chords: live only while the list has the focus
+	// and its filter is closed, so a bare letter is safe there for the
+	// same reason it is in the thread.
+	MuteChat     key.Binding
+	PinChat      key.Binding
+	ToggleUnread key.Binding
 }
 
 // Default returns the built-in emacs-flavoured keymap.
@@ -55,6 +81,30 @@ func Default() Keymap {
 		OpenEditor: key.NewBinding(
 			key.WithKeys("ctrl+e"),
 			key.WithHelp("ctrl+e", "open editor"),
+		),
+		ForwardMessage: key.NewBinding(
+			key.WithKeys("f"),
+			key.WithHelp("f", "forward message(s)"),
+		),
+		ReactMessage: key.NewBinding(
+			key.WithKeys("r"),
+			key.WithHelp("r", "react to message"),
+		),
+		JumpToReply: key.NewBinding(
+			key.WithKeys("p"),
+			key.WithHelp("p", "go to the replied message"),
+		),
+		JumpBack: key.NewBinding(
+			key.WithKeys("ctrl+o"),
+			key.WithHelp("ctrl+o", "back where you jumped from"),
+		),
+		EmojiPicker: key.NewBinding(
+			key.WithKeys("alt+e"),
+			key.WithHelp("alt+e", "emoji picker"),
+		),
+		CompleteEmoji: key.NewBinding(
+			key.WithKeys("tab"),
+			key.WithHelp("tab", "complete :emoji"),
 		),
 		ToggleHelp: key.NewBinding(
 			key.WithKeys("?"),
@@ -121,9 +171,79 @@ func Default() Keymap {
 			key.WithKeys("ctrl+u"),
 			key.WithHelp("ctrl+u", "attach file"),
 		),
+		// The four thread-only actions below are bare letters, safe for
+		// the same reason "o" is: the composer is a separate pane, so
+		// nothing in the thread is typing. Each one is the letter its
+		// action has in a file manager or a mail client, which is the
+		// point — the chord should be one the user already knows.
+		// Bracket keys for the folder tabs: they are what a browser and a
+		// tmux session both use for "the next one of these", they are free
+		// everywhere outside the composer, and they read as arrows on a
+		// row of tabs.
+		NextFolder: key.NewBinding(
+			key.WithKeys("]"),
+			key.WithHelp("]", "next folder"),
+		),
+		PrevFolder: key.NewBinding(
+			key.WithKeys("["),
+			key.WithHelp("[", "prev folder"),
+		),
+		// "i" for inline, next to "o" for open — the two answers to "let me
+		// see it": one draws the picture here, the other hands the file to
+		// whatever the system uses.
+		ShowImage: key.NewBinding(
+			key.WithKeys("i"),
+			key.WithHelp("i", "show image inline"),
+		),
+		MarkMessage: key.NewBinding(
+			key.WithKeys(" "),
+			key.WithHelp("space", "mark message"),
+		),
+		CopyMessage: key.NewBinding(
+			key.WithKeys("y"),
+			key.WithHelp("y", "copy message(s)"),
+		),
+		// "l" for link: the address of the message under the cursor, the
+		// way every official client offers "Copy link" on a channel or
+		// supergroup post. A private chat has no address, and the key
+		// says so instead of copying something that opens nothing.
+		CopyLink: key.NewBinding(
+			key.WithKeys("l"),
+			key.WithHelp("l", "copy link to message"),
+		),
+		// Enter presses the chosen key of a bot's keyboard under the
+		// message at the cursor. Enter also sends in the composer and
+		// opens a chat in the list; the three never share a focus.
+		PressButton: key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "press the chosen bot button"),
+		),
+		EditMessage: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "edit message"),
+		),
+		DeleteMsg: key.NewBinding(
+			key.WithKeys("d"),
+			key.WithHelp("d", "delete message(s)"),
+		),
 		Quit: key.NewBinding(
 			key.WithKeys("ctrl+c", "ctrl+q"),
 			key.WithHelp("ctrl+c", "quit"),
+		),
+		// Chat-list chords. "p" is also "go to the replied message" in the
+		// thread; the two never share a focus, and pin is what "p" means
+		// in every list that has pinning.
+		MuteChat: key.NewBinding(
+			key.WithKeys("m"),
+			key.WithHelp("m", "mute / unmute chat"),
+		),
+		PinChat: key.NewBinding(
+			key.WithKeys("p"),
+			key.WithHelp("p", "pin / unpin chat"),
+		),
+		ToggleUnread: key.NewBinding(
+			key.WithKeys("u"),
+			key.WithHelp("u", "mark chat read / unread"),
 		),
 	}
 }

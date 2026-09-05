@@ -19,6 +19,8 @@ import (
 	"github.com/kar43lov/lazytg/internal/core/domain"
 	"github.com/kar43lov/lazytg/internal/core/events"
 	"github.com/kar43lov/lazytg/internal/core/search"
+	coresync "github.com/kar43lov/lazytg/internal/core/sync"
+	"github.com/kar43lov/lazytg/internal/ui/graphics"
 	"github.com/kar43lov/lazytg/internal/ui/input"
 	"github.com/kar43lov/lazytg/internal/ui/keymap"
 	"github.com/kar43lov/lazytg/internal/ui/overlay"
@@ -39,12 +41,47 @@ type FileDownloader interface {
 	Download(ctx context.Context, chatID int64, chatTitle string, info domain.MediaInfo) (string, error)
 }
 
+// DesktopNotifier posts to the desktop's notification centre; the
+// production implementation is internal/core/notify.Notifier.
+type DesktopNotifier interface {
+	Notify(ctx context.Context, title, body string) error
+}
+
 // MediaOpener is the contract App.handleOpenRequest uses to show a
 // downloaded file to the user. The production implementation is
 // internal/core/files.Opener, which launches the system viewer; tests
 // substitute a fake so no window opens on a CI runner.
 type MediaOpener interface {
 	Open(ctx context.Context, path string) error
+	// OpenURL hands a web address to the browser.
+	OpenURL(ctx context.Context, url string) error
+}
+
+// MessageActions is the gotd-free contract for the operations a user
+// performs on messages that already exist. The production implementation is
+// internal/core/sync.ActionService; tests substitute a fake so no RPC
+// happens and the destructive path can be asserted without a live account.
+//
+// Delete takes a list because the gesture does: marking a run of messages
+// and removing them is one act, and sending them one at a time would be
+// several requests and several chances to half-succeed.
+type MessageActions interface {
+	Edit(ctx context.Context, chatID, messageID int64, text string) error
+	Delete(ctx context.Context, chatID int64, ids []int64, revoke bool) error
+	Forward(ctx context.Context, fromChatID, toChatID int64, ids []int64, dropAuthor bool) error
+	React(ctx context.Context, chatID, messageID int64, emoticon string) error
+	// The chat-level actions, taken from the list without opening the chat.
+	Mute(ctx context.Context, chatID int64, until time.Time) error
+	Pin(ctx context.Context, chatID int64, pinned bool) error
+	MarkUnread(ctx context.Context, chatID int64) error
+	MarkRead(ctx context.Context, chatID int64, marked bool) error
+	// OpenByUsername resolves a public handle, stores the chat and
+	// returns its id, so the thread can open a conversation that was
+	// not in the list.
+	OpenByUsername(ctx context.Context, name string) (domain.Chat, error)
+	// PressButton calls a bot back with the data of one of its buttons
+	// and returns what the bot said.
+	PressButton(ctx context.Context, chatID, messageID int64, data []byte) (coresync.CallbackAnswer, error)
 }
 
 // FileUploader is the gotd-free contract App.handleAttachSubmit uses
@@ -165,6 +202,14 @@ type Deps struct {
 	// what every test wants and what a build with no system viewer
 	// gets.
 	Opener MediaOpener
+	// SelfID, if set, answers with the account's own user id, zero until
+	// the session knows it. The thread hides the ticks in the chat with
+	// yourself: "did they read it" has no answer there.
+	SelfID func() int64
+	// Notifier, if set, posts a desktop notification for a message in a
+	// chat that is not being read, alongside the bell. Set only when the
+	// user asked for it (LAZYTG_NOTIFY=desktop).
+	Notifier DesktopNotifier
 
 	// Uploader, if set, is invoked when the user submits a file
 	// from the Attach overlay (Ctrl-U flow). nil makes the overlay
@@ -179,6 +224,12 @@ type Deps struct {
 	// + deferred ScrollTo" path which only works when the target
 	// is still within the freshly-loaded 200-message head.
 	Jumper JumpContextProvider
+
+	// Actions, if set, performs edits and deletions on existing messages.
+	// nil means the chords report that the client is offline rather than
+	// pretending to have done something — a deletion that only happened
+	// locally is the one outcome worse than none.
+	Actions MessageActions
 
 	// Backfiller, if set, is asked to pull history from Telegram when the
 	// user opens a chat. Without it the thread pane shows only what the
@@ -214,12 +265,36 @@ type App struct {
 	// opener shows a downloaded file to the user, wired through
 	// Deps.Opener. nil means the open gesture downloads and stops
 	// there.
-	opener MediaOpener
+	opener   MediaOpener
+	selfID   func() int64
+	notifier DesktopNotifier
 
 	// uploader is the file-upload collaborator wired through
 	// Deps.Uploader. nil means "no uploader wired" — the Attach
 	// overlay still opens but Submit silently no-ops.
 	uploader FileUploader
+
+	// actions performs edits and deletions, wired through Deps.Actions.
+	// nil means offline.
+	actions MessageActions
+
+	// imageProtocol is what the terminal can draw, detected once at
+	// construction. ProtocolNone — the ordinary case on a plain xterm or
+	// inside tmux — makes the inline gesture say so rather than painting
+	// base64 into the user's screen.
+	imageProtocol graphics.Protocol
+
+	// confirm is the modal that stands in front of a deletion.
+	confirm overlay.Confirm
+
+	// emojiPicker is the browse-and-pick half of emoji entry; the
+	// composer's `:shortcode` completion is the other half.
+	emojiPicker overlay.EmojiPicker
+
+	// pendingDelete remembers what a confirmation is about while the
+	// modal is up. Held here rather than in the modal because the modal
+	// is a widget that knows about keys and text, not about messages.
+	pendingDelete pendingDelete
 
 	// backfiller is the history-pull collaborator wired through
 	// Deps.Backfiller. nil means "offline" — the thread shows only
@@ -255,10 +330,32 @@ type App struct {
 	// effectively ignored.
 	preSearchFocus FocusTarget
 
+	// pendingForward remembers what a chat-picking palette is about. Set
+	// when the user presses the forward key, consumed by the palette
+	// selection, cleared when the palette closes with nothing chosen.
+	pendingForward *pendingForward
+
+	// jumpStack is the trail of places a reply-following jump started
+	// from, newest last. See jump.go.
+	jumpStack []jumpOrigin
+
+	// typing is who is composing something in the chat on screen, keyed by
+	// the person, with the moment their indicator goes stale. See typing.go.
+	typing map[int64]typingState
+
+	// pendingReaction remembers which message an emoji picker opened to
+	// react is about, and what this account already has on it.
+	pendingReaction *pendingReaction
+
 	// prePaletteFocus is the same idea for the command palette so
 	// closing it (Esc / SelectedMsg) can restore the prior focus
 	// target. -1 means "no palette open".
 	prePaletteFocus FocusTarget
+
+	// titledUnread is the badge last written into the terminal's title,
+	// and titled whether one was written at all.
+	titledUnread int
+	titled       bool
 
 	// preAttachFocus is the same idea for the attach overlay so
 	// Esc / Submit can restore the prior focus target. -1 means
@@ -334,9 +431,15 @@ func New(deps Deps) App {
 		paletteFrecency:   deps.PaletteFrecency,
 		downloader:        deps.Downloader,
 		opener:            deps.Opener,
+		selfID:            deps.SelfID,
+		notifier:          deps.Notifier,
 		uploader:          deps.Uploader,
 		jumper:            deps.Jumper,
 		backfiller:        deps.Backfiller,
+		actions:           deps.Actions,
+		confirm:           overlay.NewConfirm(),
+		imageProtocol:     graphics.Detect(nil),
+		emojiPicker:       overlay.NewEmojiPicker(deps.Keymap),
 		historyGate:       make(chan struct{}, maxConcurrentHistoryRequests),
 		inFlightDownloads: newDownloadRegistry(),
 		preSearchFocus:    -1,
@@ -345,7 +448,7 @@ func New(deps Deps) App {
 		focus:             FocusChats,
 		keymap:            deps.Keymap,
 		bus:               deps.Bus,
-		log:               deps.Log,
+		log:               orDiscard(deps.Log),
 	}
 	app.chats = app.chats.SetFocus(true)
 	return app
@@ -494,3 +597,17 @@ func (a App) AttachModel() attach.Model { return a.attach }
 // TooSmall reports whether the last WindowSize was below MinWidth/MinHeight.
 // Exposed for tests so they can assert without parsing the rendered View.
 func (a App) TooSmall() bool { return a.tooSmall }
+
+// orDiscard guarantees a usable logger.
+//
+// Every a.log call site would otherwise need a nil check, and the ones that
+// forgot panicked only on the path they logged from — which is by definition
+// the failure path, so the crash arrived exactly when something had already
+// gone wrong. A test constructing Deps without a logger is the ordinary case,
+// not a misuse.
+func orDiscard(l *slog.Logger) *slog.Logger {
+	if l != nil {
+		return l
+	}
+	return slog.New(slog.DiscardHandler)
+}

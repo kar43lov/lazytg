@@ -11,6 +11,7 @@ import (
 	"github.com/kar43lov/lazytg/internal/core/events"
 	"github.com/kar43lov/lazytg/internal/core/search"
 	"github.com/kar43lov/lazytg/internal/ui/input"
+	"github.com/kar43lov/lazytg/internal/ui/overlay"
 	"github.com/kar43lov/lazytg/internal/ui/palette"
 	"github.com/kar43lov/lazytg/internal/ui/panes/attach"
 	"github.com/kar43lov/lazytg/internal/ui/panes/chats"
@@ -90,6 +91,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if !updated.tooSmall && updated.input.Rows() != before {
 		updated = updated.applySizes()
+	}
+	// The terminal's title carries the badge, so a hidden tab still says
+	// how much is waiting. Written only when the number changes: it is an
+	// escape on every draw otherwise.
+	if total := updated.chats.UnreadTotal(); total != updated.titledUnread || !updated.titled {
+		updated.titledUnread, updated.titled = total, true
+		cmd = tea.Batch(cmd, tea.Raw(windowTitle(total)))
 	}
 	return updated, cmd
 }
@@ -171,19 +179,86 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case palette.OpenedMsg:
 		return a.openPalette()
 	case palette.ClosedMsg:
-		return a.closePalette(), nil
+		// A forward whose palette was dismissed is a forward that did not
+		// happen; the messages stay marked so the user can try again.
+		return a.cancelPendingForward().closePalette(), nil
 	case palette.SelectedMsg:
 		return a.handlePaletteSelected(m)
+	case palette.OpenUsernameMsg:
+		return a.handleOpenUsername(m)
+	case usernameResolvedMsg:
+		return a.applyUsernameResolved(m)
+	case buttonPressedMsg:
+		return a.applyButtonPressed(m)
 	case palette.LoadedMsg, palette.QueryChangedMsg:
 		updated, cmd := a.palette.Update(msg)
 		a.palette = updated
 		return a, cmd
+	case openEmojiPickerMsg:
+		a.emojiPicker = a.emojiPicker.Open()
+		return a, nil
+	case overlay.EmojiPickedMsg:
+		// A picker opened to react answers to the reaction path instead
+		// of typing the character into the composer.
+		if updated, cmd, handled := a.handleReactionPick(m.Char); handled {
+			return updated, cmd
+		}
+		return a.insertEmoji(m.Char)
+	case overlay.EmojiClosedMsg:
+		return a.cancelPendingReaction(), nil
+	case reactionResultMsg:
+		return a.applyReactionResult(m), nil
+	case events.MessageReactionsChanged:
+		return a.applyReactionsChanged(m), nil
+	case events.PeerTyping:
+		updated, cmd := a.applyTyping(m)
+		return updated, cmd
+	case typingSweepMsg:
+		updated, cmd := a.sweepTyping()
+		return updated, cmd
 	case attach.OpenedMsg:
 		return a.openAttach(m)
 	case attach.ClosedMsg:
 		return a.closeAttach(), nil
 	case attach.SubmitMsg:
 		return a.handleAttachSubmit(m)
+	case input.EditSubmittedMsg:
+		return a, a.cmdSubmitEdit(m)
+	case messageActionsResultMsg:
+		return a.applyActionResult(m), nil
+	case chatActionMsg:
+		return a.applyChatAction(m), nil
+	case linkOpenedMsg:
+		return a.applyLinkOpened(m), nil
+	case noticeMsg:
+		a.status = a.status.SetNotice(string(m))
+		return a, nil
+	case forwardResultMsg:
+		return a.applyForwardResult(m), nil
+	case inlineImageReadyMsg:
+		return a.applyInlineImage(m), nil
+	case events.MessageEdited:
+		return a.applyMessageEdited(m), nil
+	case events.ChatReadOutbox, events.MessagesPinned:
+		updated, cmd := a.thread.Update(m)
+		a.thread = updated
+		return a, cmd
+	case events.DraftChanged:
+		// The composer takes the words; the list shows "Draft:" on the
+		// row. Both need it, neither needs the other to have seen it.
+		updatedInput, cmdI := a.input.Update(m)
+		a.input = updatedInput
+		updatedChats, cmdC := a.chats.Update(m)
+		a.chats = updatedChats
+		return a, tea.Batch(cmdI, cmdC)
+	case chats.SetFoldersMsg:
+		updated, cmd := a.chats.SetFolders(m.Folders)
+		a.chats = updated
+		return a, cmd
+	case events.FoldersLoaded:
+		updated, cmd := a.chats.SetFolders(m.Folders)
+		a.chats = updated
+		return a, cmd
 	}
 
 	if a.help.Visible {
@@ -204,6 +279,12 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, cmd
 	}
 
+	if a.emojiPicker.Visible() {
+		updated, cmd := a.emojiPicker.Update(msg)
+		a.emojiPicker = updated
+		return a, cmd
+	}
+
 	if a.search.Visible {
 		updated, cmd := a.search.Update(msg)
 		a.search = updated
@@ -211,6 +292,26 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if k, ok := msg.(tea.KeyPressMsg); ok {
+		// The confirmation modal takes every key while it is up, and it
+		// is checked before anything else for the reason it exists: the
+		// key after "delete 3 messages?" must not reach a pane that
+		// would act on it.
+		if a.confirm.Visible() {
+			updated, cmd := a.handleConfirmKey(k)
+			return updated, cmd
+		}
+		if updated, cmd, handled := a.applyFolderKey(k); handled {
+			return updated, cmd
+		}
+		if updated, cmd, handled := a.applyQuickChatKey(k); handled {
+			return updated, cmd
+		}
+		if updated, cmd, handled := a.applyChatActionKey(k); handled {
+			return updated, cmd
+		}
+		if updated, cmd, handled := a.applyMessageActionKey(k); handled {
+			return updated, cmd
+		}
 		if cmd, handled := a.handleGlobalKey(k); handled {
 			return a, cmd
 		}
@@ -337,8 +438,15 @@ func (a App) handleChatSelected(msg chats.ChatSelectedMsg) (tea.Model, tea.Cmd) 
 
 	var cmds []tea.Cmd
 
+	if wipe := a.clearDrawnImagesCmd(); wipe != nil {
+		cmds = append(cmds, wipe)
+	}
+	a = a.clearTyping().clearJumpTrail()
 	updatedThread, cmd := a.thread.OpenChat(msg.ChatID)
-	a.thread = updatedThread
+	// The unread count has to be taken now: acknowledging the chat clears
+	// it a moment later, and by the time the messages land there would be
+	// nothing left to draw a divider from.
+	a.thread = updatedThread.MarkUnread(a.unreadOf(msg.ChatID)).MarkReadOutbox(a.readOutboxOf(msg.ChatID)).MarkSelfChat(a.isSelfChat(msg.ChatID))
 	if cmd != nil {
 		cmds = append(cmds, cmd)
 	}
@@ -426,6 +534,9 @@ func (a App) broadcastBusEvent(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// and appends the message to the visible list; chats reloads
 		// the dialog list so the chat hosting this message bubbles to
 		// the top.
+		if ring := a.ringCmd(ev); ring != nil {
+			cmds = append(cmds, ring)
+		}
 		updatedThread, cmdT := a.thread.Update(ev)
 		a.thread = updatedThread
 		if cmdT != nil {
@@ -599,6 +710,9 @@ func (a App) handleSearchJump(msg uisearch.JumpMsg) (tea.Model, tea.Cmd) {
 			MessageID: messageID,
 			Around:    jumpAround,
 		}
+		if wipe := a.clearDrawnImagesCmd(); wipe != nil {
+			cmds = append(cmds, wipe)
+		}
 		updatedThread, openCmd := a.thread.OpenChat(chatID)
 		a.thread = updatedThread
 		if openCmd != nil {
@@ -694,6 +808,12 @@ func (a App) applySearchJumpLoaded(msg searchJumpLoadedMsg) (tea.Model, tea.Cmd)
 		return a, loadCmd
 	}
 	a.thread = a.thread.LoadJumpWindow(msg.ChatID, msg.Messages, msg.MessageID, jumpAround)
+	// The cursor lands on what was jumped to. Scrolling it into view is
+	// not the same thing: every gesture in the thread acts on the cursor,
+	// so a jump that leaves it behind means the next key acts on a message
+	// that is no longer on screen — and following a chain of replies needs
+	// the cursor to have arrived before the next press.
+	a.thread = a.thread.SetCursor(msg.MessageID)
 	a.pendingScroll = nil
 	// Names, but not focus: a jump lands the user on a specific message to
 	// read, so the thread keeps the cursor. Only the chat-picking paths move
@@ -771,7 +891,11 @@ func (a App) openPalette() (tea.Model, tea.Cmd) {
 	if a.prePaletteFocus < 0 {
 		a.prePaletteFocus = a.focus
 	}
-	updated, cmd := a.palette.Open()
+	placeholder := "switch chat…"
+	if a.pendingForward != nil {
+		placeholder = "forward to…"
+	}
+	updated, cmd := a.palette.SetPlaceholder(placeholder).Open()
 	a.palette = updated
 	return a, cmd
 }
@@ -800,6 +924,12 @@ func (a App) closePalette() App {
 // will retry and the palette will fall back to the chats list order
 // in the meantime.
 func (a App) handlePaletteSelected(msg palette.SelectedMsg) (tea.Model, tea.Cmd) {
+	// A palette opened to pick a forward target answers to the forward
+	// path instead of switching chats. Checked first so the two cannot
+	// both run and leave the user in a chat they only meant to send to.
+	if updated, cmd, handled := a.handleForwardPick(msg); handled {
+		return updated, cmd
+	}
 	chatID := msg.ChatID
 	a = a.closePalette()
 	// Same rationale as handleChatSelected: a palette pick is a
@@ -808,10 +938,17 @@ func (a App) handlePaletteSelected(msg palette.SelectedMsg) (tea.Model, tea.Cmd)
 	a.jumpGen++
 	a.pendingScroll = nil
 	a.onChatOpened(chatID)
+	// The row the chat-list chords act on must be the chat on screen.
+	a.chats = a.chats.SelectByID(chatID)
 
+	wipe := a.clearDrawnImagesCmd()
+	a = a.clearTyping().clearJumpTrail()
 	updatedThread, cmd := a.thread.OpenChat(chatID)
-	a.thread = updatedThread
+	a.thread = updatedThread.MarkUnread(a.unreadOf(chatID)).MarkReadOutbox(a.readOutboxOf(chatID)).MarkSelfChat(a.isSelfChat(chatID))
 	cmds := []tea.Cmd{}
+	if wipe != nil {
+		cmds = append(cmds, wipe)
+	}
 	if cmd != nil {
 		cmds = append(cmds, cmd)
 	}
@@ -993,6 +1130,33 @@ func (a App) handleOpenRequest(req thread.OpenRequestedMsg) (tea.Model, tea.Cmd)
 // list is empty or the id isn't present (the latter happens when the
 // user opens a chat ahead of the chats pane finishing its initial
 // load — the title catches up on the next reload).
+// unreadOf reports how many messages the chat list believes are unread in a
+// chat. Zero when it does not know the chat, which is the right answer: a
+// divider drawn from a guess is worse than none.
+// isSelfChat reports the chat with yourself — Saved Messages — where a
+// tick would claim somebody read what you wrote to yourself.
+func (a App) isSelfChat(chatID int64) bool {
+	return a.selfID != nil && chatID != 0 && a.selfID() == chatID
+}
+
+// readOutboxOf is how far the other side has read in a chat, from the
+// list row; the thread needs it at open time to draw the ticks.
+func (a App) readOutboxOf(id int64) int64 {
+	if it, ok := a.chats.ItemByID(id); ok {
+		return it.ReadOutboxMaxID()
+	}
+	return 0
+}
+
+func (a App) unreadOf(id int64) int {
+	for _, it := range a.chats.Items() {
+		if it.ID() == id {
+			return it.UnreadCount()
+		}
+	}
+	return 0
+}
+
 func (a App) chatTitle(id int64) (string, bool) {
 	for _, it := range a.chats.Items() {
 		if it.ID() == id {
@@ -1023,19 +1187,25 @@ func (a App) handleChatCycled(msg chatCycledMsg) (tea.Model, tea.Cmd) {
 // user has a dialog with. That covers the other party of every private chat,
 // which is where an unnamed "user-8385473863" was most jarring.
 func (a App) applyDirectory(chatID int64) App {
+	var kind domain.ChatType
+	if it, ok := a.chats.ItemByID(chatID); ok {
+		kind = it.Type()
+	}
+	a.thread = a.thread.SetDirectory(a.directoryNames(), kind)
+	return a
+}
+
+// directoryNames is the sender directory the chat list provides: a title
+// for every peer the account has a dialog with.
+func (a App) directoryNames() map[int64]string {
 	items := a.chats.Items()
 	names := make(map[int64]string, len(items))
-	var kind domain.ChatType
 	for _, it := range items {
 		if name := it.Name(); name != "" {
 			names[it.ID()] = name
 		}
-		if it.ID() == chatID {
-			kind = it.Type()
-		}
 	}
-	a.thread = a.thread.SetDirectory(names, kind)
-	return a
+	return names
 }
 
 // handleResize updates the cached dimensions, recomputes per-pane sizes, and
@@ -1073,6 +1243,7 @@ func (a App) applySizes() App {
 	a.search = a.search.SetSize(a.width, a.height)
 	a.palette = a.palette.SetSize(a.width, a.height)
 	a.attach = a.attach.SetSize(a.width, a.height)
+	a.emojiPicker = a.emojiPicker.SetSize(a.width, a.height)
 	return a
 }
 
@@ -1129,12 +1300,14 @@ func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		if cmd, ok := a.cmdDownloadCursorMedia(); ok {
 			return cmd, true
 		}
-		return nil, true
+		return noticeCmd(a.nothingToDownload()), true
 	case openAllowed && key.Matches(k, a.keymap.OpenMedia):
 		if cmd, ok := a.cmdOpenCursorMedia(); ok {
 			return cmd, true
 		}
-		return nil, true
+		return noticeCmd(a.nothingToOpen()), true
+	case !a.chats.IsFilterActive() && key.Matches(k, a.keymap.EmojiPicker):
+		return cmdOpenEmojiPicker(), true
 	case attachAllowed && key.Matches(k, a.keymap.Attach):
 		if cmd, ok := a.cmdOpenAttach(); ok {
 			return cmd, true
@@ -1144,6 +1317,14 @@ func (a App) handleGlobalKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
 		return cmdNextChat(), true
 	case key.Matches(k, a.keymap.PrevChat):
 		return cmdPrevChat(), true
+	case a.focus == FocusInput && key.Matches(k, a.keymap.CompleteEmoji) && a.input.EmojiPrefix() != "":
+		// Tab belongs to the composer while there is a `:shortcode` under
+		// the cursor to finish, and to the focus cycler the rest of the
+		// time. Falling through rather than handling it here keeps the
+		// decision in one place: the composer answers whether it has
+		// something to complete, and if it turns out it has not, the key
+		// goes on to do what it always did.
+		return nil, false
 	case key.Matches(k, a.keymap.FocusNext):
 		return cmdNextFocus(), true
 	case key.Matches(k, a.keymap.FocusPrev):
@@ -1198,6 +1379,17 @@ func (a App) cmdDownloadCursorMedia() (tea.Cmd, bool) {
 // cmdOpenCursorMedia is cmdDownloadCursorMedia's twin for the open
 // gesture.
 func (a App) cmdOpenCursorMedia() (tea.Cmd, bool) {
+	// The message under the cursor first: a link in it, or a place on a
+	// map, opens in the browser. Only when it carries neither does the
+	// gesture fall back to the nearest attachment above, as before.
+	if cur, ok := a.thread.CursorMessage(); ok {
+		if link := openableLink(cur); link != "" {
+			return a.cmdOpenLink(link), true
+		}
+		if cur.Media != nil && cur.Media.FileID == 0 {
+			return nil, false
+		}
+	}
 	target, media, title, ok := a.cursorMediaTarget()
 	if !ok {
 		return nil, false
@@ -1216,7 +1408,9 @@ func (a App) cmdOpenCursorMedia() (tea.Cmd, bool) {
 // and the chat title the download path needs for its on-disk layout.
 func (a App) cursorMediaTarget() (domain.Message, domain.MediaInfo, string, bool) {
 	target, ok := a.thread.MediaTarget()
-	if !ok || target.Media == nil {
+	if !ok || target.Media == nil || target.Media.FileID == 0 {
+		// A poll or a contact card is an attachment with no file: the
+		// chords that save and open files have nothing to act on.
 		return domain.Message{}, domain.MediaInfo{}, "", false
 	}
 	title, _ := a.chatTitle(target.ChatID)

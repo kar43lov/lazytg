@@ -40,6 +40,35 @@ type MessageReceived struct {
 	// a 1:1 dialog, where Telegram sends no from_id, and leaving the unread
 	// counter alone for messages the reader wrote.
 	Outgoing bool
+	// ReplyTo is the message this one answers, or 0. Carried because the
+	// pane renders the quoted line from it and the "go to what this
+	// answers" gesture needs it: without the field a reply that arrived
+	// live had no parent until the chat was reopened and the row came back
+	// from storage with one.
+	ReplyTo int64
+	// Reactions is what the message already carries. Almost always empty on
+	// arrival — a message is reacted to after it lands — but a message
+	// pulled in by gap recovery can arrive with them.
+	Reactions []domain.Reaction
+	// Entities is the formatting on Text, rune-indexed. Carried for the
+	// same reason ReplyTo is: the pane renders from the event, and a field
+	// the event drops is a field the reader loses until the chat is
+	// reopened.
+	Entities []domain.Entity
+	// Edited marks a rewrite of a message already delivered rather than a
+	// new one. Consumers replace the row they have and count nothing: an
+	// edit is not unread, not a notification, and not a reason to scroll.
+	// Buttons is the keyboard a bot put under the message. Carried on an
+	// edit too: replacing the keyboard is how most bots answer a press.
+	Buttons [][]domain.Button
+	// Forwarded is where the message came from when somebody forwarded
+	// it; Pinned is the flag the pinned bar is drawn from.
+	Forwarded *domain.Forward
+	Pinned    bool
+	Edited    bool
+	// EditDate is when the rewrite happened; zero for a message never
+	// edited.
+	EditDate time.Time
 }
 
 func (MessageReceived) eventMarker() {}
@@ -59,6 +88,78 @@ type MessagesDeleted struct {
 }
 
 func (MessagesDeleted) eventMarker() {}
+
+// MessageReactionsChanged is emitted when the reactions on a message change —
+// somebody added one, took one back, or this account did from another device.
+//
+// It carries the whole set rather than a delta. Telegram sends the complete
+// list in updateMessageReactions, and reconstructing a delta from it only to
+// re-apply it would invent a chance to get the counts wrong.
+type MessageReactionsChanged struct {
+	ChatID    int64
+	MessageID int64
+	Reactions []domain.Reaction
+}
+
+func (MessageReactionsChanged) eventMarker() {}
+
+// PeerTyping is emitted when Telegram says somebody is composing something in
+// a chat.
+//
+// It costs nothing to receive — the server pushes it whether or not anyone
+// looks — and it is most of what makes a conversation feel live. Sending the
+// same notification for this account's own typing is a separate question and
+// deliberately not answered here: it is a request per keystroke burst on an
+// account already watched for running an unofficial client.
+//
+// Action is what they are doing, in the plain words a status line wants:
+// "typing", "recording a voice message", "sending a photo". Telegram has a
+// dozen of these and the difference matters — "recording a voice message"
+// tells the reader to wait rather than to keep writing.
+//
+// There is no "stopped" counterpart worth relying on. Telegram sends one, but
+// only sometimes; every client instead expires the indicator on its own after
+// a few seconds and lets the sender's repeat refresh it.
+type PeerTyping struct {
+	ChatID int64
+	FromID int64
+	Action string
+	At     time.Time
+}
+
+func (PeerTyping) eventMarker() {}
+
+// MessageEdited is emitted when a message's text has been rewritten and the
+// mirror already agrees. Panes redraw the one row rather than reloading the
+// conversation: an edit changes a single message, and a reload would move the
+// reader's position for no reason.
+//
+// Unlike MessagesDeleted, this always names the chat. Deletions arrive from
+// Telegram in an id space that sometimes omits it; an edit is something this
+// client just did, so the chat is known.
+type MessageEdited struct {
+	ChatID    int64
+	MessageID int64
+	Text      string
+	Entities  []domain.Entity
+	EditDate  time.Time
+}
+
+func (MessageEdited) eventMarker() {}
+
+// FoldersLoaded carries the account's chat folders once they have been read
+// from Telegram. Published once per session: folders change rarely, and
+// re-reading them on a schedule would be steady traffic for nothing on an
+// account already watched for running an unofficial client.
+//
+// An empty slice is meaningful — it says the account has no folders — so a
+// consumer must distinguish "not published yet" from "published as empty"
+// rather than treating both as "keep whatever tabs are up".
+type FoldersLoaded struct {
+	Folders []domain.Folder
+}
+
+func (FoldersLoaded) eventMarker() {}
 
 // ChatOpened is emitted by the UI when the user opens a conversation. It
 // exists so the read-receipt path has a trigger without the UI reaching for
@@ -331,3 +432,85 @@ type FileUploadWarning struct {
 }
 
 func (FileUploadWarning) eventMarker() {}
+
+// The chat-list facts, each on its own event because each arrives on its
+// own update and says nothing about the rest of the row.
+
+// ChatReadInbox says the account read a chat up to MaxID somewhere — on the
+// phone, usually — and how many messages are still unread after that.
+type ChatReadInbox struct {
+	ChatID      int64
+	MaxID       int64
+	StillUnread int
+}
+
+func (ChatReadInbox) eventMarker() {}
+
+// ChatArchived says a chat moved into, or out of, the archive folder.
+type ChatArchived struct {
+	ChatID   int64
+	Archived bool
+}
+
+func (ChatArchived) eventMarker() {}
+
+// MessagesPinned says messages of a chat were pinned, or unpinned.
+type MessagesPinned struct {
+	ChatID int64
+	IDs    []int64
+	Pinned bool
+}
+
+func (MessagesPinned) eventMarker() {}
+
+// DraftChanged carries a draft the server holds for a chat — typed on
+// another device, or read from the dialog page at start. Text is markup;
+// empty means the draft was cleared there.
+type DraftChanged struct {
+	ChatID int64
+	Text   string
+}
+
+func (DraftChanged) eventMarker() {}
+
+// ChatReadOutbox says the other side has read your messages up to MaxID.
+// It is the fact behind the second tick.
+type ChatReadOutbox struct {
+	ChatID int64
+	MaxID  int64
+}
+
+func (ChatReadOutbox) eventMarker() {}
+
+// ChatPinned says a chat was pinned to, or unpinned from, the top.
+type ChatPinned struct {
+	ChatID int64
+	Pinned bool
+}
+
+func (ChatPinned) eventMarker() {}
+
+// ChatMuted says when a chat's notifications resume; the zero time unmutes.
+type ChatMuted struct {
+	ChatID int64
+	Until  time.Time
+}
+
+func (ChatMuted) eventMarker() {}
+
+// ChatUnreadMark says the by-hand unread dot was set or cleared.
+type ChatUnreadMark struct {
+	ChatID int64
+	Unread bool
+}
+
+func (ChatUnreadMark) eventMarker() {}
+
+// PeerPresence says whether a person is online now, or when they were last.
+type PeerPresence struct {
+	UserID   int64
+	Online   bool
+	LastSeen time.Time
+}
+
+func (PeerPresence) eventMarker() {}

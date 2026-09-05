@@ -46,12 +46,48 @@ func DetectConflicts(km Keymap) []ConflictReport {
 			continue
 		}
 		sort.Strings(owners)
+		if sharedByDesign(owners) {
+			continue
+		}
 		reports = append(reports, ConflictReport{Key: k, Bindings: owners})
 	}
 	sort.Slice(reports, func(i, j int) bool {
 		return reports[i].Key < reports[j].Key
 	})
 	return reports
+}
+
+// coexisting names pairs of actions allowed to answer to the same key
+// because the context tells them apart.
+//
+// There is exactly one such pair, and admitting it is better than the
+// alternatives. Tab means "finish what I am typing" in every shell and
+// editor, and it means "next pane" in every TUI; both are right, and which
+// one applies is decided by whether there is a `:shortcode` under the cursor.
+// Giving the completion its own key would make the feature unusable — nobody
+// will learn a second key for the gesture they already know — and dropping
+// the conflict check entirely would let a user shadow Send with Reply and
+// find out at runtime.
+var coexisting = [][2]string{
+	{"complete_emoji", "focus_next"},
+	// "p" pins a chat in the list and follows a reply in the thread. The
+	// two panes never hold the focus at once.
+	{"jump_to_reply", "pin_chat"},
+	// Enter sends from the composer and presses a bot's button in the
+	// thread; the composer and the thread never hold the focus at once.
+	{"press_button", "send"},
+}
+
+func sharedByDesign(owners []string) bool {
+	if len(owners) != 2 {
+		return false
+	}
+	for _, pair := range coexisting {
+		if owners[0] == pair[0] && owners[1] == pair[1] {
+			return true
+		}
+	}
+	return false
 }
 
 // conflictError wraps a slice of conflicts so it can be returned as a single

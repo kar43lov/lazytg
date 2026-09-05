@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -116,4 +117,61 @@ func (o *Opener) Open(ctx context.Context, path string) error {
 		}
 	}()
 	return nil
+}
+
+// OpenURL hands a web address to the platform's opener — always the
+// platform's, never the LAZYTG_OPEN_CMD override, which names a viewer for
+// files and would be handed something it cannot show. Only http and https
+// go through: a message can carry any scheme somebody cares to type, and
+// the ones a desktop registers handlers for (mailto, tel, custom app
+// schemes) are exactly the ones a stranger should not be able to fire.
+func (o *Opener) OpenURL(ctx context.Context, raw string) error {
+	u, err := parseWebURL(raw)
+	if err != nil {
+		return err
+	}
+	program, err := platformOpener()
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, program, u.String()) //nolint:gosec // program is the platform default; the argument is a parsed http(s) URL
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("open: start %s: %w", program, err)
+	}
+	go func() {
+		if err := cmd.Wait(); err != nil && o != nil && o.log != nil {
+			o.log.Debug("open: browser handoff exited with an error", "url", u.Redacted(), "err", err)
+		}
+	}()
+	return nil
+}
+
+// parseWebURL accepts a web address and nothing else. A desktop has a
+// handler for every scheme somebody cares to register, and a message can
+// name any of them; the browser is the only one a stranger gets to fire.
+func parseWebURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return nil, fmt.Errorf("open: %w", err)
+	}
+	if scheme := strings.ToLower(u.Scheme); scheme != "http" && scheme != "https" {
+		return nil, fmt.Errorf("open: only http and https links are opened, not %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return nil, errors.New("open: the link names no host")
+	}
+	return u, nil
+}
+
+// platformOpener is the operating system's own "open this" program.
+func platformOpener() (string, error) {
+	switch runtime.GOOS {
+	case "darwin":
+		return "open", nil
+	case "linux", "freebsd", "openbsd", "netbsd":
+		return "xdg-open", nil
+	default:
+		return "", ErrNoOpener
+	}
 }

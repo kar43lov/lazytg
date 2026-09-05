@@ -19,11 +19,27 @@ type fakeDialogsProvider struct {
 	errs    []error
 	cursors []DialogCursor
 	calls   int
+	// The archive walk is served from its own pages, one per call.
+	archivePages []DialogPage
+	archiveErr   error
+	archiveCalls int
 }
 
 func (f *fakeDialogsProvider) FetchDialogs(_ context.Context, _ int, cursor DialogCursor) (DialogPage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if cursor.Folder == 1 {
+		idx := f.archiveCalls
+		f.archiveCalls++
+		f.cursors = append(f.cursors, cursor)
+		if f.archiveErr != nil {
+			return DialogPage{}, f.archiveErr
+		}
+		if idx < len(f.archivePages) {
+			return f.archivePages[idx], nil
+		}
+		return DialogPage{}, nil
+	}
 	idx := f.calls
 	f.calls++
 	f.cursors = append(f.cursors, cursor)
@@ -59,6 +75,10 @@ func (f *fakeChatStore) prunedSnapshot() [][]int64 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([][]int64(nil), f.pruned...)
+}
+
+func (f *fakeChatStore) SaveChatIfMissing(ctx context.Context, c domain.Chat) error {
+	return f.SaveChat(ctx, c)
 }
 
 func (f *fakeChatStore) SaveChat(_ context.Context, c domain.Chat) error {
@@ -469,5 +489,198 @@ func TestDialogsSync_DoesNotPruneAfterAPartialWalk(t *testing.T) {
 	}
 	if pruned := chats.prunedSnapshot(); len(pruned) != 0 {
 		t.Fatalf("a capped walk pruned %d time(s) — every chat past the cap would be deleted", len(pruned))
+	}
+}
+
+// selfAwareProvider is a fakeDialogsProvider that also knows the account's
+// own chat, the way the production fetcher does.
+type selfAwareProvider struct {
+	fakeDialogsProvider
+	self      domain.Chat
+	selfPeer  domain.Peer
+	selfErr   error
+	selfCalls int
+}
+
+func (p *selfAwareProvider) SelfDialog(context.Context) (domain.Chat, domain.Peer, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.selfCalls++
+	return p.self, p.selfPeer, p.selfErr
+}
+
+// Telegram lists the chat with yourself only once something was written
+// there; every official client shows it regardless. When the server leaves
+// it out, the sync adds it — and the prune that follows must keep it.
+func TestDialogsService_Sync_AddsSavedMessagesTheServerLeftOut(t *testing.T) {
+	t.Parallel()
+
+	provider := &selfAwareProvider{
+		fakeDialogsProvider: fakeDialogsProvider{pages: []DialogPage{chatPage(false, DialogCursor{}, 1, 2)}},
+		self:                domain.Chat{ID: 777, Type: domain.ChatTypePrivate, Title: "Saved Messages"},
+		selfPeer:            domain.Peer{ID: 777, Type: domain.ChatTypePrivate, AccessHash: 5},
+	}
+	chats := &fakeChatStore{}
+	peers := &fakePeerStore{}
+	svc := newTestService(t, provider, chats, peers, nil, DialogsConfig{})
+
+	stored, err := svc.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if stored != 3 {
+		t.Fatalf("stored = %d, want the two listed plus Saved Messages", stored)
+	}
+	var found bool
+	for _, id := range chats.ids() {
+		if id == 777 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("chats saved = %v, Saved Messages missing", chats.ids())
+	}
+	pruned := chats.prunedSnapshot()
+	if len(pruned) != 1 {
+		t.Fatalf("prune ran %d times, want once", len(pruned))
+	}
+	var kept bool
+	for _, id := range pruned[0] {
+		if id == 777 {
+			kept = true
+		}
+	}
+	if !kept {
+		t.Fatalf("prune keep-list %v would delete Saved Messages", pruned[0])
+	}
+}
+
+// A row the server did list carries its date and unread count; rewriting it
+// from the bare user record would zero both. So when the list has it, the
+// self record is left alone.
+func TestDialogsService_Sync_LeavesAListedSavedMessagesAlone(t *testing.T) {
+	t.Parallel()
+
+	provider := &selfAwareProvider{
+		fakeDialogsProvider: fakeDialogsProvider{pages: []DialogPage{chatPage(false, DialogCursor{}, 777, 2)}},
+		self:                domain.Chat{ID: 777, Type: domain.ChatTypePrivate, Title: "Saved Messages"},
+		selfPeer:            domain.Peer{ID: 777, Type: domain.ChatTypePrivate, AccessHash: 5},
+	}
+	chats := &fakeChatStore{}
+	svc := newTestService(t, provider, chats, &fakePeerStore{}, nil, DialogsConfig{})
+
+	stored, err := svc.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if stored != 2 {
+		t.Fatalf("stored = %d, want just the two listed", stored)
+	}
+}
+
+func TestDialogsService_Sync_SurvivesASelfLookupFailure(t *testing.T) {
+	t.Parallel()
+
+	provider := &selfAwareProvider{
+		fakeDialogsProvider: fakeDialogsProvider{pages: []DialogPage{chatPage(false, DialogCursor{}, 1)}},
+		selfErr:             errors.New("boom"),
+	}
+	chats := &fakeChatStore{}
+	svc := newTestService(t, provider, chats, &fakePeerStore{}, nil, DialogsConfig{})
+
+	if _, err := svc.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync failed on the optional lookup: %v", err)
+	}
+	if got := chats.ids(); len(got) != 1 {
+		t.Fatalf("chats saved = %v, want the one listed", got)
+	}
+}
+
+// A chat that arrives with a draft announces it: the draft is not stored,
+// so the event is the only way the composer learns of it.
+func TestDialogsService_Sync_PublishesDrafts(t *testing.T) {
+	t.Parallel()
+
+	bus := events.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sub := bus.Subscribe(ctx)
+
+	page := chatPage(false, DialogCursor{}, 7, 8)
+	page.Chats[0].Draft = "half a sentence"
+	provider := &fakeDialogsProvider{pages: []DialogPage{page}}
+	svc := newTestService(t, provider, &fakeChatStore{}, &fakePeerStore{}, bus, DialogsConfig{})
+	if _, err := svc.Sync(ctx); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	var drafts []events.DraftChanged
+	deadline := time.After(2 * time.Second)
+	for updates := 0; updates < 2; {
+		select {
+		case ev := <-sub:
+			switch typed := ev.(type) {
+			case events.DialogUpdated:
+				updates++
+			case events.DraftChanged:
+				drafts = append(drafts, typed)
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for the sync events")
+		}
+	}
+	if len(drafts) != 1 || drafts[0].ChatID != 7 || drafts[0].Text != "half a sentence" {
+		t.Fatalf("drafts = %+v", drafts)
+	}
+}
+
+// The archive is walked after the main list, its chats stored as archived,
+// and both lists count towards what the prune keeps. An empty archive is
+// complete; an archive that errors fails the sync.
+func TestDialogsService_Sync_WalksTheArchive(t *testing.T) {
+	t.Parallel()
+
+	provider := &fakeDialogsProvider{
+		pages:        []DialogPage{chatPage(false, DialogCursor{}, 7, 8)},
+		archivePages: []DialogPage{chatPage(false, DialogCursor{}, 9)},
+	}
+	chats := &fakeChatStore{}
+	svc := newTestService(t, provider, chats, &fakePeerStore{}, nil, DialogsConfig{ArchivePages: 2})
+	if n, err := svc.Sync(context.Background()); err != nil || n != 3 {
+		t.Fatalf("Sync = %d, %v", n, err)
+	}
+	archived := map[int64]bool{}
+	for _, c := range chats.saved {
+		archived[c.ID] = c.Archived
+	}
+	if archived[7] || archived[8] || !archived[9] {
+		t.Fatalf("archived flags = %v", archived)
+	}
+	if got := provider.cursors[len(provider.cursors)-1]; got.Folder != 1 {
+		t.Fatalf("the archive walk asked with %+v", got)
+	}
+	if pruned := chats.prunedSnapshot(); len(pruned) != 1 || len(pruned[0]) != 3 {
+		t.Fatalf("prune keep-set = %v, want the three chats of both lists", pruned)
+	}
+
+	empty := &fakeDialogsProvider{pages: []DialogPage{chatPage(false, DialogCursor{}, 7)}}
+	chats = &fakeChatStore{}
+	svc = newTestService(t, empty, chats, &fakePeerStore{}, nil, DialogsConfig{ArchivePages: 2})
+	if _, err := svc.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync with an empty archive: %v", err)
+	}
+	if pruned := chats.prunedSnapshot(); len(pruned) != 1 {
+		t.Fatalf("an empty archive kept the prune from running: %v", pruned)
+	}
+
+	failing := &fakeDialogsProvider{pages: []DialogPage{chatPage(false, DialogCursor{}, 7)}, archiveErr: errors.New("boom")}
+	svc = newTestService(t, failing, &fakeChatStore{}, &fakePeerStore{}, nil, DialogsConfig{ArchivePages: 2})
+	if _, err := svc.Sync(context.Background()); err == nil {
+		t.Fatal("an archive fetch error was swallowed")
+	}
+
+	skipped := &fakeDialogsProvider{pages: []DialogPage{chatPage(false, DialogCursor{}, 7)}, archivePages: []DialogPage{chatPage(false, DialogCursor{}, 9)}}
+	svc = newTestService(t, skipped, &fakeChatStore{}, &fakePeerStore{}, nil, DialogsConfig{})
+	if _, err := svc.Sync(context.Background()); err != nil || skipped.archiveCalls != 0 {
+		t.Fatalf("ArchivePages 0 still walked the archive: calls=%d err=%v", skipped.archiveCalls, err)
 	}
 }

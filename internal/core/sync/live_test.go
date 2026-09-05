@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -26,10 +27,58 @@ type recordingStore struct {
 	ensureCreated bool
 	unread        []int64
 	unreadErr     error
+	reactions     []reactionWrite
+	facts         []string
+}
+
+// The list-fact setters record what they were asked, as one line each.
+func (s *recordingStore) fact(line string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.facts = append(s.facts, line)
+	return nil
+}
+
+func (s *recordingStore) factsSnapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.facts...)
+}
+
+func (s *recordingStore) SetUnread(_ context.Context, chatID int64, count int) error {
+	return s.fact(fmt.Sprintf("unread %d=%d", chatID, count))
+}
+
+func (s *recordingStore) SetPinned(_ context.Context, chatID int64, pinned bool) error {
+	return s.fact(fmt.Sprintf("pinned %d=%v", chatID, pinned))
+}
+
+func (s *recordingStore) SetMutedUntil(_ context.Context, chatID int64, until time.Time) error {
+	return s.fact(fmt.Sprintf("muted %d=%d", chatID, until.Unix()))
+}
+
+func (s *recordingStore) SetUnreadMark(_ context.Context, chatID int64, marked bool) error {
+	return s.fact(fmt.Sprintf("mark %d=%v", chatID, marked))
+}
+
+func (s *recordingStore) SetPresence(_ context.Context, userID int64, online bool, lastSeen time.Time) error {
+	return s.fact(fmt.Sprintf("presence %d=%v/%d", userID, online, lastSeen.Unix()))
 }
 
 // IncrementUnread satisfies coresync.LiveStore and records which chats had
 // their badge raised, which is what the unread tests assert on.
+func (s *recordingStore) SetArchived(_ context.Context, chatID int64, archived bool) error {
+	return s.fact(fmt.Sprintf("archived %d=%v", chatID, archived))
+}
+
+func (s *recordingStore) SetPinnedMessages(_ context.Context, chatID int64, ids []int64, pinned bool) error {
+	return s.fact(fmt.Sprintf("pinned %d=%v/%v", chatID, ids, pinned))
+}
+
+func (s *recordingStore) SetReadOutbox(_ context.Context, chatID, maxID int64) error {
+	return s.fact(fmt.Sprintf("read-outbox %d=%d", chatID, maxID))
+}
+
 func (s *recordingStore) IncrementUnread(_ context.Context, chatID int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -77,6 +126,29 @@ func (s *recordingStore) DeleteMessages(_ context.Context, chatID int64, ids []i
 	s.deleted = append(s.deleted, deletedBatch{chatID: chatID, ids: append([]int64(nil), ids...)})
 	s.order = append(s.order, "delete")
 	return int64(len(ids)), nil
+}
+
+func (s *recordingStore) SetReactions(_ context.Context, chatID, messageID int64, rs []domain.Reaction) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reactions = append(s.reactions, reactionWrite{chatID: chatID, messageID: messageID, rs: append([]domain.Reaction(nil), rs...)})
+	s.order = append(s.order, "reactions")
+	return nil
+}
+
+// reactionsSnapshot returns a copy of the recorded SetReactions calls.
+func (s *recordingStore) reactionsSnapshot() []reactionWrite {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]reactionWrite, len(s.reactions))
+	copy(out, s.reactions)
+	return out
+}
+
+type reactionWrite struct {
+	chatID    int64
+	messageID int64
+	rs        []domain.Reaction
 }
 
 // deletedSnapshot returns a copy of the recorded DeleteMessages calls.
@@ -565,6 +637,160 @@ func TestLiveService_LeavesTheOpenChatAlone(t *testing.T) {
 		t.Fatalf("raised the badge on %v, want none", raised)
 	}
 
+	cancel()
+	<-done
+}
+
+// A reaction made on another device reaches the mirror the same way a
+// deletion does: through the live path, because nothing else is watching.
+func TestLiveService_StoresReactionsFromAnotherDevice(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	store := &recordingStore{}
+	svc := NewLiveService(store, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+
+	bus.Publish(events.MessageReactionsChanged{
+		ChatID: 42, MessageID: 7,
+		Reactions: []domain.Reaction{{Emoticon: "👍", Count: 3}},
+	})
+
+	deadline := time.After(time.Second)
+	for {
+		writes := store.reactionsSnapshot()
+		if len(writes) == 1 {
+			if writes[0].chatID != 42 || writes[0].messageID != 7 || len(writes[0].rs) != 1 {
+				t.Fatalf("SetReactions called with %+v", writes[0])
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("SetReactions was never called; reactions from other devices would never appear")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	<-done
+}
+
+// The event and the stored row are two different sets of fields, and a field
+// the persist step does not copy is a field that vanishes on the next page
+// load. Formatting is the third field to learn this after from_id and
+// reply_to.
+func TestLiveService_PersistsEntities(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	store := &recordingStore{}
+	svc := NewLiveService(store, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+
+	want := []domain.Entity{{Kind: domain.EntityBold, Offset: 0, Length: 5}}
+	keys := [][]domain.Button{{{Text: "Go", Kind: domain.ButtonCallback, Data: []byte("go")}}}
+	bus.Publish(events.MessageReceived{
+		ChatID: 1, MessageID: 100, Text: "hello", FromID: 7,
+		Date: time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC), Entities: want, Buttons: keys,
+		Forwarded: &domain.Forward{From: "News"}, Pinned: true,
+	})
+
+	deadline := time.After(time.Second)
+	for {
+		if got := store.snapshot(); len(got) == 1 {
+			if len(got[0].Entities) != 1 || got[0].Entities[0] != want[0] {
+				t.Fatalf("saved message carries %+v, want %+v", got[0].Entities, want)
+			}
+			if len(got[0].Buttons) != 1 || got[0].Buttons[0][0].Text != "Go" {
+				t.Fatalf("saved message lost its keyboard: %+v", got[0].Buttons)
+			}
+			if got[0].Forwarded == nil || got[0].Forwarded.From != "News" || !got[0].Pinned {
+				t.Fatalf("saved message lost its origin or pin: %+v", got[0])
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("message was never persisted")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	cancel()
+	<-done
+}
+
+// An edit is the same message again. It is stored — the mirror has to show
+// the new text — and it raises no badge.
+func TestLiveService_StoresAnEditWithoutRaisingTheBadge(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	store := &recordingStore{}
+	svc := NewLiveService(store, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+
+	when := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	bus.Publish(events.MessageReceived{ChatID: 42, MessageID: 1, Text: "fixed", Date: when, Edited: true, EditDate: when.Add(time.Minute)})
+	waitFor(t, "the edit to be stored", func() bool { return len(store.snapshot()) == 1 })
+	if got := store.snapshot()[0]; got.Text != "fixed" || !got.EditDate.Equal(when.Add(time.Minute)) {
+		t.Fatalf("stored %+v", got)
+	}
+
+	bus.Publish(events.MessageReceived{ChatID: 43, MessageID: 2, Text: "new", Date: when})
+	waitFor(t, "the new message to raise its badge", func() bool { return len(store.unreadSnapshot()) == 1 })
+	if got := store.unreadSnapshot(); got[0] != 43 {
+		t.Fatalf("badges raised for %v, want only 43", got)
+	}
+
+	cancel()
+	<-done
+}
+
+// The list facts arrive one per update and each lands on its own column,
+// then the chat list is told to reload.
+func TestLiveService_RecordsTheListFacts(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	store := &recordingStore{}
+	svc := NewLiveService(store, bus, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+	watch := bus.Subscribe(ctx)
+
+	until := time.Date(2038, 1, 19, 3, 14, 7, 0, time.UTC)
+	bus.Publish(events.ChatReadInbox{ChatID: 42, MaxID: 10, StillUnread: 0})
+	bus.Publish(events.ChatPinned{ChatID: 42, Pinned: true})
+	bus.Publish(events.ChatMuted{ChatID: 42, Until: until})
+	bus.Publish(events.ChatUnreadMark{ChatID: 42, Unread: true})
+	bus.Publish(events.PeerPresence{UserID: 42, Online: true})
+	bus.Publish(events.ChatReadOutbox{ChatID: 42, MaxID: 17})
+	bus.Publish(events.MessagesPinned{ChatID: 42, IDs: []int64{5}, Pinned: true})
+	bus.Publish(events.ChatArchived{ChatID: 42, Archived: true})
+	waitFor(t, "eight facts to be recorded", func() bool { return len(store.factsSnapshot()) == 8 })
+	want := []string{"unread 42=0", "pinned 42=true", "muted 42=" + fmt.Sprint(until.Unix()), "mark 42=true", "presence 42=true/-62135596800", "read-outbox 42=17", "pinned 42=[5]/true", "archived 42=true"}
+	if got := store.factsSnapshot(); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("recorded %v, want %v", got, want)
+	}
+	reloads := 0
+	deadline := time.After(time.Second)
+	for reloads < 5 {
+		select {
+		case ev := <-watch:
+			if _, ok := ev.(events.DialogUpdated); ok {
+				reloads++
+			}
+		case <-deadline:
+			t.Fatalf("chat list told to reload %d times, want 5", reloads)
+		}
+	}
 	cancel()
 	<-done
 }

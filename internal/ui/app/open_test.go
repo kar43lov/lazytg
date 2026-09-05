@@ -28,6 +28,13 @@ func (f *fakeOpener) Open(_ context.Context, path string) error {
 	return nil
 }
 
+func (f *fakeOpener) OpenURL(_ context.Context, url string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.paths = append(f.paths, "url:"+url)
+	return nil
+}
+
 func (f *fakeOpener) snapshot() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -22,13 +22,21 @@ type MessagesGetHistoryClient interface {
 // so that internal/core/sync can satisfy its HistoryProvider interface
 // against a concrete gotd-aware implementation without importing gotd itself.
 type HistoryFetcher struct {
-	api MessagesGetHistoryClient
+	api  MessagesGetHistoryClient
+	self *Self
 }
 
 // NewHistoryFetcher returns a HistoryFetcher that talks to api. Call sites
 // pass either Client.API() in production or a stub in tests.
 func NewHistoryFetcher(api MessagesGetHistoryClient) *HistoryFetcher {
 	return &HistoryFetcher{api: api}
+}
+
+// WithSelf tells the fetcher which chat is the account's own, so messages
+// there come back as the account's rather than as the peer's.
+func (h *HistoryFetcher) WithSelf(self *Self) *HistoryFetcher {
+	h.self = self
+	return h
 }
 
 // Fetch retrieves up to limit messages older than offsetID from the given
@@ -38,9 +46,8 @@ func NewHistoryFetcher(api MessagesGetHistoryClient) *HistoryFetcher {
 // messages exist beyond the returned slice — callers use it to drive
 // pagination.
 //
-// MessageEmpty and MessageService entries are silently dropped in v0.1: the
-// UI cannot render service messages yet, and including them would only inflate
-// the local index.
+// MessageEmpty entries are dropped — there is nothing in them. Service
+// messages become rows with Telegram's own sentence as their text.
 func (h *HistoryFetcher) Fetch(ctx context.Context, peerID, accessHash int64, peerType string, limit, offsetID int) (msgs []domain.Message, hasMore bool, err error) {
 	peer, err := buildInputPeer(peerID, accessHash, peerType)
 	if err != nil {
@@ -57,7 +64,7 @@ func (h *HistoryFetcher) Fetch(ctx context.Context, peerID, accessHash int64, pe
 		}
 		return nil, false, fmt.Errorf("messages.getHistory peer=%d: %w", peerID, err)
 	}
-	return decodeHistory(res, peerID, limit), describesPartialResult(res, limit), nil
+	return decodeHistory(res, peerID, limit, h.self), describesPartialResult(res, limit), nil
 }
 
 // buildInputPeer maps domain peer metadata to the gotd InputPeer variant.
@@ -77,43 +84,78 @@ func buildInputPeer(peerID, accessHash int64, peerType string) (tg.InputPeerClas
 
 // decodeHistory converts the gotd response to domain messages, dropping
 // non-Message entries.
-func decodeHistory(res tg.MessagesMessagesClass, chatID int64, limit int) []domain.Message {
+func decodeHistory(res tg.MessagesMessagesClass, chatID int64, limit int, self *Self) []domain.Message {
 	mod, ok := res.AsModified()
 	if !ok {
 		return nil
 	}
 	raw := mod.GetMessages()
+	dir := directoryOf(mod.GetUsers(), mod.GetChats())
 	out := make([]domain.Message, 0, len(raw))
 	for _, mc := range raw {
-		m, ok := mc.(*tg.Message)
-		if !ok {
-			continue
+		switch m := mc.(type) {
+		case *tg.Message:
+			out = append(out, convertMessage(m, chatID, self, dir))
+		case *tg.MessageService:
+			out = append(out, convertService(m, chatID, self))
 		}
-		out = append(out, convertMessage(m, chatID))
 	}
 	_ = limit
 	return out
 }
 
-func convertMessage(m *tg.Message, chatID int64) domain.Message {
-	var replyTo int64
-	if rt, ok := m.GetReplyTo(); ok {
-		if hdr, ok := rt.(*tg.MessageReplyHeader); ok {
-			if id, ok := hdr.GetReplyToMsgID(); ok {
-				replyTo = int64(id)
-			}
-		}
-	}
+func convertMessage(m *tg.Message, chatID int64, self *Self, dir nameDirectory) domain.Message {
+	replyTo := replyToOf(m)
 	return domain.Message{
-		ID:       int64(m.ID),
-		ChatID:   chatID,
-		FromID:   senderOf(m, chatID),
-		Date:     time.Unix(int64(m.Date), 0).UTC(),
-		Text:     m.Message,
-		ReplyTo:  replyTo,
-		Media:    MediaFromMessage(m),
-		Outgoing: m.Out,
+		ID:        int64(m.ID),
+		ChatID:    chatID,
+		FromID:    senderOf(m, chatID),
+		Date:      time.Unix(int64(m.Date), 0).UTC(),
+		Text:      messageText(m),
+		ReplyTo:   replyTo,
+		Media:     MediaFromMessage(m),
+		Outgoing:  m.Out || self.Owns(chatID),
+		Reactions: ReactionsFromMessage(m),
+		Entities:  EntitiesFromMessage(m),
+		EditDate:  editDateOf(m),
+		Buttons:   ButtonsFromMessage(m),
+		Forwarded: forwardOf(m, dir),
+		Pinned:    m.Pinned,
 	}
+}
+
+// editDateOf is when the message was last rewritten, or the zero time.
+func editDateOf(m *tg.Message) time.Time {
+	if d, ok := m.GetEditDate(); ok && d != 0 {
+		return time.Unix(int64(d), 0).UTC()
+	}
+	return time.Time{}
+}
+
+// replyToOf names the message m answers, or 0.
+//
+// Pulled out of the history converter because the live path needs the same
+// answer: a reply that arrived as an update had no parent until the chat was
+// reopened, so the quoted line and the "go to what this answers" gesture
+// both went missing on exactly the messages a user is most likely to try
+// them on — the ones that just came in.
+func replyToOf(m *tg.Message) int64 {
+	if m == nil {
+		return 0
+	}
+	rt, ok := m.GetReplyTo()
+	if !ok {
+		return 0
+	}
+	hdr, ok := rt.(*tg.MessageReplyHeader)
+	if !ok {
+		return 0
+	}
+	id, ok := hdr.GetReplyToMsgID()
+	if !ok {
+		return 0
+	}
+	return int64(id)
 }
 
 // senderOf names the sender of m, filling in what the wire format leaves out.

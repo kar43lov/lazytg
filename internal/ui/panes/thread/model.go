@@ -84,6 +84,30 @@ type Model struct {
 	// download and open act on. Held as an id rather than an index
 	// because everything under it moves; see cursor.go.
 	cursorID int64
+	// buttonCursor is which key of the cursor message's keyboard Enter
+	// would press, in reading order. Reset when the cursor moves.
+	buttonCursor int
+
+	// inline holds pictures drawn under messages, keyed by message id.
+	// See inline.go.
+	inline map[int64]inlineImage
+
+	// unreadCount is how many messages were unread when this chat was
+	// opened, and unreadFrom the message the divider sits above. Both are
+	// worked out once and left alone; see unread.go.
+	unreadCount int
+	unreadFrom  int64
+	// readOutboxMaxID is the newest of your messages the other side has
+	// read; it decides which outgoing rows get the second tick.
+	readOutboxMaxID int64
+	// selfChat is the chat with yourself, where no tick is drawn: every
+	// message there is yours, and nobody else is going to read it.
+	selfChat bool
+
+	// marked holds the ids the user has picked out for an action that
+	// takes several — copying a run of messages, deleting them. Ids for
+	// the same reason as the cursor; see marks.go.
+	marked map[int64]bool
 
 	// now supplies the current time to the date separators, which need
 	// it to say "Today" and "Yesterday". Injectable so a golden test of
@@ -208,6 +232,10 @@ func (m Model) OpenChat(chatID int64) (Model, tea.Cmd) {
 	m = m.dropSelection()
 	m.chatID = chatID
 	m.messages = nil
+	m.unreadCount = 0
+	m.unreadFrom = 0
+	m.readOutboxMaxID = 0
+	m.selfChat = false
 	m.outgoing = nil
 	m.pendingServerIDs = make(map[int64]string)
 	m.finalizedLocalIDs = make(map[string]struct{})
@@ -316,8 +344,9 @@ func (m Model) SetSize(width, height int) Model {
 	if w < minViewportWidth {
 		w = minViewportWidth
 	}
-	// Reserve one row for the header.
-	h := height - 1
+	// Reserve one row for the header, and one for the pinned bar while
+	// there is something pinned to show.
+	h := height - 1 - m.barRows()
 	if h < minViewportHeight {
 		h = minViewportHeight
 	}
@@ -512,8 +541,23 @@ func (m Model) renderContent() (string, []blockSpan) {
 			appendSeparator(renderDaySeparator(msg.Date, now, width))
 			lastDay = msg.Date
 		}
-		rendered, mediaLine := formatMessageBlock(msg, width, nil,
-			resolveAuthor(msg, m.chatID, m.private, m.authorNames), msg.ID == cursorID)
+		// The unread rule sits below the day separator when both fall in
+		// the same place: the date is context for what follows, the rule
+		// is where the reader is going, and the reader should end up
+		// under it.
+		if m.unreadAbove(msg) {
+			appendSeparator(renderUnreadRule(m.unreadCount, width))
+		}
+		rendered, mediaLine := formatMessageBlockKeys(msg, width, nil,
+			resolveAuthor(msg, m.chatID, m.private, m.authorNames),
+			msg.ID == cursorID, m.marked[msg.ID], m.tickPointer(),
+			m.chosenIndexFor(msg, msg.ID == cursorID))
+		// A drawn picture is appended to its message's block so it moves
+		// with the message and is covered by the same span — a click on it
+		// means that message, which is what the user is pointing at.
+		if block, rows := m.imageBlock(msg.ID); rows > 0 {
+			rendered += "\n" + block
+		}
 		appendBlock(rendered, msg.ID, mediaLine)
 	}
 	for _, out := range m.outgoing {
@@ -557,6 +601,8 @@ func (m Model) SwitchTo(chatID int64) Model {
 	m = m.dropSelection()
 	m.chatID = chatID
 	m.messages = nil
+	m.unreadCount = 0
+	m.unreadFrom = 0
 	m.outgoing = nil
 	m.pendingServerIDs = make(map[int64]string)
 	m.finalizedLocalIDs = make(map[string]struct{})

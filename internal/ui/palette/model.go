@@ -116,6 +116,15 @@ func (m Model) Open() (Model, tea.Cmd) {
 	return m, tea.Batch(focusCmd, loadCmd)
 }
 
+// SetPlaceholder names what picking a chat will do. The palette is the
+// chat switcher most of the time, but a forward opens the same list, and a
+// prompt that still says "switch chat" over a list that is about to send
+// something is the wrong promise.
+func (m Model) SetPlaceholder(s string) Model {
+	m.input.Placeholder = s
+	return m
+}
+
 // Close hides the palette and blurs the textinput. The candidate
 // list is preserved so a subsequent Open without intervening data
 // changes can short-circuit the reload (currently the load fires

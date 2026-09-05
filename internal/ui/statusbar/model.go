@@ -109,10 +109,13 @@ func (d Download) Total() int64 { return d.total }
 type Model struct {
 	AccountAlias string
 	ChatTitle    string
-	UnreadTotal  int
-	ConnState    string
-	StorageMode  string
-	FloodWait    time.Duration
+	// Presence is what the other party of the open private chat is doing
+	// — "online", or when they were last — shown after the title.
+	Presence    string
+	UnreadTotal int
+	ConnState   string
+	StorageMode string
+	FloodWait   time.Duration
 
 	// DBSizeMB, when > 0, renders an inline "⚠ DB N.N GB" warning chip
 	// next to the storage cell. The chip stays visible until the
@@ -125,6 +128,22 @@ type Model struct {
 	// of every other Model setter holds — callers never observe a
 	// partially-mutated map across goroutine boundaries.
 	downloads map[int64]Download
+
+	// Notice is a one-line answer to something the user just did —
+	// "copied 3 messages", "delete failed: …". It takes the place of the
+	// chat title, which is the one cell the eye is already on, and stays
+	// until something replaces it.
+	//
+	// No timer: a notice that erases itself after N seconds is a notice
+	// the user misses while looking at the message they just deleted, and
+	// the next action overwrites it anyway.
+	Notice string
+
+	// Typing is what the other side is doing right now — "typing…",
+	// "recording a voice message…". Empty almost always, and it is the one
+	// field here that expires on its own: the app clears it on a timer,
+	// because Telegram's "stopped" notification is not reliably sent.
+	Typing string
 
 	// uploads is the upload-side twin of downloads, keyed by the
 	// in-process UploadID UploadService assigns. Same copy-on-write
@@ -181,6 +200,19 @@ func (m Model) renderLeft(budget int) string {
 	if chat == "" {
 		chat = "-"
 	}
+	if m.Presence != "" {
+		chat = chat + " · " + m.Presence
+	}
+	if m.Typing != "" {
+		// Somebody writing to you right now outranks the chat title,
+		// which has not changed and is on screen anyway.
+		chat = chat + " · " + m.Typing
+	}
+	if m.Notice != "" {
+		// A notice is the answer to something the user just did, so it
+		// outranks both. It is transient; the indicator comes back.
+		chat = m.Notice
+	}
 
 	full := alias + " | " + chat
 	if lipgloss.Width(full) <= budget {
@@ -200,6 +232,25 @@ func (m Model) renderLeft(budget int) string {
 		return truncate(alias, aliasBudget) + ellipsis
 	}
 	return truncate(alias, budget)
+}
+
+// SetTyping replaces the "somebody is composing something" indicator. An
+// empty string clears it.
+//
+// Held here rather than composed by the caller because the status bar owns
+// the budget: the line is truncated to fit the terminal, and a caller
+// splicing its own text into the title would be truncated as one blob.
+func (m Model) SetTyping(s string) Model {
+	m.Typing = s
+	return m
+}
+
+// SetNotice replaces the notice line. An empty string clears it, which is
+// what a chat switch does: the answer to "copied 3 messages" belongs to the
+// conversation it happened in.
+func (m Model) SetNotice(s string) Model {
+	m.Notice = s
+	return m
 }
 
 // renderRight composes "unread N | conn[: reason] | storage" with colour on

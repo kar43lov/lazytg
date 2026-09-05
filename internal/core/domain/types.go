@@ -78,11 +78,39 @@ type Chat struct {
 	LastMessageDate time.Time
 	UnreadCount     int
 	Pinned          bool
+	// MutedUntil is when notifications resume, zero when the chat is not
+	// muted. Telegram's "forever" is a date in 2038. See migration 0015.
+	MutedUntil time.Time
+	// UnreadMark is the dot a user puts on a chat by hand to come back to
+	// it; it is separate from the count, and a chat can carry it with zero
+	// unread messages.
+	UnreadMark bool
+	// Online and LastSeen describe the other party of a private chat.
+	// LastSeen is zero when Telegram does not say, which is what it reports
+	// for people who hide it.
+	Online   bool
+	LastSeen time.Time
+	// ReadOutboxMaxID is the newest of your own messages the other side
+	// has read: everything you sent with an id at or below it gets the
+	// second tick. Zero when nothing was read, or nothing was sent.
+	ReadOutboxMaxID int64
+	// Draft is what was left half-written in this chat on another device,
+	// as markup. It rides on the dialog page and is not stored: the server
+	// keeps it, and the sync brings it back on every start.
+	Draft string
+	// Archived is the chat's place in Telegram's archive folder: out of
+	// the main list and the folder tabs, in the Archive tab.
+	Archived bool
 
 	// LastMessagePreview is the text of the chat's newest cached message,
 	// filled by the read path only (GetChats) and ignored on write. It is a
 	// display convenience, not part of the stored chat row.
 	LastMessagePreview string
+}
+
+// Muted reports whether notifications for the chat are off at now.
+func (c Chat) Muted(now time.Time) bool {
+	return !c.MutedUntil.IsZero() && c.MutedUntil.After(now)
 }
 
 // Message is a stored message belonging to a Chat. RawBlob holds the
@@ -104,6 +132,51 @@ type Message struct {
 	// thread pane cannot tell the reader's own messages from the other
 	// party's. See migration 0010.
 	Outgoing bool
+	// Reactions is who reacted and with what, newest counts first as
+	// Telegram orders them. Empty for the overwhelming majority of
+	// messages, so it costs nothing to carry. See migration 0012.
+	Reactions []Reaction
+	// Entities is the formatting Telegram attached to Text — bold, code, a
+	// link behind a word — as rune-indexed spans. See migration 0014.
+	Entities []Entity
+	// EditDate is when the message was last rewritten, zero when it never
+	// was. The header says "edited" from it, which is the one thing a
+	// reader wants to know about a message that changed under them.
+	EditDate time.Time
+	// Buttons is the keyboard a bot put under the message, rows of keys;
+	// nil for the ordinary message that has none.
+	Buttons [][]Button
+	// Forwarded is where the message came from when somebody forwarded
+	// it; nil for a message written where it stands.
+	Forwarded *Forward
+	// Pinned is the flag every client draws a bar from.
+	Pinned bool
+}
+
+// Reaction is one emoji on a message, with how many people used it.
+//
+// Only standard emoji reactions are represented. A premium custom reaction is
+// a document id rather than a character: showing one means downloading and
+// drawing a sticker, and until that exists a count attached to nothing is
+// worse than the reaction being absent.
+type Reaction struct {
+	// Emoticon is the character itself, as Telegram sends it.
+	Emoticon string
+	// Count is how many people reacted with it.
+	Count int
+	// Chosen marks the reaction this account sent. It is the bit that
+	// decides whether pressing the key adds a reaction or takes it back.
+	Chosen bool
+}
+
+// ChosenReaction returns the emoji this account reacted with, or "".
+func (m Message) ChosenReaction() string {
+	for _, r := range m.Reactions {
+		if r.Chosen {
+			return r.Emoticon
+		}
+	}
+	return ""
 }
 
 // MediaKind discriminates the variant of a Telegram media object so the
@@ -145,6 +218,18 @@ const (
 	MediaKindSticker MediaKind = "sticker"
 	// MediaKindAnimation is a GIF — MP4 without sound, marked animated.
 	MediaKindAnimation MediaKind = "animation"
+	// The kinds below are attachments without a file: nothing to download,
+	// and Filename carries what there is to show. A location is "lat,long",
+	// a contact is the name and number, a poll its question, a dice its
+	// value.
+	MediaKindLocation MediaKind = "location"
+	MediaKindContact  MediaKind = "contact"
+	MediaKindPoll     MediaKind = "poll"
+	MediaKindDice     MediaKind = "dice"
+	// MediaKindWebPage is the link preview Telegram attaches to a message
+	// with a link: Filename carries the site and title, MimeType the
+	// address. No file, nothing to download; "o" opens the address.
+	MediaKindWebPage MediaKind = "webpage"
 )
 
 // IsPhoto reports whether the kind is transported as a photo rather than
@@ -183,6 +268,10 @@ type MediaInfo struct {
 	MimeType      string
 	ThumbSize     string
 	Duration      int
+	// Waveform is the shape of a voice message, as Telegram sends it:
+	// five bits per sample, packed. Nil for everything else, and for
+	// voice messages stored before migration 0013.
+	Waveform []byte
 }
 
 // Peer is the resolved MTProto access metadata for a chat. AccessHash is
@@ -193,4 +282,99 @@ type Peer struct {
 	ID         int64
 	Type       ChatType
 	AccessHash int64
+}
+
+// Folder is a chat folder — what the MTProto API calls a dialog filter.
+//
+// Telegram stores the definition and every client decides what to do with it,
+// which is why this type carries rules rather than a list of chats: the
+// membership of a folder is computed from the account's chats each time, and
+// a chat that arrives after the folder was defined belongs to it immediately
+// if it matches.
+//
+// One thing is deliberately not modelled. A folder
+// can name a bot or a contact, categories the local mirror has no column for
+// — see Matches for what that costs.
+type Folder struct {
+	ID       int64
+	Title    string
+	Emoticon string
+
+	// Pinned, Include and Exclude are chat ids named explicitly in the
+	// folder. Exclude wins over everything, which is what the other
+	// clients do: a chat you removed from a folder stays removed even
+	// when it matches a category.
+	Pinned  []int64
+	Include []int64
+	Exclude []int64
+
+	// The category switches. A folder with none of them set is exactly
+	// its Include list.
+	Contacts    bool
+	NonContacts bool
+	Groups      bool
+	Broadcasts  bool
+	Bots        bool
+
+	ExcludeMuted    bool
+	ExcludeRead     bool
+	ExcludeArchived bool
+
+	// ExplicitOnly marks a shared folder, whose membership is its list and
+	// nothing else. The category switches do not exist on that variant, and
+	// treating their zero values as "no categories" would be right by
+	// accident rather than by intent.
+	ExplicitOnly bool
+}
+
+// Matches reports whether a chat belongs to this folder.
+//
+// What it cannot do is worth stating plainly, because the alternative is a
+// folder that quietly shows the wrong chats. Telegram's Contacts and
+// NonContacts switches split private chats by whether the other party is in
+// the user's address book, and lazytg does not sync contacts — so a folder
+// using either switch matches every private chat. That is over-inclusive
+// rather than under-inclusive on purpose: a chat missing from a folder is
+// invisible, while an extra one is merely noise the user can see and judge.
+// Bots have the same problem and the same resolution.
+func (f Folder) Matches(c Chat) bool {
+	for _, id := range f.Exclude {
+		if id == c.ID {
+			return false
+		}
+	}
+	for _, id := range f.Include {
+		if id == c.ID {
+			return true
+		}
+	}
+	for _, id := range f.Pinned {
+		if id == c.ID {
+			return true
+		}
+	}
+	if f.ExplicitOnly {
+		return false
+	}
+	if f.ExcludeRead && c.UnreadCount == 0 {
+		return false
+	}
+	switch c.Type {
+	case ChatTypePrivate:
+		return f.Contacts || f.NonContacts || f.Bots
+	case ChatTypeGroup, ChatTypeSupergroup:
+		return f.Groups
+	case ChatTypeChannel:
+		return f.Broadcasts
+	}
+	return false
+}
+
+// Label is what the folder tab shows: its emoji and its name, or just the
+// name when the folder has no emoji.
+func (f Folder) Label() string {
+	if f.Emoticon == "" {
+		return f.Title
+	}
+	return f.Emoticon + " " + f.Title
 }

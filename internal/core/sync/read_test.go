@@ -334,3 +334,40 @@ func TestReadService_IgnoresMessagesOutsideTheOpenChat(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// An edit of a message in the open chat is not a new message to acknowledge:
+// the receipt was sent when it first arrived, and a second one is a request
+// no official client makes.
+func TestReadService_IgnoresEdits(t *testing.T) {
+	t.Parallel()
+	bus := events.New()
+	marker := &fakeMarker{}
+	store := &fakeReadStore{newest: []domain.Message{{ID: 30, ChatID: 7}}}
+	svc := NewReadService(marker, store, bus, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := svc.Start(ctx)
+
+	bus.Publish(events.ChatOpened{ChatID: 7})
+	waitFor(t, "the open to be acknowledged", func() bool { return len(marker.snapshot()) == 1 })
+
+	bus.Publish(events.MessageReceived{ChatID: 7, MessageID: 31, Date: time.Now(), Edited: true})
+	bus.Publish(events.MessageReceived{ChatID: 7, MessageID: 32, Date: time.Now()})
+	waitFor(t, "the genuinely new message to be acknowledged", func() bool {
+		for _, c := range marker.snapshot() {
+			if c.maxID == 32 {
+				return true
+			}
+		}
+		return false
+	})
+	for _, c := range marker.snapshot() {
+		if c.maxID == 31 {
+			t.Fatalf("an edit was acknowledged as a new message: %+v", marker.snapshot())
+		}
+	}
+
+	cancel()
+	<-done
+}

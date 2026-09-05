@@ -32,8 +32,11 @@ const sendTimeoutSeconds = 10
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch typed := msg.(type) {
 	case SetChatMsg:
-		m.chatID = typed.ChatID
-		m.replyTo = nil
+		// The draft goes with the chat it was written for: before this
+		// the box simply kept its contents, so a half-written message
+		// followed the user into somebody else's conversation and left
+		// on the next Enter.
+		m.switchChat(typed.ChatID)
 		// The pending-draft tracker is per-chat: switching chats means
 		// the user has moved on and any in-flight Failed event for the
 		// previous chat must not re-populate the new composer with
@@ -41,8 +44,20 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// matching localID and silently no-ops.
 		m.inFlight = make(map[string]inFlightDraft)
 		return m, nil
+	case InsertTextMsg:
+		if typed.Text != "" {
+			m.textarea.InsertString(typed.Text)
+			m.clearEmojiCompletion()
+		}
+		return m, nil
 	case SetReplyMsg:
 		m.replyTo = typed.Msg
+		return m, nil
+	case StartEditMsg:
+		m.startEdit(typed)
+		return m, nil
+	case CancelEditMsg:
+		m.cancelEdit()
 		return m, nil
 	case SendDispatchedMsg:
 		// Remember the dispatched body + reply pointer keyed by
@@ -50,6 +65,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// keep ours so an async Failed event from the bus can restore
 		// the textarea without an extra trip through the thread.
 		m.inFlight[typed.LocalID] = inFlightDraft{text: typed.Text, replyTo: typed.ReplyToMsg}
+		return m, nil
+	case events.DraftChanged:
+		m.applyServerDraft(typed)
 		return m, nil
 	case events.OutgoingMessageStateChanged:
 		return m.applyOutgoingState(typed)
@@ -74,6 +92,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if cmd, handled := m.handleChord(typed); handled {
 			return m, cmd
 		}
+		// Any key that is not another completion press ends the cycle:
+		// whatever emoji is in the box is now part of the message, and a
+		// later Tab should start from what is typed rather than resume a
+		// walk the user has moved on from.
+		m.clearEmojiCompletion()
 	}
 
 	var cmd tea.Cmd
@@ -86,13 +109,28 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 // the key falls through to the textarea.
 func (m *Model) handleChord(k tea.KeyPressMsg) (tea.Cmd, bool) {
 	switch {
+	case m.editing != nil && k.String() == "esc":
+		// Esc leaves edit mode before anything else looks at the key:
+		// the mode displaced a draft, and the way out has to be the
+		// key every user already tries first.
+		m.cancelEdit()
+		return nil, true
 	case key.Matches(k, m.keymap.Send):
+		if m.editing != nil {
+			return m.submitEdit(), true
+		}
 		return m.handleSend(), true
 	case key.Matches(k, m.keymap.Newline):
 		m.textarea.InsertString("\n")
 		return nil, true
 	case key.Matches(k, m.keymap.Reply):
 		return m.requestReply(), true
+	case key.Matches(k, m.keymap.CompleteEmoji):
+		// Tab reaches the composer only when the app decided the
+		// composer wants it — see App.emojiCompletionPending. If the
+		// completion finds nothing the key is not consumed, so Tab still
+		// cycles focus when there is no shortcode under the cursor.
+		return nil, m.completeEmoji()
 	case key.Matches(k, m.keymap.OpenEditor):
 		return m.requestEditor(), true
 	case isHistoryPrev(k):

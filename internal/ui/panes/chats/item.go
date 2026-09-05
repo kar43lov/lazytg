@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/lipgloss/v2"
+
 	"github.com/kar43lov/lazytg/internal/core/domain"
 	"github.com/kar43lov/lazytg/internal/ui/safetext"
 )
@@ -29,6 +31,19 @@ type ChatItem struct {
 	unreadCount     int
 	pinned          bool
 	chatType        domain.ChatType
+	mutedUntil      time.Time
+	unreadMark      bool
+	online          bool
+	lastSeen        time.Time
+	readOutboxMaxID int64
+	username        string
+	draft           string
+	archived        bool
+	// width is the room the row has, set when the list is laid out. Zero
+	// means "unknown", and the row then carries no right-hand column.
+	width int
+	// now is the clock the row is drawn against; zero means time.Now.
+	now time.Time
 }
 
 // NewChatItem builds a ChatItem from the storage-layer domain.Chat plus an
@@ -59,8 +74,38 @@ func NewChatItem(c domain.Chat, preview string) ChatItem {
 		unreadCount:     c.UnreadCount,
 		pinned:          c.Pinned,
 		chatType:        c.Type,
+		mutedUntil:      c.MutedUntil,
+		unreadMark:      c.UnreadMark,
+		online:          c.Online,
+		lastSeen:        c.LastSeen,
+		readOutboxMaxID: c.ReadOutboxMaxID,
+		username:        c.Username,
+		archived:        c.Archived,
 	}
 }
+
+// Archived reports the chat's place in the archive folder.
+func (i ChatItem) Archived() bool { return i.archived }
+
+// Username is the public handle of the chat, empty when it has none.
+func (i ChatItem) Username() string { return i.username }
+
+// ReadOutboxMaxID is the newest of your messages the other side has read.
+func (i ChatItem) ReadOutboxMaxID() int64 { return i.readOutboxMaxID }
+
+// Muted reports whether the chat's notifications are off at now.
+func (i ChatItem) Muted(now time.Time) bool {
+	return !i.mutedUntil.IsZero() && i.mutedUntil.After(now)
+}
+
+// UnreadMark reports the by-hand unread dot.
+func (i ChatItem) UnreadMark() bool { return i.unreadMark }
+
+// Online reports whether the other party of a private chat is online.
+func (i ChatItem) Online() bool { return i.online }
+
+// LastSeen is when the other party was last online, zero when unknown.
+func (i ChatItem) LastSeen() time.Time { return i.lastSeen }
 
 // ID returns the underlying chat id (Telegram peer id).
 func (i ChatItem) ID() int64 { return i.id }
@@ -87,20 +132,132 @@ func (i ChatItem) Type() domain.ChatType { return i.chatType }
 func (i ChatItem) Title() string {
 	var b strings.Builder
 	if i.pinned {
-		b.WriteString("[📌] ")
+		b.WriteString("📌 ")
 	}
 	b.WriteString(i.name)
-	if i.unreadCount > 0 {
-		fmt.Fprintf(&b, " (%d)", i.unreadCount)
-	}
-	return b.String()
+	return padBetween(b.String(), chatTimeLabel(i.lastMessageDate, i.clock()), i.width)
 }
 
 // Description implements list.DefaultItem and returns the last-message
 // preview truncated to previewMaxRunes runes. Truncation is rune-aware
 // (Cyrillic/CJK safe) and appends an ellipsis when it actually shortens.
 func (i ChatItem) Description() string {
-	return truncateRunes(i.preview, previewMaxRunes)
+	var badge strings.Builder
+	switch {
+	case i.unreadCount > 0:
+		fmt.Fprintf(&badge, "(%d)", i.unreadCount)
+	case i.unreadMark:
+		badge.WriteString("●")
+	}
+	if i.Muted(i.clock()) {
+		if badge.Len() > 0 {
+			badge.WriteString(" ")
+		}
+		badge.WriteString("🔕")
+	}
+	left := truncateRunes(i.preview, previewMaxRunes)
+	if i.draft != "" {
+		// A draft outranks the last message, the way it does in every
+		// official client: the row is about what the user was doing here.
+		left = draftStyle.Render("Draft:") + " " + truncateRunes(i.draft, previewMaxRunes)
+	}
+	return padBetween(left, badge.String(), i.width)
+}
+
+// draftStyle paints the word that says the preview is your own unsent
+// text, in the red every official client uses for it.
+var draftStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+
+// withDraft is the row told what is half-written in it.
+func (i ChatItem) withDraft(text string) ChatItem {
+	i.draft = safetext.CleanLine(text)
+	return i
+}
+
+// Draft is the half-written text the row shows, empty when there is none.
+func (i ChatItem) Draft() string { return i.draft }
+
+// withWidth is the row told how much room it has.
+func (i ChatItem) withWidth(w int) ChatItem {
+	i.width = w
+	return i
+}
+
+func (i ChatItem) clock() time.Time {
+	if i.now.IsZero() {
+		return time.Now()
+	}
+	return i.now
+}
+
+// padBetween lays left and right at the two ends of width columns. With no
+// width known the two are simply joined, and when they do not both fit the
+// left side gives way: the name can be cut, the time cannot.
+func padBetween(left, right string, width int) string {
+	if right == "" {
+		return left
+	}
+	if width <= 0 {
+		return left + "  " + right
+	}
+	rw := lipgloss.Width(right)
+	room := width - rw - 1
+	if room < 1 {
+		return truncateCells(right, width)
+	}
+	if lipgloss.Width(left) > room {
+		left = truncateCells(left, room)
+	}
+	gap := width - lipgloss.Width(left) - rw
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + right
+}
+
+// truncateCells cuts s to width terminal cells with an ellipsis, counting
+// wide characters as the two cells they take.
+func truncateCells(s string, width int) string {
+	if lipgloss.Width(s) <= width {
+		return s
+	}
+	if width <= 1 {
+		return "…"
+	}
+	var b strings.Builder
+	used := 0
+	for _, r := range s {
+		w := lipgloss.Width(string(r))
+		if used+w > width-1 {
+			break
+		}
+		b.WriteRune(r)
+		used += w
+	}
+	return b.String() + "…"
+}
+
+// chatTimeLabel is how the list dates a chat's last message: the clock
+// today, "Yesterday", the weekday inside the week, the date beyond it.
+// Local time, like the thread's headers.
+func chatTimeLabel(at, now time.Time) string {
+	if at.IsZero() {
+		return ""
+	}
+	at, now = at.Local(), now.Local()
+	day := func(t time.Time) time.Time { return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location()) }
+	switch days := int(day(now).Sub(day(at)).Hours() / 24); {
+	case days <= 0:
+		return at.Format("15:04")
+	case days == 1:
+		return "Yesterday"
+	case days < 7:
+		return at.Format("Mon")
+	case at.Year() == now.Year():
+		return at.Format("02.01")
+	default:
+		return at.Format("02.01.06")
+	}
 }
 
 // FilterValue implements list.Item. The built-in fuzzy filter matches
@@ -120,4 +277,28 @@ func truncateRunes(s string, n int) string {
 		return s
 	}
 	return string(runes[:n-1]) + "…"
+}
+
+// Chat rebuilds the domain view of this row.
+//
+// The item keeps the fields it renders rather than the whole record, so a
+// folder — which asks questions about type and unread state, not about how
+// the row looks — needs them handed back in the shape its rules are written
+// against.
+func (i ChatItem) Chat() domain.Chat {
+	return domain.Chat{
+		ID:              i.id,
+		Title:           i.name,
+		Type:            i.chatType,
+		UnreadCount:     i.unreadCount,
+		Pinned:          i.pinned,
+		LastMessageDate: i.lastMessageDate,
+		MutedUntil:      i.mutedUntil,
+		UnreadMark:      i.unreadMark,
+		Online:          i.online,
+		LastSeen:        i.lastSeen,
+		ReadOutboxMaxID: i.readOutboxMaxID,
+		Username:        i.username,
+		Archived:        i.archived,
+	}
 }

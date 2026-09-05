@@ -55,6 +55,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.applyIncoming(typed)
 	case events.MessagesDeleted:
 		return m.applyDeleted(typed)
+	case events.ChatReadOutbox:
+		return m.applyReadOutbox(typed)
+	case events.MessagesPinned:
+		return m.applyPinned(typed)
 	case events.OutgoingMessageStateChanged:
 		return m.applyOutgoingState(typed)
 	case tea.KeyPressMsg:
@@ -82,12 +86,20 @@ func (m Model) applyLoaded(msg messagesLoadedMsg) (Model, tea.Cmd) {
 	}
 	m.messages = msg.messages
 	m.hasMore = msg.hasMore
+	if m.barRows() > 0 {
+		m = m.relayout()
+	}
 	// Initial load lands at the chat's tail by definition (offset=0
 	// orders by date desc), so forward pagination is meaningless.
 	m.hasNewer = false
 	m.forwardCursorID = 0
 	m.loading = false
 	m.recomputeOldestID()
+	// The boundary is worked out here, once, and then left alone:
+	// acknowledging the chat clears the count within a second of opening
+	// it, and a divider recomputed from that would vanish while the reader
+	// was still looking at it.
+	m = m.locateUnread()
 	m.viewport.SetContent(m.renderAll())
 	m.viewport.GotoBottom()
 	return m, nil
@@ -214,20 +226,33 @@ func (m Model) applyIncoming(ev events.MessageReceived) (Model, tea.Cmd) {
 	if ev.ChatID != m.chatID {
 		return m, nil
 	}
+	if ev.Edited {
+		// The row is replaced where it stands, the way a local edit is. A
+		// message not loaded here is left alone: it will come back rewritten
+		// when its page does, and inserting it now would put it in a window
+		// it does not belong to.
+		// The keyboard travels with the edit: replacing it is how most
+		// bots answer a press, and an edit that kept the old one would
+		// leave a button on screen the bot has already taken away.
+		return m.ApplyEdit(ev.MessageID, ev.Text, ev.Entities, ev.EditDate).SetButtons(ev.MessageID, ev.Buttons), nil
+	}
 	wasAtBottom := m.viewport.AtBottom()
 	if localID, ok := m.pendingServerIDs[ev.MessageID]; ok {
 		m.outgoing = removeOutgoing(m.outgoing, localID)
 		delete(m.pendingServerIDs, ev.MessageID)
 	}
-	m.messages = insertByDate(m.messages, domain.Message{
-		ID:       ev.MessageID,
-		ChatID:   ev.ChatID,
-		FromID:   ev.FromID,
-		Date:     ev.Date,
-		Text:     ev.Text,
-		Media:    ev.Media,
-		Outgoing: ev.Outgoing,
-	})
+	if i := m.indexOfMessage(ev.MessageID); i >= 0 {
+		// Already here — the same message by another path. Replace rather
+		// than append: two rows with one id is the one thing worse than
+		// a late arrival.
+		msgs := make([]domain.Message, len(m.messages))
+		copy(msgs, m.messages)
+		msgs[i] = messageFromEvent(ev)
+		m.messages = msgs
+		m.viewport.SetContent(m.renderAll())
+		return m, nil
+	}
+	m.messages = insertByDate(m.messages, messageFromEvent(ev))
 	m.recomputeOldestID()
 	m.viewport.SetContent(m.renderAll())
 	if wasAtBottom {
@@ -365,10 +390,18 @@ func (m Model) applyOutgoingState(ev events.OutgoingMessageStateChanged) (Model,
 	case events.OutgoingStatePending:
 		return m, nil
 	case events.OutgoingStateSent:
+		m.finalizedLocalIDs[ev.LocalID] = struct{}{}
+		if ev.ServerID > 0 && m.indexOfMessage(ev.ServerID) >= 0 {
+			// The echo got here first — it can, since the sender announces
+			// the message before the send state is written — so the real
+			// row is already on screen and the optimistic one is done.
+			m.outgoing = removeOutgoing(m.outgoing, ev.LocalID)
+			m.viewport.SetContent(m.renderAll())
+			return m, nil
+		}
 		if ev.ServerID > 0 {
 			m.pendingServerIDs[ev.ServerID] = ev.LocalID
 		}
-		m.finalizedLocalIDs[ev.LocalID] = struct{}{}
 		// If the optimistic row is already present (the common ordering
 		// — ApplyDispatched ran first), flip its state in place. If it
 		// is missing (the inverted race — Sent fired before
@@ -503,9 +536,30 @@ func findOutgoing(list []OutgoingMessage, localID string) (OutgoingMessage, bool
 func (m Model) handleKey(k tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch k.String() {
 	case "up", "k":
+		m.buttonCursor = 0
 		return m.MoveCursor(-1).paginateAfterScroll(nil, false)
 	case "down", "j":
+		m.buttonCursor = 0
 		return m.MoveCursor(1).paginateAfterScroll(nil, true)
+	case "left":
+		if moved, ok := m.moveButton(-1); ok {
+			return moved, nil
+		}
+	case "right":
+		if moved, ok := m.moveButton(1); ok {
+			return moved, nil
+		}
+	case " ", "space":
+		// Space marks the message under the cursor. It is the gesture a
+		// file manager uses for the same job, and it is free here: the
+		// composer is a separate pane, so nothing in the thread is
+		// typing.
+		return m.ToggleMark(), nil
+	case "esc":
+		// One key clears both kinds of "never mind" — a dragged text
+		// selection and a set of marks — because to the user they are
+		// one state: something is picked out and they no longer want it.
+		return m.ClearMarks().ClearSelection(), nil
 	}
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(k)
@@ -699,4 +753,36 @@ func countRenderedLines(msgs []domain.Message, width int) int {
 // so the line estimate is correct for Cyrillic / CJK content.
 func lengthRunes(s string) int {
 	return len([]rune(s))
+}
+
+// indexOfMessage is the position of the message with id in the loaded
+// window, or -1.
+func (m Model) indexOfMessage(id int64) int {
+	for i := range m.messages {
+		if m.messages[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// messageFromEvent is the stored shape of a live arrival. One place, so a
+// field added to the event is added here and nowhere else forgets it.
+func messageFromEvent(ev events.MessageReceived) domain.Message {
+	return domain.Message{
+		ID:        ev.MessageID,
+		ChatID:    ev.ChatID,
+		FromID:    ev.FromID,
+		Date:      ev.Date,
+		Text:      ev.Text,
+		Media:     ev.Media,
+		ReplyTo:   ev.ReplyTo,
+		Reactions: ev.Reactions,
+		Entities:  ev.Entities,
+		EditDate:  ev.EditDate,
+		Outgoing:  ev.Outgoing,
+		Buttons:   ev.Buttons,
+		Forwarded: ev.Forwarded,
+		Pinned:    ev.Pinned,
+	}
 }

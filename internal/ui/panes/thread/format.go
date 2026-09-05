@@ -2,6 +2,7 @@ package thread
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -101,6 +102,29 @@ const cursorMark = "▸"
 
 var cursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
 
+// markMark and markStyle draw a message the user has picked out for an
+// action that takes several. It sits in the same column as the cursor
+// glyph and replaces it while both apply, because they answer different
+// questions — "where am I" and "what have I chosen" — and the cursor is
+// recoverable at a glance from the arrow keys while the marks are not.
+// Yellow (ANSI 3) rather than cyan so the two are distinguishable on a
+// monochrome-ish theme by shape as well as colour.
+const markMark = "✓"
+
+var markStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+
+// reactionStyle is the ordinary reaction; chosenReactionStyle is the one this
+// account sent, which the user has to be able to pick out at a glance because
+// it decides what the react key does next.
+// waveformStyle paints the voice shape. Cyan rather than the metadata grey:
+// it is the only part of the badge line that carries the message itself.
+var waveformStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+
+var (
+	reactionStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	chosenReactionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true)
+)
+
 // boldStyle / italicStyle / codeStyle drive the simple-markdown inline
 // pass. Code uses dim grey on the default background — a real background
 // fill would clash with the surrounding pane lipgloss border.
@@ -142,17 +166,39 @@ func formatMessageAs(msg domain.Message, width int, replyTo *domain.Message, aut
 // block: the body stays where it was, so nothing about wrapping, selection
 // columns or the golden snapshots moves when the cursor passes over a message.
 func formatMessageBlock(msg domain.Message, width int, replyTo *domain.Message, author string, cursor bool) (string, int) {
+	return formatMessageBlockMarked(msg, width, replyTo, author, cursor, false, 0)
+}
+
+// formatMessageBlockMarked is formatMessageBlock with the mark state the
+// multi-select needs. The two are separate so every existing caller — and
+// every existing golden test — keeps its signature: a mark is an addition
+// to the row, not a change to how a row is built.
+func formatMessageBlockMarked(msg domain.Message, width int, replyTo *domain.Message, author string, cursor, marked bool, readMax int64) (string, int) {
+	return formatMessageBlockKeys(msg, width, replyTo, author, cursor, marked, readMax, -1)
+}
+
+// formatMessageBlockKeys is formatMessageBlockMarked with the keyboard's
+// chosen key, for the message under the cursor.
+func formatMessageBlockKeys(msg domain.Message, width int, replyTo *domain.Message, author string, cursor, marked bool, readMax int64, chosenKey int) (string, int) {
 	if width < minBodyWidth {
 		width = minBodyWidth
 	}
 
 	var b strings.Builder
-	if cursor {
+	switch {
+	case marked:
+		b.WriteString(markStyle.Render(markMark) + " ")
+	case cursor:
 		b.WriteString(cursorStyle.Render(cursorMark) + " ")
 	}
-	b.WriteString(renderHeader(msg.Date, author, ""))
+	b.WriteString(renderHeader(msg.Date, author, headerSuffix(msg, readMax)))
 	b.WriteByte('\n')
 	line := 1
+	if origin := forwardedLine(msg.Forwarded); origin != "" {
+		b.WriteString(origin)
+		b.WriteByte('\n')
+		line++
+	}
 
 	if replyTo != nil {
 		b.WriteString(formatReplyHint(*replyTo))
@@ -169,11 +215,76 @@ func formatMessageBlock(msg domain.Message, width int, replyTo *domain.Message, 
 		}
 	}
 
-	body := renderInlineMarkdown(safetext.Clean(msg.Text))
+	body := renderEntities(msg.Text, msg.Entities, cursor)
 	body = wrapText(body, width-2)
 	b.WriteString(body)
+
+	if row := reactionRow(msg.Reactions); row != "" {
+		b.WriteByte('\n')
+		b.WriteString(row)
+	}
+	if keys := renderButtons(msg.Buttons, chosenKey, width); keys != "" {
+		b.WriteByte('\n')
+		b.WriteString(keys)
+	}
 	return b.String(), mediaLine
 }
+
+// reactionRow renders the reactions under a message, or "" when there are
+// none — which is the case for almost every message, so it costs a line only
+// where there is something to show.
+//
+// The one this account sent is boxed. That is the bit the user needs before
+// pressing the key: reacting again with the same emoji takes it back, and
+// without a mark on screen the gesture is a coin flip.
+//
+// A count of one is left off. "👍" already says one person did it, and a
+// column of "👍 1  ❤ 1" is noise where "👍 ❤" is a sentence.
+func reactionRow(rs []domain.Reaction) string {
+	if len(rs) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(rs))
+	hidden := 0
+	for _, r := range rs {
+		if r.Emoticon == "" {
+			continue
+		}
+		if len(parts) == maxShownReactions {
+			hidden = len(rs) - maxShownReactions
+			break
+		}
+		// Both caps are about a string somebody else chose. The count is
+		// capped because a message can carry more reactions than a line
+		// can hold, and the emoticon is truncated because the field is a
+		// string on the wire, not a character — nothing stops a server
+		// putting a paragraph in it. Control characters are already gone
+		// by then; length is the part CleanLine does not answer.
+		label := truncRunes(safetext.CleanLine(r.Emoticon), maxReactionRunes)
+		if r.Count > 1 {
+			label += " " + strconv.Itoa(r.Count)
+		}
+		if r.Chosen {
+			parts = append(parts, chosenReactionStyle.Render("["+label+"]"))
+			continue
+		}
+		parts = append(parts, reactionStyle.Render(" "+label+" "))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	if hidden > 0 {
+		parts = append(parts, reactionStyle.Render(fmt.Sprintf(" +%d ", hidden)))
+	}
+	return strings.Join(parts, " ")
+}
+
+// maxShownReactions caps how many reactions a message shows before the rest
+// become a count, and maxReactionRunes how long one may be.
+const (
+	maxShownReactions = 8
+	maxReactionRunes  = 4
+)
 
 // mediaBadge formats a one-line marker like "[📎 report.pdf, 234 KiB]" so
 // the user can see at a glance that the message has an attachment.
@@ -196,6 +307,9 @@ func mediaBadge(m *domain.MediaInfo) string {
 	if m == nil {
 		return ""
 	}
+	if fileless(m.Kind) {
+		return filelessBadge(m)
+	}
 	var parts []string
 	parts = append(parts, mediaLabel(m))
 	if d := formatDuration(m.Duration); d != "" {
@@ -205,12 +319,51 @@ func mediaBadge(m *domain.MediaInfo) string {
 		parts = append(parts, formatBytes(m.Size))
 	}
 	badge := mediaStyle.Render("[" + mediaIcon(m.Kind) + " " + strings.Join(parts, ", ") + "]")
+	// The waveform goes outside the brackets, between the badge and the
+	// hint: it is the one part of the line that is the message rather than
+	// a description of it.
+	if wave := renderWaveform(m.Waveform); wave != "" {
+		badge += " " + waveformStyle.Render(wave)
+	}
 	return badge + " " + hintStyle.Render("o to open, ctrl+d to save")
 }
 
 // mediaIcon picks the glyph that opens the badge. One per kind, because
 // the icon is what the eye catches when scrolling a thread — a wall of
 // identical paperclips is the state this replaced.
+// fileless reports the kinds that carry no file: nothing to download,
+// nothing to open but a map.
+func fileless(kind domain.MediaKind) bool {
+	switch kind {
+	case domain.MediaKindLocation, domain.MediaKindContact, domain.MediaKindPoll, domain.MediaKindDice, domain.MediaKindWebPage:
+		return true
+	}
+	return false
+}
+
+// filelessBadge draws an attachment that is not a file: a place, a card, a
+// poll, a dice. No size, no download hint; a map for the place.
+func filelessBadge(m *domain.MediaInfo) string {
+	label := safetext.CleanLine(m.Filename)
+	switch m.Kind {
+	case domain.MediaKindLocation:
+		if venue := safetext.CleanLine(m.MimeType); venue != "" {
+			label = venue + ", " + label
+		}
+		return mediaStyle.Render("[📍 "+label+"]") + " " + hintStyle.Render("o to open the map")
+	case domain.MediaKindContact:
+		return mediaStyle.Render("[👤 " + label + "]")
+	case domain.MediaKindPoll:
+		return mediaStyle.Render("[📊 poll]")
+	case domain.MediaKindDice:
+		return mediaStyle.Render("[🎲 " + label + "]")
+	case domain.MediaKindWebPage:
+		return mediaStyle.Render("[🔗 "+truncRunes(label, 80)+"]") + " " + hintStyle.Render("o to open")
+	default:
+		return mediaStyle.Render("[" + mediaIcon(m.Kind) + " " + label + "]")
+	}
+}
+
 func mediaIcon(kind domain.MediaKind) string {
 	switch kind {
 	case domain.MediaKindPhoto:
@@ -312,12 +465,78 @@ var (
 // purpose (storage, tg mapping, search), and formatting that instant as-is
 // prints UTC to a user sitting in another zone. Found on the first live smoke —
 // a message sent at 19:32 MSK rendered as [16:32].
+// noTicks as the read pointer means the chat draws none: the one with
+// yourself, where every message is yours and nobody else reads it.
+const noTicks int64 = -1
+
+// pinnedMark sits in the header of a pinned message.
+const pinnedMark = "📌"
+
+// forwardedLine is what every client draws above forwarded words: who
+// wrote them. The name is somebody else's string and is cleaned like one.
+func forwardedLine(f *domain.Forward) string {
+	if f == nil {
+		return ""
+	}
+	if name := safetext.CleanLine(f.From); name != "" {
+		return timeStyle.Render("↪ forwarded from " + truncRunes(name, 60))
+	}
+	return timeStyle.Render("↪ forwarded")
+}
+
+// readStyle paints the second tick, the one that says the message was
+// read. Blue, the way the official clients draw it.
+var readStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+
 func renderHeader(ts time.Time, author, suffix string) string {
 	head := timeStyle.Render(fmt.Sprintf("[%s]", ts.Local().Format("15:04"))) + " " + nameStyle.Render(safetext.CleanLine(author))
 	if suffix != "" {
 		head += " " + suffix
 	}
 	return head
+}
+
+// headerSuffix is what follows the author in the header: the tick or two
+// on a message you sent, then "edited" when it applies.
+func headerSuffix(msg domain.Message, readMax int64) string {
+	parts := make([]string, 0, 3)
+	if msg.Pinned {
+		parts = append(parts, pinnedMark)
+	}
+	if t := ticks(msg, readMax); t != "" {
+		parts = append(parts, t)
+	}
+	if e := editedSuffix(msg); e != "" {
+		parts = append(parts, e)
+	}
+	return strings.Join(parts, " ")
+}
+
+// ticks is the mark every client draws on a message you sent: one when
+// the server has it, two once the other side has read it. The second
+// depends on one number per chat, the newest of your messages they have
+// read, so a message is read when its id is at or below it. Nothing on
+// somebody else's message — the tick is about your words reaching them,
+// and whether you read theirs is not drawn anywhere.
+func ticks(msg domain.Message, readMax int64) string {
+	if !msg.Outgoing || readMax == noTicks {
+		return ""
+	}
+	if msg.ID <= readMax {
+		return readStyle.Render("✓✓")
+	}
+	return timeStyle.Render("✓")
+}
+
+// editedSuffix is the word every client puts on a message that changed
+// after it was read. Dim, because it is a footnote; present, because a
+// sentence that says something different from what it said an hour ago
+// should admit it.
+func editedSuffix(msg domain.Message) string {
+	if msg.EditDate.IsZero() {
+		return ""
+	}
+	return timeStyle.Render("edited")
 }
 
 // authorLabel maps a from_id to a display string with no directory to consult.

@@ -31,6 +31,19 @@ func (a App) View() tea.View {
 	}
 
 	body := a.renderBody()
+	// The confirmation is drawn over the layout rather than replacing it,
+	// unlike every overlay below: the user is being asked about messages
+	// they can see, and a modal that hides them asks the question without
+	// the context needed to answer it.
+	if a.confirm.Visible() {
+		body = a.overlayConfirm(body)
+	}
+	// The emoji picker is drawn over the layout for the same reason: the
+	// user is picking something to put in a message they are in the middle
+	// of writing, and hiding the draft to choose a smiley is absurd.
+	if a.emojiPicker.Visible() {
+		body = a.overlayBox(body, a.emojiPicker.View())
+	}
 	switch {
 	case a.help.Visible:
 		body = a.help.View(a.width, maxInt(a.height-1, 1))
@@ -75,6 +88,8 @@ func (a App) renderBody() string {
 	inputView := inputStyle(a.focus == FocusInput).
 		Width(a.width).
 		Render(a.input.View())
+	a.status.Presence = a.presenceLabel()
+	a.status.UnreadTotal = a.chats.UnreadTotal()
 	statusView := a.status.View(a.width)
 
 	return lipgloss.JoinVertical(lipgloss.Left, upper, inputView, statusView)
@@ -124,4 +139,20 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// overlayConfirm centres the confirmation box on top of the rendered layout.
+func (a App) overlayConfirm(body string) string {
+	return a.overlayBox(body, a.confirm.View())
+}
+
+// overlayBox centres one rendered box on top of the layout, leaving the
+// layout visible around it.
+func (a App) overlayBox(body, box string) string {
+	if box == "" || a.width <= 0 || a.height <= 0 {
+		return body
+	}
+	return lipgloss.Place(a.width, maxInt(a.height-1, 1),
+		lipgloss.Center, lipgloss.Center, box,
+		lipgloss.WithWhitespaceChars(" "))
 }

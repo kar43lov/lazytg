@@ -48,6 +48,12 @@ Files that may exist inside these directories:
 
 ## Environment variables
 
+| Variable | Effect |
+|----------|--------|
+| `LAZYTG_NOTIFY` | `off` silences the terminal bell that rings for a message in a chat you are not reading. `desktop` rings the bell **and** posts the message to the desktop's notification centre (the chat as the title, the sender and the first line as the body; nothing for muted chats, edits or your own messages). Anything else, or unset, leaves just the bell. |
+| `LAZYTG_NOTIFY_CMD` | With `LAZYTG_NOTIFY=desktop`: a program to post the notification with instead of the platform default (`terminal-notifier` or `osascript` on macOS, `notify-send` elsewhere). The title and the body are appended as two arguments; nothing goes through a shell. |
+
+
 | Variable          | Purpose                                                                                                | Default / required           |
 |-------------------|--------------------------------------------------------------------------------------------------------|------------------------------|
 | `LAZYTG_API_ID`   | Telegram MTProto API ID. Get from <https://my.telegram.org/apps>.                                       | **required** — no lazytg build ships one, releases included |
@@ -137,24 +143,48 @@ bindings are deliberately deferred to v0.2 — see
 [CLAUDE.md → UI/UX-решения](../CLAUDE.md#uiux-решения-после-dialectic-анализа)
 for the rationale.
 
-| TOML key       | Default chord(s)        | Action                         |
-|----------------|-------------------------|--------------------------------|
-| `send`         | `enter`                 | Send the current draft         |
-| `newline`      | `alt+enter`             | Insert a newline in the input  |
-| `reply`        | `ctrl+r`                | Reply to the focused message   |
-| `open_editor`  | `ctrl+e`                | Open `$EDITOR` with the draft  |
-| `toggle_help`  | `?`                     | Toggle the help overlay        |
-| `focus_next`   | `tab`                   | Cycle focus to the next pane   |
-| `focus_prev`   | `shift+tab`             | Cycle focus to the previous pane |
-| `next_chat`    | `ctrl+tab`, `alt+n`     | Open the next chat in the list |
-| `prev_chat`    | `ctrl+shift+tab`, `alt+p` | Open the previous chat       |
-| `scroll_up`    | `ctrl+b`, `pgup`        | Scroll the focused pane up     |
-| `scroll_down`  | `ctrl+f`, `pgdown`      | Scroll the focused pane down   |
-| `search`       | `/`                     | Open the search overlay        |
-| `open_palette` | `ctrl+space`, `ctrl+@`  | Open the command palette       |
-| `download`     | `ctrl+d`                | Download last media in thread  |
-| `attach`       | `ctrl+u`                | Attach (upload) a file         |
-| `quit`         | `ctrl+c`, `ctrl+q`      | Quit                           |
+| TOML key          | Default chord(s)          | Action                                              |
+|-------------------|---------------------------|-----------------------------------------------------|
+| `send`            | `enter`                   | Send the current draft                              |
+| `newline`         | `alt+enter`               | Insert a newline in the input                       |
+| `reply`           | `ctrl+r`                  | Reply to the message at the cursor                  |
+| `open_editor`     | `ctrl+e`                  | Open `$EDITOR` with the draft                       |
+| `toggle_help`     | `?`                       | Toggle the help overlay                             |
+| `focus_next`      | `tab`                     | Cycle focus to the next pane                        |
+| `focus_prev`      | `shift+tab`               | Cycle focus to the previous pane                    |
+| `next_chat`       | `ctrl+tab`, `alt+n`       | Open the next chat in the list                      |
+| `prev_chat`       | `ctrl+shift+tab`, `alt+p` | Open the previous chat                              |
+| `scroll_up`       | `ctrl+b`, `pgup`          | Scroll the focused pane up                          |
+| `scroll_down`     | `ctrl+f`, `pgdown`        | Scroll the focused pane down                        |
+| `search`          | `/`                       | Open the search overlay                             |
+| `open_palette`    | `ctrl+space`, `ctrl+@`    | Open the command palette                            |
+| `download`        | `ctrl+d`                  | Save the attachment at the cursor                   |
+| `open_media`      | `o`                       | Open the attachment at the cursor in the system viewer |
+| `show_image`      | `i`                       | Draw the photo at the cursor inside the thread      |
+| `attach`          | `ctrl+u`                  | Attach (upload) a file                              |
+| `mark_message`    | `space`                   | Mark / unmark the message at the cursor             |
+| `copy_message`    | `y`                       | Copy the marked messages, or the one at the cursor  |
+| `press_button`    | `enter`                   | Press the chosen key of the bot keyboard under the message at the cursor (`←`/`→` pick it) |
+| `copy_link`       | `l`                       | Copy the link to the message at the cursor (`t.me/<username>/<id>` or `t.me/c/<id>/<id>`; none for a private chat or a basic group) |
+| `edit_message`    | `e`                       | Edit your own message at the cursor                 |
+| `delete_msg`      | `d`                       | Delete the marked messages, or the one at the cursor |
+| `forward_message` | `f`                       | Forward them to a chat picked in the palette        |
+| `react_message`   | `r`                       | React to the message at the cursor                  |
+| `jump_to_reply`   | `p`                       | Go to the message this one replies to               |
+| `jump_back`       | `ctrl+o`                  | Back to where you jumped from                       |
+| `next_folder`     | `]`                       | Next Telegram folder                                |
+| `prev_folder`     | `[`                       | Previous Telegram folder                            |
+| `emoji_picker`    | `alt+e`                   | Open the emoji picker                               |
+| `complete_emoji`  | `tab`                     | In the composer: complete the `:shortcode` under the cursor |
+| `mute_chat`       | `m`                       | In the chat list: mute / unmute the highlighted chat |
+| `pin_chat`        | `p`                       | In the chat list: pin / unpin it                    |
+| `toggle_unread`   | `u`                       | In the chat list: mark it read / unread             |
+| `quit`            | `ctrl+c`, `ctrl+q`        | Quit                                                |
+
+Two keys answer to two actions on purpose, told apart by which pane has the
+focus: `tab` completes an emoji shortcode in the composer and cycles focus
+everywhere else; `p` pins in the chat list and follows a reply in the thread.
+Rebinding one of a pair leaves the other alone.
 
 Each key may be a single chord (`ctrl+r`) or any value `parseKey` recognises;
 see `internal/ui/keymap/parse.go` for the named-key dictionary.

@@ -61,6 +61,10 @@ const composerCharLimit = 4096
 // learn the chords just by looking at the screen.
 const emptyHint = "Enter to send, Alt+Enter for newline, Ctrl+E for editor, Ctrl+R to reply"
 
+// editHint replaces it while the composer is rewriting a message, because
+// Enter then means something else entirely.
+const editHint = "editing a message — Enter to save, Esc to cancel"
+
 // placeholder is the text rendered inside the empty textarea body. It
 // uses an em-dash ellipsis so the Unicode profile of the composer is
 // consistent with the status bar's "connecting…" indicator.
@@ -96,6 +100,19 @@ type Model struct {
 	// store-write failure surface and would silently drop everything
 	// else.
 	inFlight map[string]inFlightDraft
+
+	// editing is non-nil while the composer is rewriting a message that
+	// already exists rather than composing a new one. See edit.go.
+	editing *editTarget
+
+	// emoji is non-nil while a `:shortcode` completion is cycling. See
+	// emoji.go.
+	emoji *emojiCompletion
+
+	// drafts holds what was half-written in each chat, so switching
+	// conversations does not carry a message to the wrong person. See
+	// drafts.go.
+	drafts map[int64]draft
 }
 
 // inFlightDraft is the state the input pane needs to rebuild a textarea

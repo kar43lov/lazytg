@@ -52,10 +52,24 @@ const replyPreviewLimit = 50
 // When the user has typed something the row is left blank so the body
 // gets the visual real estate.
 func (m Model) hintRow(width int) string {
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	// A completion in progress takes the line ahead of everything else:
+	// it is the only hint that changes with every keystroke, and what it
+	// shows is what the next Tab will do.
+	if hint := m.EmojiHint(); hint != "" {
+		return style.Render(truncateRow(hint, width))
+	}
+	// Edit mode keeps its hint even with text in the box, which is the
+	// opposite of the ordinary rule. The rule exists so the line gets out
+	// of the way once the user is writing; a mode that silently changes
+	// what Enter does has to stay announced, or the next Enter is a
+	// surprise.
+	if m.editing != nil {
+		return style.Render(truncateRow(editHint, width))
+	}
 	if m.textarea.Value() != "" {
 		return strings.Repeat(" ", clampWidth(width))
 	}
-	style := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	return style.Render(truncateRow(emptyHint, width))
 }
 

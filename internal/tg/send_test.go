@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kar43lov/lazytg/internal/core/events"
+
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
@@ -268,3 +270,96 @@ func TestCryptoRandInt64_NonNegative(t *testing.T) {
 // Compile-time assertion that fmt.Errorf wrapping survives errors.Is
 // inspection — guards against future refactors that drop %w.
 var _ = fmt.Errorf
+
+// The composer's markup becomes spans here, at the edge, once. The server
+// gets the plain text and the entities, not the asterisks.
+func TestSender_SendText_TurnsMarkupIntoEntities(t *testing.T) {
+	t.Parallel()
+	stub := &stubSendMessage{resp: &tg.UpdateShortSentMessage{ID: 1, Date: int(time.Now().Unix())}}
+	resolver := &stubResolver{peer: domain.Peer{ID: 99, Type: domain.ChatTypePrivate, AccessHash: 1}}
+	sender := NewSender(stub, resolver, WithRandomIDFunc(func() (int64, error) { return 1, nil }))
+
+	if _, err := sender.SendText(context.Background(), 99, "🚀 **go** `now`", 0); err != nil {
+		t.Fatalf("SendText: %v", err)
+	}
+	req := stub.calls[0]
+	if req.Message != "🚀 go now" {
+		t.Fatalf("Message = %q, want the markup stripped", req.Message)
+	}
+	got, ok := req.GetEntities()
+	if !ok || len(got) != 2 {
+		t.Fatalf("entities = %+v, want bold and code", got)
+	}
+	bold, isBold := got[0].(*tg.MessageEntityBold)
+	if !isBold || bold.Offset != 3 || bold.Length != 2 {
+		t.Fatalf("first entity = %+v, want bold at UTF-16 offset 3 (the rocket is two units)", got[0])
+	}
+	if _, isCode := got[1].(*tg.MessageEntityCode); !isCode {
+		t.Fatalf("second entity = %+v, want code", got[1])
+	}
+}
+
+func TestSender_SendText_PlainTextCarriesNoEntities(t *testing.T) {
+	t.Parallel()
+	stub := &stubSendMessage{resp: &tg.UpdateShortSentMessage{ID: 1, Date: int(time.Now().Unix())}}
+	resolver := &stubResolver{peer: domain.Peer{ID: 99, Type: domain.ChatTypePrivate, AccessHash: 1}}
+	sender := NewSender(stub, resolver, WithRandomIDFunc(func() (int64, error) { return 1, nil }))
+
+	if _, err := sender.SendText(context.Background(), 99, "2 * 3 and a_b", 0); err != nil {
+		t.Fatalf("SendText: %v", err)
+	}
+	req := stub.calls[0]
+	if req.Message != "2 * 3 and a_b" {
+		t.Fatalf("Message = %q, want it untouched", req.Message)
+	}
+	if _, ok := req.GetEntities(); ok {
+		t.Fatalf("entities were set on plain text: %+v", req.Entities)
+	}
+}
+
+// Telegram does not push a message back to the session that sent it; the
+// short acknowledgement is all there is. The sender rebuilds the message
+// around it and announces it through the dispatcher, so the mirror, the
+// thread and the chat list learn about it now rather than on the next
+// reopen. The entities come from the response — what the server settled
+// on — not from the request.
+func TestSender_SendText_AnnouncesWhatItSent(t *testing.T) {
+	t.Parallel()
+	bus, ch := newTestBus(t)
+	when := time.Now().UTC().Truncate(time.Second)
+	resp := &tg.UpdateShortSentMessage{ID: 1234, Date: int(when.Unix()), Out: true}
+	resp.SetEntities([]tg.MessageEntityClass{&tg.MessageEntityBold{Offset: 0, Length: 2}})
+	stub := &stubSendMessage{resp: resp}
+	resolver := &stubResolver{peer: domain.Peer{ID: 99, Type: domain.ChatTypePrivate, AccessHash: 1}}
+	sender := NewSender(stub, resolver,
+		WithRandomIDFunc(func() (int64, error) { return 1, nil }),
+		WithEcho(NewUpdatesDispatcher(bus, nil)))
+
+	if _, err := sender.SendText(context.Background(), 99, "**hi** there", 7); err != nil {
+		t.Fatalf("SendText: %v", err)
+	}
+	ev := receiveOne(t, ch)
+	got, ok := ev.(events.MessageReceived)
+	if !ok {
+		t.Fatalf("announced %T, want MessageReceived", ev)
+	}
+	if got.ChatID != 99 || got.MessageID != 1234 || !got.Outgoing || got.Text != "hi there" || got.ReplyTo != 7 {
+		t.Fatalf("announced %+v", got)
+	}
+	if !got.Date.Equal(when) {
+		t.Fatalf("date %v, want the server's %v", got.Date, when)
+	}
+	if len(got.Entities) != 1 || got.Entities[0].Kind != domain.EntityBold {
+		t.Fatalf("entities %+v, want the bold span the server confirmed", got.Entities)
+	}
+}
+
+func TestSender_SendText_WithoutAnEchoAnnouncesNothing(t *testing.T) {
+	t.Parallel()
+	stub := &stubSendMessage{resp: &tg.UpdateShortSentMessage{ID: 1, Date: int(time.Now().Unix())}}
+	resolver := &stubResolver{peer: domain.Peer{ID: 99, Type: domain.ChatTypePrivate, AccessHash: 1}}
+	sender := NewSender(stub, resolver, WithRandomIDFunc(func() (int64, error) { return 1, nil }))
+	if _, err := sender.SendText(context.Background(), 99, "hi", 0); err != nil {
+		t.Fatalf("SendText: %v", err)
+	}
+}

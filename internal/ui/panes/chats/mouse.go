@@ -112,3 +112,38 @@ func (m Model) CycleSelection(delta int) (Model, tea.Cmd, bool) {
 	updated, cmd := m.handleEnter()
 	return updated, cmd, true
 }
+
+// SelectNth opens the nth chat in the list as it is currently shown,
+// counting from one, and reports whether there was one.
+//
+// "As currently shown" is the whole contract: the folder tabs filter the
+// list, so Alt+2 means the second row the user can see, not the second chat
+// the account has. A number past the end does nothing rather than clamping to
+// the last row — pressing Alt+9 in a three-chat folder and landing on the
+// third would be a different chat every time the list changed length.
+func (m Model) SelectNth(n int) (Model, tea.Cmd, bool) {
+	if n < 1 {
+		return m, nil, false
+	}
+	if n > len(m.list.VisibleItems()) {
+		return m, nil, false
+	}
+	m.list.Select(n - 1)
+	updated, cmd := m.handleEnter()
+	return updated, cmd, true
+}
+
+// SelectByID moves the highlight onto a chat opened by some other road —
+// the palette, a search jump — so the row the chords act on is the one
+// the reader is looking at. Nothing is published: the chat is already
+// open. A chat not in the visible list (another folder) leaves the
+// highlight where it was.
+func (m Model) SelectByID(id int64) Model {
+	for i, it := range m.list.VisibleItems() {
+		if ci, ok := it.(ChatItem); ok && ci.ID() == id {
+			m.list.Select(i)
+			return m
+		}
+	}
+	return m
+}

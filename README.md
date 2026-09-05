@@ -35,6 +35,29 @@ Think `lazygit` ergonomics, but for Telegram conversations: keyboard-driven, sin
 - 🧼 **Nothing a stranger sends can drive your terminal** — message text, chat titles, author names, filenames and search snippets are stripped of escape sequences and bidi overrides before they are drawn, so a filename cannot rewrite your clipboard or disguise a `.command` as a `.png`.
 - ⌨️ **Emacs/readline keymap by default**, fully overridable through `keymap.toml` (vim-style modal bindings deferred to v0.2).
 - 📥📤 **First-class file transfer** — a per-message cursor picks the attachment, `Ctrl+D` saves it, `o` (or a click on its badge) opens it in the system viewer, `Ctrl+U` attaches a file, all with progress in the status bar. Photos, videos, voice messages and round video messages are named and timed in the thread rather than shown as anonymous blobs.
+- ✍️ **Act on messages, one or many** — `Space` marks, `y` copies, `e` rewrites your own, `d` deletes with a choice of "for me" or "for everyone", `f` forwards to a chat picked in the command palette. Marks make it a batch: mark four messages and one `d` removes all four.
+- 🗄 **The archive, as a tab** — the chats you hid on the phone are out of the main list and the folder tabs and in an `Archive` tab that exists only while there is something in it; `[` / `]` reach it after the folders. Two pages of the archive are read after the main list, at the same pace, and a chat moved to or from the archive elsewhere moves here on `updateFolderPeers`. Its unread count stays out of the badge, the way it does in every official client.
+- 🗂 **Your Telegram folders, as tabs** — the folders you already made on your phone narrow the chat list here, `[` and `]` walk between them, and `All` is always the first tab.
+- 🔗 **`o` follows links and places too** — on a message with no file, `o` opens the link under the cursor in the browser (the preview card's own address first, then a hidden `[text](url)`, then a marked or bare address), and a shared location opens as a map. The card under a link shows as `[🔗 Site — Title]`. Only `http` and `https` ever reach the browser: a message can name any scheme the desktop has a handler for, and none of the others is the sender's to fire. Locations, contacts, polls and dice show up as what they are rather than as blank rows — a poll with its options and tallies, a place with its venue — and a picture you attach goes out as a photo, so it draws in the chat on the other end instead of arriving as a file.
+- 🖼 **Photos drawn in the thread** — `i` shows the picture inside the conversation on terminals that speak the Kitty graphics protocol (Ghostty, kitty, WezTerm). Everything else keeps the badge and `o`, which is the honest answer for video: no terminal plays one.
+- 🎤 **Voice messages show their shape** — the waveform Telegram sends is drawn in block characters beside the duration, so you can see whether it is "ok" or two minutes of argument before spending the download.
+- 📝 **A draft per chat** — what you were half-way through writing stays with the conversation it was written in, reply pointer and all, instead of following you into somebody else's.
+- 📖 **"14 new messages" where you stopped reading** — opening a chat with a backlog draws a rule above the first message you have not seen, worked out before the chat is acknowledged and left where it is while you read.
+- ↩️ **Follow a reply back** — `p` goes to the message the cursor is answering, `Ctrl+O` comes back, and the pair behaves like an editor's jumplist. Local when the parent is on the page, a window load from the mirror when it is not.
+- ✏️ **"typing…" in the status line** — what the other side is doing right now, in Telegram's own words ("recording a voice message…"), for the chat you are reading. Received only: lazytg never announces your own typing.
+- 📌 **The pinned message, and who a forward came from** — the newest pinned message in view sits in a bar under the thread's title and moves with `updatePinnedMessages`; a forwarded message carries `↪ forwarded from Name` above its words, the channel and the post's author for a channel post, the header's own name for somebody who hides their account.
+- 🤖 **Bot keyboards you can press** — the buttons a bot puts under its message are drawn under it in the bot's own rows; on the message at the cursor `←` / `→` pick one and `Enter` presses it. A callback key goes to the bot (one `messages.getBotCallbackAnswer` per press, off the send guard) and what the bot says lands in the status line; a link key opens the browser (http/https only); a reply-keyboard key drops its text into the composer for you to send; a copy key goes to the clipboard. Payment, web-app, login and game keys are drawn and refused with a word about why. Most bots answer by editing the message, and the edit replaces the keyboard the moment it arrives.
+- 🔎 **A chat that is not in the list yet** — type `@name` or a `t.me/name` address into the palette (Ctrl+Space) and Enter opens the person, channel or group behind the handle: one `contacts.resolveUsername` per name you typed, never for anything you did not. The chat lands in the list and, with a forward pending, is a forward target like any other. A handle nobody holds says so in the status bar.
+- ✍️ **Drafts from your other devices** — a message half-typed on the phone is waiting in the composer here when you open the chat, formatting and all, and the chat list shows `Draft:` on its row the way every official client does. It comes with the dialog page and moves on `updateDraftMessage`; nothing is sent back — a draft typed here stays here, because saving one costs a request every time you pause, on an account already watched for running an unofficial client. A server draft never replaces words typed in this session.
+- ✓✓ **Ticks on what you sent** — one when the server has it, two, in blue, once the other side has read it, on every outgoing message in the thread. The fact behind the second tick is one number per chat that arrives with the dialog page and moves on `updateReadHistoryOutbox`, so a message read on the phone across the room gets its second tick here without a request; the pointer only ever moves forward, because updates arrive in no particular order and a stale one must not take a tick away. Saved Messages draws none: nobody else reads what you write to yourself.
+- 🅱️ **Formatting, both ways** — bold, italic, strikethrough, code, code blocks, spoilers and links behind words render the way Telegram's own clients draw them, with the host of a hidden link shown beside the words so "click here" cannot point somewhere it does not say. The composer takes Telegram Desktop's markup (`**bold**`, `__italic__`, `~~strike~~`, `||spoiler||`, `` `code` ``, ```` ```lang ```` blocks, `[text](url)`), and `e` hands a formatted message back to you as markup. A spoiler shows itself when the cursor is on its message.
+- 📌 **Saved Messages from day one** — the chat with yourself is in the list whether or not you have written there yet, named the way every official client names it.
+- 🔕 **The chat list knows what the phone knows** — the time of the last message on the right, the unread count, the by-hand unread dot, the bell of a muted chat, and a person's `online` / `last seen` in the status line; reading a chat on the phone clears its count here, and a mute or a pin made there shows here. From the list, `m` mutes, `p` pins, `u` marks read or unread — one request each, without opening the chat.
+- 🔔 **The terminal bell and the tab title carry the badge** — a message in a chat you are not reading rings the bell (which Ghostty, tmux and iTerm each already turn into whatever you configured), muted chats stay silent, `LAZYTG_NOTIFY=off` silences it all; the terminal's title reads `lazytg (3)` while three are waiting, so a hidden tab still says so. `LAZYTG_NOTIFY=desktop` also posts the message to the desktop's notification centre — for the tmux window nobody is in the room to hear — with the text passed as arguments and never through a shell.
+- 🧾 **Telegram's own lines are in the conversation** — "created the group", "pinned a message", "missed call, 2 minutes", "joined by invite link" — as rows with the person who did it as the sender, so a group that was only ever created no longer looks empty.
+- ✏️ **Edits from your other devices land here** — a message rewritten on the phone is rewritten in the thread, in place, marked `edited`, without moving you or counting as new.
+- 💬 **Reactions, both ways** — what people put on your messages shows under them with counts and yours boxed; `r` sets or clears your own through the emoji picker.
+- 😀 **Emoji without leaving the keyboard** — type `:rocket` and press Tab, press it again to walk the other matches; `Alt+E` opens a picker with categories, search and what you used last.
 - 🧭 **Command palette (`Ctrl+Space`)** with frecency-ranked chat switcher and Unicode-fuzzy matching ("Алёна" === "Алена").
 - 🪶 **Pure-Go single binary**, no Electron, no CGo (sqlcipher build is opt-in, deferred for v0.1.x).
 - 🔬 **Cosign-keyless signed releases** — every archive ships with a sigstore bundle; `cosign verify-blob` confirms provenance.
@@ -56,7 +79,13 @@ Current capabilities:
 - Two-way sync with your other devices: opening a chat marks it read on Telegram, and messages or chats deleted elsewhere disappear here too — including from the search index.
 - Dialog sync on start (`messages.getDialogs`, paced and capped at 5 pages / 500 chats by design) plus history backfill when a chat is opened.
 - Local search (FTS5 trigram) with operators `from:@user`, `in:#chat`, `before:`/`after:`, `has:file`, `"phrase"`, `-exclusion` (`docs/SEARCH.md`).
-- Search overlay (`/`), command palette (Ctrl+Space), a message cursor with per-message download (Ctrl+D) and open-in-viewer (`o`), file upload (Ctrl+U).
+- Search overlay (`/`; Tab asks the server for what the mirror lacks), command palette (Ctrl+Space), a message cursor with per-message download (Ctrl+D) and open-in-viewer (`o`), file upload (Ctrl+U).
+- Message actions on the cursor or on a marked set: copy, edit your own, delete for yourself or for everyone, forward to another chat (`Space`, `y`, `e`, `d`, `f`).
+- The account's Telegram folders as tabs over the chat list (`[` / `]`), including chat-list folders (shared links), which are matched by their explicit membership only.
+- Typing indicators for the open chat, expiring on their own after six seconds because Telegram's "stopped" notification is not reliably sent.
+- Reactions read from the messages themselves and kept current by `updateMessageReactions`; `r` sends yours (standard emoji only — premium custom reactions are a sticker, not a character).
+- Emoji entry two ways: `:shortcode` completion on Tab in the composer, and an `Alt+E` picker over ~1100 characters with the GitHub/Slack aliases people actually type.
+- Inline photos through the Kitty graphics protocol (`i`), auto-detected from the environment and overridable with `LAZYTG_IMAGE_PROTOCOL=kitty|none`.
 - DB-size monitor + permissions audit + 10 msg/s send rate-limit guard (covers both text and media sends).
 
 ### Keybindings (TUI)
@@ -65,18 +94,36 @@ Current capabilities:
 |-----------------|---------------------------------------|
 | Tab / Shift+Tab | cycle focus between panes             |
 | Ctrl+Tab / Ctrl+Shift+Tab | next / previous chat (also Alt+N / Alt+P) |
+| Alt+1 … Alt+9   | open the nth chat in the list as shown |
 | Enter           | send message                          |
 | Alt+Enter       | newline in input (the composer grows to 4 rows) |
 | Ctrl+R          | reply to focused message              |
 | Ctrl+E          | open `$EDITOR` with current draft     |
-| `/`             | open search overlay                   |
+| `/`             | open search overlay (Tab inside asks the server) |
 | Ctrl+Space      | command palette (chat switcher L1)    |
 | ↑ / ↓ (k / j)   | move the message cursor in the thread |
+| Space           | mark / unmark the message at the cursor |
+| `y`             | copy the marked messages, or the one at the cursor |
+| `←` / `→`, `Enter` | pick and press a key of the bot keyboard under the message at the cursor |
+| `l`             | copy the link to the message at the cursor (channels and supergroups; a private chat has none) |
+| `e`             | edit your own message at the cursor   |
+| `d`             | delete the marked messages, or the one at the cursor |
+| `f`             | forward them to another chat (picks the chat in the palette) |
+| `r`             | react to the message at the cursor (opens the emoji picker) |
+| `p`             | go to the message this one replies to  |
+| Ctrl+O          | back to where you jumped from         |
+| `i`             | draw the photo at the cursor inside the thread |
+| `[` / `]`       | previous / next Telegram folder       |
+| `m` / `p` / `u` (in the chat list) | mute or unmute, pin or unpin, mark read or unread |
+| Tab (in the composer) | complete the `:shortcode` you are typing, again to cycle |
+| Alt+E           | emoji picker                          |
 | Ctrl+D          | save the attachment at the cursor     |
-| `o`             | open the attachment at the cursor in the system viewer |
+| `o`             | open the attachment at the cursor in the system viewer; on a message without a file, the link (or the map for a location) in the browser |
 | Ctrl+U          | attach file (upload)                  |
 | `?`             | toggle help overlay                   |
 | Ctrl+C / Ctrl+Q | quit                                  |
+
+The composer applies Telegram Desktop's markup on send and on edit — `**bold**`, `__italic__`, `~~strike~~`, `||spoiler||`, `` `code` ``, a ```` ``` ```` fence with an optional language on its first line, `[text](url)`. Nothing else, and no escapes: a marker with no partner is sent as typed.
 
 ### Mouse
 
@@ -122,9 +169,9 @@ Anything not on this list is out of scope until it lands here — see the non-go
 
 **v0.3+**
 
-- Inline media preview (Kitty/iTerm/sixel via `BourgeoisBear/rasterm`).
 - tgql — query DSL with saved searches (smart folders).
-- Forwarding, edit history, reactions.
+- Inline keyboards for bots, pinned-message bar, forwarded-from header, link previews, the archive as a folder tab, `@` mention completion, forum topics — the ranked list, with everything Telegram Desktop does and where lazytg stands on each, is [`docs/FEATURE_PARITY.md`](docs/FEATURE_PARITY.md).
+- Inline photos, forwarding and reactions shipped early, on the `feat/message-actions` branch; sixel/iTerm image protocols are still open.
 
 **v0.5+** (only if a community shows up)
 

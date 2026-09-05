@@ -64,8 +64,8 @@ func TestHistoryFetcher_Fetch_ConvertsBatch(t *testing.T) {
 		Messages: []tg.MessageClass{
 			makeMsg(5, userID, "hello", 0),
 			makeMsg(4, userID, "world", 5),
-			&tg.MessageEmpty{ID: 3},   // must be skipped
-			&tg.MessageService{ID: 2}, // must be skipped
+			&tg.MessageEmpty{ID: 3}, // must be skipped
+			&tg.MessageService{ID: 2, PeerID: &tg.PeerUser{UserID: userID}, Action: &tg.MessageActionPinMessage{}},
 			makeMsg(1, userID, "first", 0),
 		},
 	}
@@ -79,12 +79,13 @@ func TestHistoryFetcher_Fetch_ConvertsBatch(t *testing.T) {
 	if hasMore != true {
 		t.Fatalf("hasMore=false; expected true (slice + len==limit)")
 	}
-	if got := len(msgs); got != 3 {
-		t.Fatalf("converted %d messages, want 3 (empty/service skipped)", got)
+	if got := len(msgs); got != 4 {
+		t.Fatalf("converted %d messages, want 4 (empty skipped, service kept)", got)
 	}
 	want := []domain.Message{
 		{ID: 5, ChatID: userID, FromID: userID, Text: "hello", ReplyTo: 0},
 		{ID: 4, ChatID: userID, FromID: userID, Text: "world", ReplyTo: 5},
+		{ID: 2, ChatID: userID, FromID: userID, Text: "pinned a message", ReplyTo: 0},
 		{ID: 1, ChatID: userID, FromID: userID, Text: "first", ReplyTo: 0},
 	}
 	for i, w := range want {
@@ -231,5 +232,29 @@ func TestHistoryFetcher_Fetch_ChannelUsesInputPeerChannel(t *testing.T) {
 	}
 	if peer.ChannelID != 555 || peer.AccessHash != 0xBEEF {
 		t.Fatalf("channel peer: got %+v", peer)
+	}
+}
+
+// Telegram marks nothing in Saved Messages as outgoing — the flag means
+// "sent to somebody else" — so without the account's own id every message
+// there reads as the peer's: labelled with the chat's name and refused by
+// the editor. Seen live on 05.09.2026 on the first send into it.
+func TestConvertMessage_SavedMessagesAreYours(t *testing.T) {
+	t.Parallel()
+
+	self := &Self{}
+	self.Set(8385)
+	m := &tg.Message{ID: 1, PeerID: &tg.PeerUser{UserID: 8385}, Date: 1, Message: "note to self"}
+	m.FromID = &tg.PeerUser{UserID: 8385}
+	m.Flags.Set(8)
+	if got := convertMessage(m, 8385, self, nil); !got.Outgoing {
+		t.Fatalf("a message in the self chat is not the account's: %+v", got)
+	}
+	if got := convertMessage(m, 8385, nil, nil); got.Outgoing {
+		t.Fatalf("without the id, the flag alone decided: %+v", got)
+	}
+	other := &tg.Message{ID: 2, PeerID: &tg.PeerUser{UserID: 42}, Date: 1, Message: "from a friend"}
+	if got := convertMessage(other, 42, self, nil); got.Outgoing {
+		t.Fatalf("a message in another chat became the account's: %+v", got)
 	}
 }

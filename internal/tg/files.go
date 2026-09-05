@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gotd/td/telegram/downloader"
 	"github.com/gotd/td/telegram/uploader"
@@ -209,7 +210,7 @@ func MediaFromMessage(m *tg.Message) *domain.MediaInfo {
 		if !ok {
 			return nil
 		}
-		kind, duration := classifyDocument(doc)
+		kind, duration, waveform := classifyDocument(doc)
 		return &domain.MediaInfo{
 			Kind:          kind,
 			FileID:        doc.ID,
@@ -220,6 +221,7 @@ func MediaFromMessage(m *tg.Message) *domain.MediaInfo {
 			Size:          doc.Size,
 			MimeType:      doc.MimeType,
 			Duration:      duration,
+			Waveform:      waveform,
 		}
 	case *tg.MessageMediaPhoto:
 		photo, ok := v.Photo.(*tg.Photo)
@@ -237,8 +239,96 @@ func MediaFromMessage(m *tg.Message) *domain.MediaInfo {
 			Size:          size,
 			ThumbSize:     thumb,
 		}
+	case *tg.MessageMediaWebPage:
+		// The preview card every client draws under a link: site and
+		// title, and the address for "o". A pending or empty page is
+		// not a card yet and reads as nothing.
+		if wp, ok := v.Webpage.(*tg.WebPage); ok {
+			return &domain.MediaInfo{Kind: domain.MediaKindWebPage, Filename: webPageLabel(wp), MimeType: wp.URL}
+		}
+	case *tg.MessageMediaGeo:
+		if p, ok := v.Geo.(*tg.GeoPoint); ok {
+			return &domain.MediaInfo{Kind: domain.MediaKindLocation, Filename: fmt.Sprintf("%.6f,%.6f", p.Lat, p.Long)}
+		}
+	case *tg.MessageMediaGeoLive:
+		if p, ok := v.Geo.(*tg.GeoPoint); ok {
+			return &domain.MediaInfo{Kind: domain.MediaKindLocation, Filename: fmt.Sprintf("%.6f,%.6f", p.Lat, p.Long)}
+		}
+	case *tg.MessageMediaVenue:
+		if p, ok := v.Geo.(*tg.GeoPoint); ok {
+			return &domain.MediaInfo{Kind: domain.MediaKindLocation, Filename: fmt.Sprintf("%.6f,%.6f", p.Lat, p.Long), MimeType: strings.TrimSpace(v.Title + " — " + v.Address)}
+		}
+	case *tg.MessageMediaContact:
+		name := strings.TrimSpace(v.FirstName + " " + v.LastName)
+		if name == "" {
+			name = "contact"
+		}
+		return &domain.MediaInfo{Kind: domain.MediaKindContact, Filename: strings.TrimSpace(name + " " + v.PhoneNumber)}
+	case *tg.MessageMediaPoll:
+		return &domain.MediaInfo{Kind: domain.MediaKindPoll, Filename: v.Poll.Question.Text}
+	case *tg.MessageMediaDice:
+		return &domain.MediaInfo{Kind: domain.MediaKindDice, Filename: fmt.Sprintf("%s %d", v.Emoticon, v.Value)}
 	}
 	return nil
+}
+
+// messageText is the body a row stores: the text as sent, or for a poll —
+// which carries no text — its question and options with the tallies, so
+// the thread has something to read and the index something to find.
+func messageText(m *tg.Message) string {
+	if m.Message != "" {
+		return m.Message
+	}
+	media, ok := m.GetMedia()
+	if !ok {
+		return ""
+	}
+	poll, ok := media.(*tg.MessageMediaPoll)
+	if !ok {
+		return ""
+	}
+	return describePoll(poll)
+}
+
+func describePoll(p *tg.MessageMediaPoll) string {
+	var b strings.Builder
+	b.WriteString(p.Poll.Question.Text)
+	votes := map[string]tg.PollAnswerVoters{}
+	for _, r := range p.Results.Results {
+		votes[string(r.Option)] = r
+	}
+	total := p.Results.TotalVoters
+	for _, a := range p.Poll.Answers {
+		ans, ok := a.(*tg.PollAnswer)
+		if !ok {
+			continue
+		}
+		mark := "○"
+		r, counted := votes[string(ans.Option)]
+		if counted && r.Chosen {
+			mark = "●"
+		}
+		fmt.Fprintf(&b, "\n%s %s", mark, ans.Text.Text)
+		if counted && total > 0 {
+			fmt.Fprintf(&b, " — %d%%", r.Voters*100/total)
+		}
+	}
+	switch {
+	case p.Poll.Closed:
+		fmt.Fprintf(&b, "\n%s, closed", pollVoters(total))
+	case p.Poll.Quiz:
+		fmt.Fprintf(&b, "\nquiz, %s", pollVoters(total))
+	default:
+		b.WriteString("\n" + pollVoters(total))
+	}
+	return b.String()
+}
+
+func pollVoters(n int) string {
+	if n == 1 {
+		return "1 vote"
+	}
+	return fmt.Sprintf("%d votes", n)
 }
 
 // classifyDocument reads a Document's attribute list and reports what
@@ -252,7 +342,7 @@ func MediaFromMessage(m *tg.Message) *domain.MediaInfo {
 // scan collects what it finds and decides afterwards, most specific
 // first — animated-plus-video is an animation, not a video, and a
 // sticker is a sticker even though it also carries a filename.
-func classifyDocument(doc *tg.Document) (domain.MediaKind, int) {
+func classifyDocument(doc *tg.Document) (domain.MediaKind, int, []byte) {
 	var (
 		video     *tg.DocumentAttributeVideo
 		audio     *tg.DocumentAttributeAudio
@@ -273,23 +363,27 @@ func classifyDocument(doc *tg.Document) (domain.MediaKind, int) {
 	}
 	switch {
 	case sticker:
-		return domain.MediaKindSticker, 0
+		return domain.MediaKindSticker, 0, nil
 	case video != nil && video.RoundMessage:
-		return domain.MediaKindVideoNote, int(video.Duration)
+		return domain.MediaKindVideoNote, int(video.Duration), nil
 	case animation:
 		duration := 0
 		if video != nil {
 			duration = int(video.Duration)
 		}
-		return domain.MediaKindAnimation, duration
+		return domain.MediaKindAnimation, duration, nil
 	case video != nil:
-		return domain.MediaKindVideo, int(video.Duration)
+		return domain.MediaKindVideo, int(video.Duration), nil
 	case audio != nil && audio.Voice:
-		return domain.MediaKindVoice, audio.Duration
+		// The waveform rides along only for a voice message. A music
+		// track carries the same attribute and sometimes a waveform too,
+		// but there the useful line is the title, not the shape.
+		wf, _ := audio.GetWaveform()
+		return domain.MediaKindVoice, audio.Duration, wf
 	case audio != nil:
-		return domain.MediaKindAudio, audio.Duration
+		return domain.MediaKindAudio, audio.Duration, nil
 	default:
-		return domain.MediaKindDocument, 0
+		return domain.MediaKindDocument, 0, nil
 	}
 }
 
@@ -582,4 +676,21 @@ func largestPhotoSize(photo *tg.Photo) (int64, string) {
 		}
 	}
 	return bestSize, bestThumb
+}
+
+// webPageLabel names a preview the way its card does: the site, then the
+// title; whichever of the two the page carries; the display address when
+// it carries neither.
+func webPageLabel(wp *tg.WebPage) string {
+	site, _ := wp.GetSiteName()
+	title, _ := wp.GetTitle()
+	switch {
+	case site != "" && title != "":
+		return site + " — " + title
+	case title != "":
+		return title
+	case site != "":
+		return site
+	}
+	return wp.DisplayURL
 }
