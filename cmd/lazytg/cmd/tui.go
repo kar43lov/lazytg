@@ -151,6 +151,9 @@ func runTUI(cmd *cobra.Command, _ []string) error {
 	if runtime.UploadSvc != nil {
 		deps.Uploader = runtime.UploadSvc
 	}
+	if runtime.Client != nil {
+		deps.SelfID = runtime.Client.Self().ID
+	}
 	if runtime.Backfill != nil {
 		deps.Backfiller = runtime.Backfill
 	}

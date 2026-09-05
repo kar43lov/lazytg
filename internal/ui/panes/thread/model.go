@@ -97,6 +97,9 @@ type Model struct {
 	// readOutboxMaxID is the newest of your messages the other side has
 	// read; it decides which outgoing rows get the second tick.
 	readOutboxMaxID int64
+	// selfChat is the chat with yourself, where no tick is drawn: every
+	// message there is yours, and nobody else is going to read it.
+	selfChat bool
 
 	// marked holds the ids the user has picked out for an action that
 	// takes several — copying a run of messages, deleting them. Ids for
@@ -229,6 +232,7 @@ func (m Model) OpenChat(chatID int64) (Model, tea.Cmd) {
 	m.unreadCount = 0
 	m.unreadFrom = 0
 	m.readOutboxMaxID = 0
+	m.selfChat = false
 	m.outgoing = nil
 	m.pendingServerIDs = make(map[int64]string)
 	m.finalizedLocalIDs = make(map[string]struct{})
@@ -542,7 +546,7 @@ func (m Model) renderContent() (string, []blockSpan) {
 		}
 		rendered, mediaLine := formatMessageBlockMarked(msg, width, nil,
 			resolveAuthor(msg, m.chatID, m.private, m.authorNames),
-			msg.ID == cursorID, m.marked[msg.ID], m.readOutboxMaxID)
+			msg.ID == cursorID, m.marked[msg.ID], m.tickPointer())
 		// A drawn picture is appended to its message's block so it moves
 		// with the message and is covered by the same span — a click on it
 		// means that message, which is what the user is pointing at.

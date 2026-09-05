@@ -188,6 +188,10 @@ type Deps struct {
 	// what every test wants and what a build with no system viewer
 	// gets.
 	Opener MediaOpener
+	// SelfID, if set, answers with the account's own user id, zero until
+	// the session knows it. The thread hides the ticks in the chat with
+	// yourself: "did they read it" has no answer there.
+	SelfID func() int64
 
 	// Uploader, if set, is invoked when the user submits a file
 	// from the Attach overlay (Ctrl-U flow). nil makes the overlay
@@ -244,6 +248,7 @@ type App struct {
 	// Deps.Opener. nil means the open gesture downloads and stops
 	// there.
 	opener MediaOpener
+	selfID func() int64
 
 	// uploader is the file-upload collaborator wired through
 	// Deps.Uploader. nil means "no uploader wired" — the Attach
@@ -407,6 +412,7 @@ func New(deps Deps) App {
 		paletteFrecency:   deps.PaletteFrecency,
 		downloader:        deps.Downloader,
 		opener:            deps.Opener,
+		selfID:            deps.SelfID,
 		uploader:          deps.Uploader,
 		jumper:            deps.Jumper,
 		backfiller:        deps.Backfiller,

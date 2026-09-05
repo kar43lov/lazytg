@@ -49,3 +49,19 @@ func TestTicks_OneWhenSentTwoWhenRead(t *testing.T) {
 		t.Fatalf("pointer = %d", m.ReadOutboxMaxID())
 	}
 }
+
+// In the chat with yourself every message is yours and nobody else reads
+// it; a tick there would claim otherwise.
+func TestTicks_NoneInTheChatWithYourself(t *testing.T) {
+	t.Parallel()
+
+	m := loadedThread(t, 0, outgoing(1, 0, "note"), outgoing(2, 1, "another"))
+	m = m.MarkReadOutbox(2).MarkSelfChat(true)
+	if read, sent := countTicks(m.View()); read != 0 || sent != 0 {
+		t.Fatalf("saved messages drew ticks: read %d sent %d", read, sent)
+	}
+	m = m.MarkSelfChat(false)
+	if read, _ := countTicks(m.View()); read != 2 {
+		t.Fatalf("ticks did not come back: %d", read)
+	}
+}

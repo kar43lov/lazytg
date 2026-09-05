@@ -432,7 +432,7 @@ func (a App) handleChatSelected(msg chats.ChatSelectedMsg) (tea.Model, tea.Cmd) 
 	// The unread count has to be taken now: acknowledging the chat clears
 	// it a moment later, and by the time the messages land there would be
 	// nothing left to draw a divider from.
-	a.thread = updatedThread.MarkUnread(a.unreadOf(msg.ChatID)).MarkReadOutbox(a.readOutboxOf(msg.ChatID))
+	a.thread = updatedThread.MarkUnread(a.unreadOf(msg.ChatID)).MarkReadOutbox(a.readOutboxOf(msg.ChatID)).MarkSelfChat(a.isSelfChat(msg.ChatID))
 	if cmd != nil {
 		cmds = append(cmds, cmd)
 	}
@@ -930,7 +930,7 @@ func (a App) handlePaletteSelected(msg palette.SelectedMsg) (tea.Model, tea.Cmd)
 	wipe := a.clearDrawnImagesCmd()
 	a = a.clearTyping().clearJumpTrail()
 	updatedThread, cmd := a.thread.OpenChat(chatID)
-	a.thread = updatedThread.MarkUnread(a.unreadOf(chatID)).MarkReadOutbox(a.readOutboxOf(chatID))
+	a.thread = updatedThread.MarkUnread(a.unreadOf(chatID)).MarkReadOutbox(a.readOutboxOf(chatID)).MarkSelfChat(a.isSelfChat(chatID))
 	cmds := []tea.Cmd{}
 	if wipe != nil {
 		cmds = append(cmds, wipe)
@@ -1119,6 +1119,12 @@ func (a App) handleOpenRequest(req thread.OpenRequestedMsg) (tea.Model, tea.Cmd)
 // unreadOf reports how many messages the chat list believes are unread in a
 // chat. Zero when it does not know the chat, which is the right answer: a
 // divider drawn from a guess is worse than none.
+// isSelfChat reports the chat with yourself — Saved Messages — where a
+// tick would claim somebody read what you wrote to yourself.
+func (a App) isSelfChat(chatID int64) bool {
+	return a.selfID != nil && chatID != 0 && a.selfID() == chatID
+}
+
 // readOutboxOf is how far the other side has read in a chat, from the
 // list row; the thread needs it at open time to draw the ticks.
 func (a App) readOutboxOf(id int64) int64 {

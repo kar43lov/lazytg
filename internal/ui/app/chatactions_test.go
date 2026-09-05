@@ -13,6 +13,7 @@ import (
 	"github.com/kar43lov/lazytg/internal/core/domain"
 	"github.com/kar43lov/lazytg/internal/ui/keymap"
 	"github.com/kar43lov/lazytg/internal/ui/panes/chats"
+	"github.com/kar43lov/lazytg/internal/ui/panes/thread"
 )
 
 // appWithChatRows builds an app over the given chat rows with the list in
@@ -247,5 +248,29 @@ func TestOpenChat_CarriesTheReadPointer(t *testing.T) {
 	a = model.(App)
 	if got := a.thread.ReadOutboxMaxID(); got != 40 {
 		t.Fatalf("the update did not reach the thread: %d", got)
+	}
+}
+
+// The chat with yourself draws no ticks; the app knows which one it is
+// from the session's own id.
+func TestOpenChat_HidesTicksInSavedMessages(t *testing.T) {
+	t.Parallel()
+
+	pane := chats.NewWithRepo(fakeChatsRepo{chats: []domain.Chat{{ID: 8385, Title: "Saved Messages", Type: domain.ChatTypePrivate}, {ID: 7, Title: "Friend", Type: domain.ChatTypePrivate}}}, nil)
+	pane, _ = pane.Update(pane.Init()())
+	threadModel := thread.New()
+	a := New(Deps{Keymap: keymap.Default(), Chats: &pane, Thread: &threadModel, SelfID: func() int64 { return 8385 }})
+	model, _ := a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	a = model.(App)
+
+	model, _ = a.Update(chats.ChatSelectedMsg{ChatID: 8385})
+	a = model.(App)
+	if !a.thread.SelfChat() {
+		t.Fatal("saved messages was not marked as the chat with yourself")
+	}
+	model, _ = a.Update(chats.ChatSelectedMsg{ChatID: 7})
+	a = model.(App)
+	if a.thread.SelfChat() {
+		t.Fatal("the mark survived into another chat")
 	}
 }

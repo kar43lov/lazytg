@@ -43,6 +43,30 @@ func (m Model) MarkReadOutbox(maxID int64) Model {
 	return m
 }
 
+// MarkSelfChat tells the pane the open chat is the one with yourself.
+func (m Model) MarkSelfChat(self bool) Model {
+	if m.selfChat == self {
+		return m
+	}
+	m.selfChat = self
+	if len(m.messages) > 0 {
+		m.viewport.SetContent(m.renderAll())
+	}
+	return m
+}
+
+// SelfChat reports whether the open chat is the one with yourself.
+func (m Model) SelfChat() bool { return m.selfChat }
+
+// tickPointer is what the renderer compares message ids against: the
+// read pointer, or noTicks in the chat with yourself.
+func (m Model) tickPointer() int64 {
+	if m.selfChat {
+		return noTicks
+	}
+	return m.readOutboxMaxID
+}
+
 // ReadOutboxMaxID is how far the other side has read, as the pane knows it.
 func (m Model) ReadOutboxMaxID() int64 { return m.readOutboxMaxID }
 

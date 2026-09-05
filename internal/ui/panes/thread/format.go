@@ -448,6 +448,10 @@ var (
 // purpose (storage, tg mapping, search), and formatting that instant as-is
 // prints UTC to a user sitting in another zone. Found on the first live smoke —
 // a message sent at 19:32 MSK rendered as [16:32].
+// noTicks as the read pointer means the chat draws none: the one with
+// yourself, where every message is yours and nobody else reads it.
+const noTicks int64 = -1
+
 // readStyle paints the second tick, the one that says the message was
 // read. Blue, the way the official clients draw it.
 var readStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
@@ -480,7 +484,7 @@ func headerSuffix(msg domain.Message, readMax int64) string {
 // somebody else's message — the tick is about your words reaching them,
 // and whether you read theirs is not drawn anywhere.
 func ticks(msg domain.Message, readMax int64) string {
-	if !msg.Outgoing {
+	if !msg.Outgoing || readMax == noTicks {
 		return ""
 	}
 	if msg.ID <= readMax {
