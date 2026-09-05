@@ -88,9 +88,9 @@ func TestMediaFromMessage_PlainText(t *testing.T) {
 
 func TestMediaFromMessage_UnsupportedKind(t *testing.T) {
 	m := &tg.Message{ID: 5}
-	m.SetMedia(&tg.MessageMediaContact{PhoneNumber: "+x"})
+	m.SetMedia(&tg.MessageMediaUnsupported{})
 	if got := MediaFromMessage(m); got != nil {
-		t.Fatalf("contact media should fall through to nil: %+v", got)
+		t.Fatalf("unsupported media should fall through to nil: %+v", got)
 	}
 }
 
@@ -507,5 +507,30 @@ func TestClassifyDocument_NoWaveformForMusic(t *testing.T) {
 	}
 	if waveform != nil {
 		t.Fatalf("a music track carried a waveform: %v", waveform)
+	}
+}
+
+// A picture goes out as a photo, so it draws in the chat on the other end
+// rather than sitting there as a file.
+func TestFilesAdapter_SendMedia_PictureGoesAsPhoto(t *testing.T) {
+	stub := &stubMediaSender{stubSendMessage: &stubSendMessage{}, mediaResp: &tg.UpdateShortSentMessage{ID: 8}}
+	resolver := &stubResolver{peer: domain.Peer{ID: 99, Type: domain.ChatTypePrivate, AccessHash: 1}}
+	sender := NewSender(stub, resolver, WithRandomIDFunc(func() (int64, error) { return 1, nil }))
+	adapter, err := NewFilesAdapter(NewUploader(&fakeUploadAPI{}, nil), sender)
+	if err != nil {
+		t.Fatalf("NewFilesAdapter: %v", err)
+	}
+	handle := &UploadResult{InputFile: &tg.InputFile{ID: 42, Name: "cat.jpg"}, Filename: "cat.jpg", MimeType: "image/jpeg"}
+	if _, err := adapter.SendMedia(t.Context(), 99, handle, "**look**", 0); err != nil {
+		t.Fatalf("SendMedia: %v", err)
+	}
+	if _, ok := stub.mediaReq.Media.(*tg.InputMediaUploadedPhoto); !ok {
+		t.Fatalf("media kind = %T, want InputMediaUploadedPhoto", stub.mediaReq.Media)
+	}
+	if stub.mediaReq.Message != "look" {
+		t.Fatalf("caption = %q, want the markup stripped", stub.mediaReq.Message)
+	}
+	if ents, ok := stub.mediaReq.GetEntities(); !ok || len(ents) != 1 {
+		t.Fatalf("caption entities = %+v", ents)
 	}
 }

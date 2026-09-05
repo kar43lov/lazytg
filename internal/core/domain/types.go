@@ -199,6 +199,14 @@ const (
 	MediaKindSticker MediaKind = "sticker"
 	// MediaKindAnimation is a GIF — MP4 without sound, marked animated.
 	MediaKindAnimation MediaKind = "animation"
+	// The kinds below are attachments without a file: nothing to download,
+	// and Filename carries what there is to show. A location is "lat,long",
+	// a contact is the name and number, a poll its question, a dice its
+	// value.
+	MediaKindLocation MediaKind = "location"
+	MediaKindContact  MediaKind = "contact"
+	MediaKindPoll     MediaKind = "poll"
+	MediaKindDice     MediaKind = "dice"
 )
 
 // IsPhoto reports whether the kind is transported as a photo rather than

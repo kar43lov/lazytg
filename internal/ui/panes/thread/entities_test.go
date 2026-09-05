@@ -139,3 +139,26 @@ func TestFormatMessage_UsesTheMessageEntities(t *testing.T) {
 		t.Fatalf("cursor on the message did not reveal the spoiler: %q", withCursor)
 	}
 }
+
+func TestMediaBadge_FilelessKinds(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		media *domain.MediaInfo
+		want  string
+	}{
+		{&domain.MediaInfo{Kind: domain.MediaKindLocation, Filename: "1.000000,2.000000"}, "[📍 1.000000,2.000000] o to open the map"},
+		{&domain.MediaInfo{Kind: domain.MediaKindLocation, Filename: "1.000000,2.000000", MimeType: "Cafe — Main st"}, "[📍 Cafe — Main st, 1.000000,2.000000] o to open the map"},
+		{&domain.MediaInfo{Kind: domain.MediaKindContact, Filename: "Ann +1"}, "[👤 Ann +1]"},
+		{&domain.MediaInfo{Kind: domain.MediaKindPoll, Filename: "Lunch?"}, "[📊 poll]"},
+		{&domain.MediaInfo{Kind: domain.MediaKindDice, Filename: "🎲 4"}, "[🎲 🎲 4]"},
+	}
+	for _, tc := range cases {
+		if got := ansi.Strip(mediaBadge(tc.media)); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.media.Kind, got, tc.want)
+		}
+	}
+	if got := ansi.Strip(mediaBadge(&domain.MediaInfo{Kind: domain.MediaKindPhoto, FileID: 1, Filename: "a.jpg", Size: 10})); !strings.Contains(got, "ctrl+d to save") {
+		t.Fatalf("a real file lost its hint: %q", got)
+	}
+}

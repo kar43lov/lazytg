@@ -222,6 +222,8 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.applyActionResult(m), nil
 	case chatActionMsg:
 		return a.applyChatAction(m), nil
+	case linkOpenedMsg:
+		return a.applyLinkOpened(m), nil
 	case forwardResultMsg:
 		return a.applyForwardResult(m), nil
 	case inlineImageReadyMsg:
@@ -1319,7 +1321,9 @@ func (a App) cmdOpenAttach() (tea.Cmd, bool) {
 // the user moves it.
 func (a App) cmdDownloadCursorMedia() (tea.Cmd, bool) {
 	target, media, title, ok := a.cursorMediaTarget()
-	if !ok {
+	if !ok || media.FileID == 0 {
+		// A place, a contact card, a poll: something is attached and
+		// none of it is a file.
 		return nil, false
 	}
 	return func() tea.Msg {
@@ -1335,6 +1339,17 @@ func (a App) cmdDownloadCursorMedia() (tea.Cmd, bool) {
 // cmdOpenCursorMedia is cmdDownloadCursorMedia's twin for the open
 // gesture.
 func (a App) cmdOpenCursorMedia() (tea.Cmd, bool) {
+	// The message under the cursor first: a link in it, or a place on a
+	// map, opens in the browser. Only when it carries neither does the
+	// gesture fall back to the nearest attachment above, as before.
+	if cur, ok := a.thread.CursorMessage(); ok {
+		if link := openableLink(cur); link != "" {
+			return a.cmdOpenLink(link), true
+		}
+		if cur.Media != nil && cur.Media.FileID == 0 {
+			return nil, false
+		}
+	}
 	target, media, title, ok := a.cursorMediaTarget()
 	if !ok {
 		return nil, false

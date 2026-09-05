@@ -292,6 +292,9 @@ func mediaBadge(m *domain.MediaInfo) string {
 	if m == nil {
 		return ""
 	}
+	if fileless(m.Kind) {
+		return filelessBadge(m)
+	}
 	var parts []string
 	parts = append(parts, mediaLabel(m))
 	if d := formatDuration(m.Duration); d != "" {
@@ -313,6 +316,37 @@ func mediaBadge(m *domain.MediaInfo) string {
 // mediaIcon picks the glyph that opens the badge. One per kind, because
 // the icon is what the eye catches when scrolling a thread — a wall of
 // identical paperclips is the state this replaced.
+// fileless reports the kinds that carry no file: nothing to download,
+// nothing to open but a map.
+func fileless(kind domain.MediaKind) bool {
+	switch kind {
+	case domain.MediaKindLocation, domain.MediaKindContact, domain.MediaKindPoll, domain.MediaKindDice:
+		return true
+	}
+	return false
+}
+
+// filelessBadge draws an attachment that is not a file: a place, a card, a
+// poll, a dice. No size, no download hint; a map for the place.
+func filelessBadge(m *domain.MediaInfo) string {
+	label := safetext.CleanLine(m.Filename)
+	switch m.Kind {
+	case domain.MediaKindLocation:
+		if venue := safetext.CleanLine(m.MimeType); venue != "" {
+			label = venue + ", " + label
+		}
+		return mediaStyle.Render("[📍 "+label+"]") + " " + hintStyle.Render("o to open the map")
+	case domain.MediaKindContact:
+		return mediaStyle.Render("[👤 " + label + "]")
+	case domain.MediaKindPoll:
+		return mediaStyle.Render("[📊 poll]")
+	case domain.MediaKindDice:
+		return mediaStyle.Render("[🎲 " + label + "]")
+	default:
+		return mediaStyle.Render("[" + mediaIcon(m.Kind) + " " + label + "]")
+	}
+}
+
 func mediaIcon(kind domain.MediaKind) string {
 	switch kind {
 	case domain.MediaKindPhoto:

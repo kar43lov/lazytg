@@ -46,6 +46,8 @@ type FileDownloader interface {
 // substitute a fake so no window opens on a CI runner.
 type MediaOpener interface {
 	Open(ctx context.Context, path string) error
+	// OpenURL hands a web address to the browser.
+	OpenURL(ctx context.Context, url string) error
 }
 
 // MessageActions is the gotd-free contract for the operations a user

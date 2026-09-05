@@ -110,7 +110,7 @@ func convertMessage(m *tg.Message, chatID int64, self *Self) domain.Message {
 		ChatID:    chatID,
 		FromID:    senderOf(m, chatID),
 		Date:      time.Unix(int64(m.Date), 0).UTC(),
-		Text:      m.Message,
+		Text:      messageText(m),
 		ReplyTo:   replyTo,
 		Media:     MediaFromMessage(m),
 		Outgoing:  m.Out || self.Owns(chatID),

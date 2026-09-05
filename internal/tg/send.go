@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
@@ -227,12 +228,20 @@ func (s *Sender) SendMedia(ctx context.Context, chatID int64, file tg.InputFileC
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}
-	media := &tg.InputMediaUploadedDocument{
+	var media tg.InputMediaClass = &tg.InputMediaUploadedDocument{
 		File:     file,
 		MimeType: mimeType,
 		Attributes: []tg.DocumentAttributeClass{
 			&tg.DocumentAttributeFilename{FileName: filename},
 		},
+	}
+	if sendsAsPhoto(file, mimeType) {
+		// A picture goes as a picture, the way the official clients send
+		// one: it draws in the chat on the other end rather than sitting
+		// there as a file to open. Telegram re-encodes it, which is the
+		// trade a photo makes; anything that must arrive byte for byte is
+		// not a jpeg, and a gif is an animation, not a photo.
+		media = &tg.InputMediaUploadedPhoto{File: file}
 	}
 	plainCaption, captionEntities := markdown.Parse(caption)
 	req := &tg.MessagesSendMediaRequest{
@@ -309,4 +318,19 @@ func cryptoRandInt64() (int64, error) {
 	}
 	v := int64(binary.BigEndian.Uint64(buf[:]) >> 1)
 	return v, nil
+}
+
+// sendsAsPhoto reports whether an upload goes out as a photo rather than a
+// document: an image that is not a gif, small enough to have come through
+// the small-file path — Telegram caps photos at 10 MiB, and a big-file
+// handle means the picture is past it.
+func sendsAsPhoto(file tg.InputFileClass, mimeType string) bool {
+	if _, big := file.(*tg.InputFileBig); big {
+		return false
+	}
+	switch strings.ToLower(mimeType) {
+	case "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "image/bmp", "image/tiff":
+		return true
+	}
+	return false
 }

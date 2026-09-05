@@ -1,6 +1,7 @@
 package files
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,5 +121,29 @@ func TestOpener_RefusesAMissingFile(t *testing.T) {
 	}
 	if err := o.Open(t.Context(), filepath.Join(t.TempDir(), "gone.jpg")); err == nil {
 		t.Fatalf("expected a missing file to be refused")
+	}
+}
+
+// Only web addresses reach the browser: a message can carry any scheme
+// somebody cares to type, and the ones a desktop has handlers for are the
+// ones a stranger must not be able to fire.
+func TestOpener_OpenURL_RefusesNonWebSchemes(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{"tel:+1", "file:///etc/passwd", "javascript:alert(1)", "x-apple.systempreferences:", "ftp://files.example/a", "ssh://host.example", "https://", "not a url"} {
+		if _, err := parseWebURL(raw); err == nil {
+			t.Errorf("%q would be handed to the opener", raw)
+		}
+	}
+	for _, raw := range []string{"https://example.com/a?b=1", " HTTP://example.com "} {
+		if _, err := parseWebURL(raw); err != nil {
+			t.Errorf("%q refused: %v", raw, err)
+		}
+	}
+	// The no-host refusals also hold on the method itself, before any
+	// program is looked up.
+	o := &Opener{command: []string{"true"}}
+	if err := o.OpenURL(context.Background(), "file:///etc/passwd"); err == nil {
+		t.Fatal("a file: link reached the opener")
 	}
 }

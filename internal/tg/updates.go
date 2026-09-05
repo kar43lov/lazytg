@@ -221,7 +221,7 @@ func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass, edited bool) {
 	d.bus.Publish(events.MessageReceived{
 		ChatID:    chatID,
 		MessageID: int64(m.ID),
-		Text:      m.Message,
+		Text:      messageText(m),
 		FromID:    senderOf(m, chatID),
 		Date:      time.Unix(int64(m.Date), 0).UTC(),
 		Media:     MediaFromMessage(m),
