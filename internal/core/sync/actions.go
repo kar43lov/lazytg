@@ -56,6 +56,22 @@ type DialogActions interface {
 	MarkUnread(ctx context.Context, chatID int64, unread bool) error
 }
 
+// CallbackAnswer is what a bot says back when one of its buttons is
+// pressed: a line to show (as a toast, or as an alert the user should not
+// miss), or a web address to open, or nothing — most bots answer by
+// editing the message instead.
+type CallbackAnswer struct {
+	Message string
+	Alert   bool
+	URL     string
+}
+
+// BotPresser calls a bot back with a button's data. Satisfied by
+// *internal/tg.BotActor.
+type BotPresser interface {
+	PressButton(ctx context.Context, chatID, messageID int64, data []byte) (CallbackAnswer, error)
+}
+
 // ErrNoSuchUsername is the answer to a handle nobody holds.
 var ErrNoSuchUsername = errors.New("no such username")
 
@@ -113,6 +129,7 @@ var ErrNotEditable = errors.New("only your own messages can be edited")
 //     deletion path, and the two would drift.
 type ActionService struct {
 	resolver  UsernameResolver
+	bots      BotPresser
 	chatSaver ChatSaver
 	peerStore PeerStore
 	editor    MessageEditor
@@ -325,6 +342,24 @@ func (s *ActionService) WithResolver(resolver UsernameResolver, chats ChatSaver,
 	s.chatSaver = chats
 	s.peerStore = peers
 	return s
+}
+
+// WithBots enables pressing the buttons under a bot's messages.
+func (s *ActionService) WithBots(bots BotPresser) *ActionService {
+	s.bots = bots
+	return s
+}
+
+// PressButton calls the bot back with the button's data: one request per
+// explicit press, over a message that already exists, off the send guard
+// — nothing here creates a message. The bot's answer, if any, comes back
+// for the status bar; the edit most bots make instead arrives as an
+// ordinary update.
+func (s *ActionService) PressButton(ctx context.Context, chatID, messageID int64, data []byte) (CallbackAnswer, error) {
+	if s == nil || s.bots == nil {
+		return CallbackAnswer{}, errors.New("press button: not connected")
+	}
+	return s.bots.PressButton(ctx, chatID, messageID, data)
 }
 
 // OpenByUsername resolves a public handle, stores what came back and

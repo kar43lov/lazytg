@@ -84,6 +84,9 @@ type Model struct {
 	// download and open act on. Held as an id rather than an index
 	// because everything under it moves; see cursor.go.
 	cursorID int64
+	// buttonCursor is which key of the cursor message's keyboard Enter
+	// would press, in reading order. Reset when the cursor moves.
+	buttonCursor int
 
 	// inline holds pictures drawn under messages, keyed by message id.
 	// See inline.go.
@@ -544,9 +547,10 @@ func (m Model) renderContent() (string, []blockSpan) {
 		if m.unreadAbove(msg) {
 			appendSeparator(renderUnreadRule(m.unreadCount, width))
 		}
-		rendered, mediaLine := formatMessageBlockMarked(msg, width, nil,
+		rendered, mediaLine := formatMessageBlockKeys(msg, width, nil,
 			resolveAuthor(msg, m.chatID, m.private, m.authorNames),
-			msg.ID == cursorID, m.marked[msg.ID], m.tickPointer())
+			msg.ID == cursorID, m.marked[msg.ID], m.tickPointer(),
+			m.chosenIndexFor(msg, msg.ID == cursorID))
 		// A drawn picture is appended to its message's block so it moves
 		// with the message and is covered by the same span — a click on it
 		// means that message, which is what the user is pointing at.

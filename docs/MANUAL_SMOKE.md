@@ -338,7 +338,7 @@ Telegram его как раз не присылает.
 - [ ] Написать себе с телефона в чат, который здесь **не открыт**: терминал звонит (Ghostty — иконка в доке), заголовок вкладки `lazytg (1)`; прочитать на телефоне — заголовок снова `lazytg`, `unread 0` в статусбаре. С `LAZYTG_NOTIFY=off` тишина
 - [ ] В группе видны служебные строки: «created the group “…”», «pinned a message», пропущенный звонок в личке — «missed call»
 
-🔴 Миграции `0012`–`0016` накатятся на рабочую БД при первом запуске ветки. Бэкап до запуска: `cp ~/Library/Application\ Support/lazytg/lazytg.db ~/Library/Application\ Support/lazytg/lazytg.db.bak-before-0012`. Миграция `0014` добавляет колонки `entities` и `edit_date`, `0015` — `muted_until`, `unread_mark`, `online`, `last_seen` в `chats`, `0016` — `read_outbox_max_id` там же.
+🔴 Миграции `0012`–`0017` накатятся на рабочую БД при первом запуске ветки. Бэкап до запуска: `cp ~/Library/Application\ Support/lazytg/lazytg.db ~/Library/Application\ Support/lazytg/lazytg.db.bak-before-0012`. Миграция `0014` добавляет колонки `entities` и `edit_date`, `0015` — `muted_until`, `unread_mark`, `online`, `last_seen` в `chats`, `0016` — `read_outbox_max_id` там же, `0017` — `buttons` в `messages`.
 
 ### 19j. Ссылки, вложения без файла, фото
 
@@ -375,6 +375,14 @@ Telegram его как раз не присылает.
 - [ ] Повторить для чата, который уже в списке и имеет непрочитанные/pin → счётчик и pin не сброшены (`SaveChatIfMissing`)
 - [ ] `@nobody_has_this_handle_123` → статус «@…: no such username», тред не сменился
 - [ ] Обычные слова без совпадений → Enter ничего не делает, подсказка объясняет про `@name`
+
+### 19o. Кнопки ботов
+
+- [ ] `@BotFather` → `/mybots` (или любой бот с inline-клавиатурой): под сообщением строки `[ … ]` в раскладке бота; курсор на сообщение → одна кнопка подсвечена, подсказка «← → pick a key, Enter to press it»
+- [ ] `→`/`←` ходят по кнопкам в порядке чтения и заворачиваются; `↑`/`↓` сбрасывают выбор на первую
+- [ ] `Enter` на callback-кнопке → статус «pressing …», затем ответ бота (или «pressed …»); бот отредактировал сообщение → клавиатура под ним сменилась без переоткрытия чата; в логе один `messages.getBotCallbackAnswer`
+- [ ] Кнопка-ссылка → браузер (только http/https); reply-клавиатура (`/start` у ботов с меню) → текст в композере, фокус в композере, Enter отправляет
+- [ ] Кнопка оплаты / web app → статус «… cannot press», запроса нет
 
 ### 20. Files: upload (Ctrl-U)
 

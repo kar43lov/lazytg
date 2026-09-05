@@ -19,6 +19,7 @@ import (
 	"github.com/kar43lov/lazytg/internal/core/domain"
 	"github.com/kar43lov/lazytg/internal/core/events"
 	"github.com/kar43lov/lazytg/internal/core/search"
+	coresync "github.com/kar43lov/lazytg/internal/core/sync"
 	"github.com/kar43lov/lazytg/internal/ui/graphics"
 	"github.com/kar43lov/lazytg/internal/ui/input"
 	"github.com/kar43lov/lazytg/internal/ui/keymap"
@@ -72,6 +73,9 @@ type MessageActions interface {
 	// returns its id, so the thread can open a conversation that was
 	// not in the list.
 	OpenByUsername(ctx context.Context, name string) (int64, error)
+	// PressButton calls a bot back with the data of one of its buttons
+	// and returns what the bot said.
+	PressButton(ctx context.Context, chatID, messageID int64, data []byte) (coresync.CallbackAnswer, error)
 }
 
 // FileUploader is the gotd-free contract App.handleAttachSubmit uses

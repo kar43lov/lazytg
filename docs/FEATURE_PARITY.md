@@ -28,10 +28,10 @@ covered by tests only.
 | Notifications | 6 | 3 | 0 | 3 | 0 |
 | Privacy & security | 9 | 4 | 0 | 3 | 2 |
 | Calls & live | 5 | 1 | 0 | 0 | 4 |
-| Bots & payments | 7 | 1 | 0 | 3 | 3 |
+| Bots & payments | 7 | 2 | 0 | 2 | 3 |
 | Stickers, emoji, GIFs | 6 | 2 | 1 | 2 | 1 |
 | Stories, premium, misc | 8 | 0 | 0 | 2 | 6 |
-| **Total** | **138** | **72** | **8** | **38** | **20** |
+| **Total** | **138** | **73** | **8** | **37** | **20** |
 
 Roughly: half of TD is here, a quarter is reachable and worth doing, the
 rest is either video/voice (no terminal plays it) or product surface
@@ -214,7 +214,7 @@ rest is either video/voice (no terminal plays it) or product surface
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Talk to bots as to anyone | ✅ | |
-| Inline keyboards (buttons under bot messages) | ⬜ | `ReplyInlineMarkup` is dropped; drawing the buttons and firing `messages.getBotCallbackAnswer` is the one bot feature a terminal user needs. |
+| Inline keyboards (buttons under bot messages) | ✅ | Migration 0017; `←`/`→`/`Enter`; callback, url, copy kinds act, the rest are refused with a reason. Reply keyboards drop their text into the composer. |
 | `/command` menu | ⬜ | `bots.getBotCommands`. |
 | Inline bots (`@bot query`) | ⬜ | `messages.getInlineBotResults`. |
 | Payments | 🚫 | Not for this client. |
@@ -250,7 +250,7 @@ rest is either video/voice (no terminal plays it) or product surface
 Ranked by value to the target user (tmux + nvim + ssh) against cost and
 ban-risk. Each is one focused PR.
 
-1. **Inline keyboards** — bots are half of what a developer uses Telegram for, and a button that cannot be pressed makes the bot useless here.
+1. ~~Inline keyboards~~ — shipped.
 2. **Pinned message bar** and **forwarded-from header** — the two most visible reading gaps.
 3. **Link previews** as a badge — every link-heavy channel is unreadable without the title.
 4. **Archive** as a folder tab — the cheapest way to reach the chats people hide.

@@ -482,7 +482,10 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 			a.Repo).
 		// A conversation not in the list yet, reached by its handle: one
 		// request per name the user typed.
-		WithResolver(tgclient.NewUsernameResolver(client.API()), a.Repo, a.Peers)
+		WithResolver(tgclient.NewUsernameResolver(client.API()), a.Repo, a.Peers).
+		// A bot's button: one callback per explicit press over a message
+		// that exists; nothing here creates a message.
+		WithBots(tgclient.NewBotActor(client.API(), peerResolverAdapter{peers: a.Peers}))
 
 	// Preserve a dispatcher installed before attach. The cmd layer has to
 	// build one ahead of the client (gotd takes the update handler at

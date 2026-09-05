@@ -188,6 +188,8 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.handleOpenUsername(m)
 	case usernameResolvedMsg:
 		return a.applyUsernameResolved(m)
+	case buttonPressedMsg:
+		return a.applyButtonPressed(m)
 	case palette.LoadedMsg, palette.QueryChangedMsg:
 		updated, cmd := a.palette.Update(msg)
 		a.palette = updated

@@ -73,6 +73,9 @@ var coexisting = [][2]string{
 	// "p" pins a chat in the list and follows a reply in the thread. The
 	// two panes never hold the focus at once.
 	{"jump_to_reply", "pin_chat"},
+	// Enter sends from the composer and presses a bot's button in the
+	// thread; the composer and the thread never hold the focus at once.
+	{"press_button", "send"},
 }
 
 func sharedByDesign(owners []string) bool {

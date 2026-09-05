@@ -114,6 +114,7 @@ func injectMessages(m thread.Model, msgs []domain.Message) thread.Model {
 			// a fixture without them hides every path that reads them.
 			Entities: msg.Entities,
 			EditDate: msg.EditDate,
+			Buttons:  msg.Buttons,
 		}
 		updated, _ := m.Update(ev)
 		m = updated

@@ -58,7 +58,10 @@ type MessageReceived struct {
 	// Edited marks a rewrite of a message already delivered rather than a
 	// new one. Consumers replace the row they have and count nothing: an
 	// edit is not unread, not a notification, and not a reason to scroll.
-	Edited bool
+	// Buttons is the keyboard a bot put under the message. Carried on an
+	// edit too: replacing the keyboard is how most bots answer a press.
+	Buttons [][]domain.Button
+	Edited  bool
 	// EditDate is when the rewrite happened; zero for a message never
 	// edited.
 	EditDate time.Time

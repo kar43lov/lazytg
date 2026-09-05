@@ -147,3 +147,44 @@ func TestSaveChatIfMissing_KeepsAListedRow(t *testing.T) {
 		}
 	}
 }
+
+func TestMessageButtons_RoundTrip(t *testing.T) {
+	t.Parallel()
+	repo, ctx := openTestRepo(t)
+	if err := repo.SaveChat(ctx, domain.Chat{ID: 5, Type: domain.ChatTypePrivate, Title: "bot"}); err != nil {
+		t.Fatalf("SaveChat: %v", err)
+	}
+	want := [][]domain.Button{{{Text: "Yes", Kind: domain.ButtonCallback, Data: []byte("y")}}, {{Text: "Docs", Kind: domain.ButtonURL, URL: "https://x"}}}
+	if err := repo.SaveMessage(ctx, domain.Message{ID: 1, ChatID: 5, Date: time.Now(), Text: "pick", Buttons: want}); err != nil {
+		t.Fatalf("SaveMessage: %v", err)
+	}
+	if err := repo.SaveMessage(ctx, domain.Message{ID: 2, ChatID: 5, Date: time.Now(), Text: "plain"}); err != nil {
+		t.Fatalf("SaveMessage: %v", err)
+	}
+	msgs, err := repo.GetMessages(ctx, 5, 10, 0)
+	if err != nil || len(msgs) != 2 {
+		t.Fatalf("GetMessages: %v %v", msgs, err)
+	}
+	for _, m := range msgs {
+		switch m.ID {
+		case 1:
+			if !reflect.DeepEqual(m.Buttons, want) {
+				t.Fatalf("keyboard = %+v, want %+v", m.Buttons, want)
+			}
+		case 2:
+			if m.Buttons != nil {
+				t.Fatalf("a plain message grew a keyboard: %+v", m.Buttons)
+			}
+		}
+	}
+	// An edit that takes the keyboard away is stored as none.
+	if err := repo.SaveMessage(ctx, domain.Message{ID: 1, ChatID: 5, Date: time.Now(), Text: "picked"}); err != nil {
+		t.Fatalf("SaveMessage: %v", err)
+	}
+	msgs, _ = repo.GetMessages(ctx, 5, 10, 0)
+	for _, m := range msgs {
+		if m.ID == 1 && m.Buttons != nil {
+			t.Fatalf("the keyboard survived the edit that removed it: %+v", m.Buttons)
+		}
+	}
+}

@@ -174,6 +174,12 @@ func formatMessageBlock(msg domain.Message, width int, replyTo *domain.Message, 
 // every existing golden test — keeps its signature: a mark is an addition
 // to the row, not a change to how a row is built.
 func formatMessageBlockMarked(msg domain.Message, width int, replyTo *domain.Message, author string, cursor, marked bool, readMax int64) (string, int) {
+	return formatMessageBlockKeys(msg, width, replyTo, author, cursor, marked, readMax, -1)
+}
+
+// formatMessageBlockKeys is formatMessageBlockMarked with the keyboard's
+// chosen key, for the message under the cursor.
+func formatMessageBlockKeys(msg domain.Message, width int, replyTo *domain.Message, author string, cursor, marked bool, readMax int64, chosenKey int) (string, int) {
 	if width < minBodyWidth {
 		width = minBodyWidth
 	}
@@ -211,6 +217,10 @@ func formatMessageBlockMarked(msg domain.Message, width int, replyTo *domain.Mes
 	if row := reactionRow(msg.Reactions); row != "" {
 		b.WriteByte('\n')
 		b.WriteString(row)
+	}
+	if keys := renderButtons(msg.Buttons, chosenKey, width); keys != "" {
+		b.WriteByte('\n')
+		b.WriteString(keys)
 	}
 	return b.String(), mediaLine
 }

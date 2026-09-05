@@ -243,6 +243,7 @@ func (d *UpdatesDispatcher) publishMessage(mc tg.MessageClass, edited bool) {
 		Entities:  EntitiesFromMessage(m),
 		Edited:    edited,
 		EditDate:  editDateOf(m),
+		Buttons:   ButtonsFromMessage(m),
 	})
 }
 

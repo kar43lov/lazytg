@@ -742,9 +742,9 @@ const messageUpsertSQL = `
             id, chat_id, from_id, date, text, reply_to, raw_blob,
             media_kind, media_id, media_access_hash, media_file_reference,
             media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-            media_duration, outgoing, reactions, media_waveform, entities, edit_date
+            media_duration, outgoing, reactions, media_waveform, entities, edit_date, buttons
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chat_id, id) DO UPDATE SET
             from_id              = excluded.from_id,
             date                 = excluded.date,
@@ -765,7 +765,8 @@ const messageUpsertSQL = `
             reactions            = excluded.reactions,
             media_waveform       = excluded.media_waveform,
             entities             = excluded.entities,
-            edit_date            = excluded.edit_date
+            edit_date            = excluded.edit_date,
+            buttons              = excluded.buttons
     `
 
 // messageInsertArgs builds the positional argument slice for
@@ -822,7 +823,7 @@ func messageInsertArgs(m domain.Message) []any {
 		encodeReactions(m.Reactions),
 		mediaWave,
 		domain.EncodeEntities(m.Entities),
-		unixOrZero(m.EditDate),
+		unixOrZero(m.EditDate), domain.EncodeButtons(m.Buttons),
 	}
 }
 
@@ -903,7 +904,7 @@ const messageSelectColumns = `
         SELECT id, chat_id, from_id, date, text, reply_to, raw_blob,
                media_kind, media_id, media_access_hash, media_file_reference,
                media_dc, media_filename, media_size, media_mime_type, media_thumb_size,
-               media_duration, outgoing, reactions, media_waveform, entities, edit_date
+               media_duration, outgoing, reactions, media_waveform, entities, edit_date, buttons
     `
 
 // ErrMessageNotFound is returned by Message when the mirror holds no such
@@ -963,12 +964,13 @@ func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 			mediaWave []byte
 			entities  sql.NullString
 			editDate  int64
+			buttons   sql.NullString
 		)
 		if err := rows.Scan(
 			&m.ID, &m.ChatID, &fromID, &date, &text, &replyTo, &raw,
 			&mediaKind, &mediaID, &mediaAH, &mediaRef,
 			&mediaDC, &mediaName, &mediaSize, &mediaMime, &mediaThSz,
-			&mediaDur, &m.Outgoing, &reactions, &mediaWave, &entities, &editDate,
+			&mediaDur, &m.Outgoing, &reactions, &mediaWave, &entities, &editDate, &buttons,
 		); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
@@ -995,6 +997,7 @@ func scanMessages(rows *sql.Rows) ([]domain.Message, error) {
 		m.Reactions = decodeReactions(reactions.String)
 		m.Entities = domain.DecodeEntities(entities.String)
 		m.EditDate = timeOrZero(editDate)
+		m.Buttons = domain.DecodeButtons(buttons.String)
 		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {

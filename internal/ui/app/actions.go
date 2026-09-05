@@ -277,6 +277,8 @@ func (a App) applyMessageActionKey(k tea.KeyPressMsg) (App, tea.Cmd, bool) {
 		return a.cmdCopyTargets()
 	case key.Matches(k, a.keymap.CopyLink):
 		return a.cmdCopyLink()
+	case key.Matches(k, a.keymap.PressButton):
+		return a.cmdPressButton()
 	case key.Matches(k, a.keymap.EditMessage):
 		return a.cmdEditTarget()
 	case key.Matches(k, a.keymap.DeleteMsg):

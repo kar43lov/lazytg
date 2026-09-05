@@ -155,6 +155,28 @@ func (m Model) CanRevokeDeletes() bool {
 // In place, rather than reloading the chat: an edit changes a single message,
 // and a reload would move the reader's position — the classic way a client
 // makes you lose your place because somebody fixed a typo three screens up.
+// SetButtons replaces the keyboard under one message; nil takes it away.
+func (m Model) SetButtons(id int64, buttons [][]domain.Button) Model {
+	for i := range m.messages {
+		if m.messages[i].ID != id {
+			continue
+		}
+		if reflect.DeepEqual(m.messages[i].Buttons, buttons) {
+			return m
+		}
+		msgs := make([]domain.Message, len(m.messages))
+		copy(msgs, m.messages)
+		msgs[i].Buttons = buttons
+		m.messages = msgs
+		if m.buttonCursor >= len(flatButtons(buttons)) {
+			m.buttonCursor = 0
+		}
+		m.viewport.SetContent(m.renderAll())
+		return m
+	}
+	return m
+}
+
 func (m Model) ApplyEdit(id int64, text string, entities []domain.Entity, editDate time.Time) Model {
 	for i := range m.messages {
 		if m.messages[i].ID != id {

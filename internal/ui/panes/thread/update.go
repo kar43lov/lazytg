@@ -226,7 +226,10 @@ func (m Model) applyIncoming(ev events.MessageReceived) (Model, tea.Cmd) {
 		// message not loaded here is left alone: it will come back rewritten
 		// when its page does, and inserting it now would put it in a window
 		// it does not belong to.
-		return m.ApplyEdit(ev.MessageID, ev.Text, ev.Entities, ev.EditDate), nil
+		// The keyboard travels with the edit: replacing it is how most
+		// bots answer a press, and an edit that kept the old one would
+		// leave a button on screen the bot has already taken away.
+		return m.ApplyEdit(ev.MessageID, ev.Text, ev.Entities, ev.EditDate).SetButtons(ev.MessageID, ev.Buttons), nil
 	}
 	wasAtBottom := m.viewport.AtBottom()
 	if localID, ok := m.pendingServerIDs[ev.MessageID]; ok {
@@ -528,9 +531,19 @@ func findOutgoing(list []OutgoingMessage, localID string) (OutgoingMessage, bool
 func (m Model) handleKey(k tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch k.String() {
 	case "up", "k":
+		m.buttonCursor = 0
 		return m.MoveCursor(-1).paginateAfterScroll(nil, false)
 	case "down", "j":
+		m.buttonCursor = 0
 		return m.MoveCursor(1).paginateAfterScroll(nil, true)
+	case "left":
+		if moved, ok := m.moveButton(-1); ok {
+			return moved, nil
+		}
+	case "right":
+		if moved, ok := m.moveButton(1); ok {
+			return moved, nil
+		}
 	case " ", "space":
 		// Space marks the message under the cursor. It is the gesture a
 		// file manager uses for the same job, and it is free here: the
@@ -763,5 +776,6 @@ func messageFromEvent(ev events.MessageReceived) domain.Message {
 		Entities:  ev.Entities,
 		EditDate:  ev.EditDate,
 		Outgoing:  ev.Outgoing,
+		Buttons:   ev.Buttons,
 	}
 }

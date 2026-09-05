@@ -117,6 +117,7 @@ func convertMessage(m *tg.Message, chatID int64, self *Self) domain.Message {
 		Reactions: ReactionsFromMessage(m),
 		Entities:  EntitiesFromMessage(m),
 		EditDate:  editDateOf(m),
+		Buttons:   ButtonsFromMessage(m),
 	}
 }
 

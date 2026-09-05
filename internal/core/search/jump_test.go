@@ -252,14 +252,17 @@ func TestService_JumpContext_CarriesEntities(t *testing.T) {
 	want := []domain.Entity{{Kind: domain.EntityCode, Offset: 0, Length: 3}}
 	for i := 1; i <= 5; i++ {
 		var es []domain.Entity
+		var keys [][]domain.Button
 		if i == 3 {
 			es = want
+			keys = [][]domain.Button{{{Text: "Go", Kind: domain.ButtonCallback, Data: []byte("go")}}}
 		}
 		if err := repo.SaveMessage(ctx, domain.Message{
 			ID: int64(i), ChatID: chatID, FromID: 7,
 			Date:     time.Date(2026, 1, 1, 0, 0, i, 0, time.UTC),
 			Text:     "msg",
 			Entities: es,
+			Buttons:  keys,
 		}); err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -275,5 +278,8 @@ func TestService_JumpContext_CarriesEntities(t *testing.T) {
 	}
 	if got := msgs[target].Entities; len(got) != 1 || got[0] != want[0] {
 		t.Fatalf("jumped-to message carries %+v, want %+v", got, want)
+	}
+	if keys := msgs[target].Buttons; len(keys) != 1 || keys[0][0].Text != "Go" {
+		t.Fatalf("jumped-to message lost its keyboard: %+v", keys)
 	}
 }

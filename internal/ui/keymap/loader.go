@@ -67,6 +67,7 @@ func bindingFields(km *Keymap) map[string]*key.Binding {
 		"complete_emoji":  &km.CompleteEmoji,
 		"copy_message":    &km.CopyMessage,
 		"copy_link":       &km.CopyLink,
+		"press_button":    &km.PressButton,
 		"edit_message":    &km.EditMessage,
 		"delete_msg":      &km.DeleteMsg,
 		"attach":          &km.Attach,

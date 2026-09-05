@@ -140,6 +140,9 @@ type Message struct {
 	// was. The header says "edited" from it, which is the one thing a
 	// reader wants to know about a message that changed under them.
 	EditDate time.Time
+	// Buttons is the keyboard a bot put under the message, rows of keys;
+	// nil for the ordinary message that has none.
+	Buttons [][]Button
 }
 
 // Reaction is one emoji on a message, with how many people used it.

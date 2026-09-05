@@ -331,3 +331,99 @@ func TestPalette_OpensAChatByUsername(t *testing.T) {
 		t.Fatal("a refused lookup moved the thread")
 	}
 }
+
+func appWithBotMessage(t *testing.T, actions *fakeActions, opener *fakeOpener) App {
+	t.Helper()
+	threadModel := thread.New()
+	threadModel = injectMessages(threadModel, []domain.Message{{
+		ID: 41, ChatID: 42, Date: time.Now(), Text: "pick one",
+		Buttons: [][]domain.Button{
+			{{Text: "Yes", Kind: domain.ButtonCallback, Data: []byte("y")}, {Text: "Docs", Kind: domain.ButtonURL, URL: "https://example.com/d"}},
+			{{Text: "/start", Kind: domain.ButtonText}, {Text: "Copy", Kind: domain.ButtonCopy, URL: "token"}, {Text: "Pay", Kind: domain.ButtonOther}},
+		},
+	}})
+	inputModel := input.NewWithDeps(nil, keymap.Default(), nil)
+	a := New(Deps{Keymap: keymap.Default(), Thread: &threadModel, Input: &inputModel, Actions: actions, Opener: opener})
+	model, _ := a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	a = tabTo(t, model.(App), FocusThread)
+	a.thread = a.thread.MoveCursor(-1)
+	return a
+}
+
+func pressChosen(t *testing.T, a App) App {
+	t.Helper()
+	next, cmd := press(t, a, "enter")
+	if cmd == nil {
+		return next
+	}
+	model, _ := next.Update(cmd())
+	return model.(App)
+}
+
+func right(a App) App {
+	updated, _ := a.thread.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	a.thread = updated
+	return a
+}
+
+// Enter on a callback key calls the bot with the key's data and shows what
+// it said; a bot that answers with nothing is reported as pressed.
+func TestBotButton_CallbackGoesToTheBot(t *testing.T) {
+	t.Parallel()
+
+	actions := &fakeActions{pressAnswer: coresync.CallbackAnswer{Message: "Thanks!", Alert: true}}
+	a := appWithBotMessage(t, actions, &fakeOpener{})
+	a = pressChosen(t, a)
+	if got := actions.presses; len(got) != 1 || got[0].chatID != 42 || got[0].messageID != 41 || string(got[0].data) != "y" {
+		t.Fatalf("presses = %+v", got)
+	}
+	if !strings.Contains(a.statusText(), "⚠ Thanks!") {
+		t.Fatalf("status %q", a.statusText())
+	}
+	actions.pressAnswer = coresync.CallbackAnswer{}
+	a = pressChosen(t, a)
+	if !strings.Contains(a.statusText(), "pressed “Yes”") {
+		t.Fatalf("status %q", a.statusText())
+	}
+}
+
+// The other kinds: a link key opens the browser, a reply-keyboard key goes
+// into the composer, a copy key onto the clipboard, and the rest say why not.
+func TestBotButton_OtherKinds(t *testing.T) {
+	t.Parallel()
+
+	actions := &fakeActions{}
+	opener := &fakeOpener{}
+	a := appWithBotMessage(t, actions, opener)
+
+	a = right(a)
+	a = pressChosen(t, a)
+	if got := opener.snapshot(); len(got) != 1 || got[0] != "url:https://example.com/d" {
+		t.Fatalf("link key: opener got %v", got)
+	}
+
+	a = right(a)
+	a = pressChosen(t, a)
+	if a.Focus() != FocusInput || a.input.Value() != "/start" {
+		t.Fatalf("text key: focus %v composer %q", a.Focus(), a.input.Value())
+	}
+	a = tabTo(t, a, FocusThread)
+
+	a = right(a)
+	next, cmd := press(t, a, "enter")
+	if cmd == nil {
+		t.Fatal("copy key produced no clipboard command")
+	}
+	if !strings.Contains(next.statusText(), "copied") {
+		t.Fatalf("copy key: status %q", next.statusText())
+	}
+
+	a = right(next)
+	a = pressChosen(t, a)
+	if !strings.Contains(a.statusText(), "cannot press") {
+		t.Fatalf("other key: status %q", a.statusText())
+	}
+	if len(actions.presses) != 0 {
+		t.Fatalf("a non-callback key reached the bot: %+v", actions.presses)
+	}
+}

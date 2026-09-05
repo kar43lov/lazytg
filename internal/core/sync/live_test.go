@@ -685,9 +685,10 @@ func TestLiveService_PersistsEntities(t *testing.T) {
 	done := svc.Start(ctx)
 
 	want := []domain.Entity{{Kind: domain.EntityBold, Offset: 0, Length: 5}}
+	keys := [][]domain.Button{{{Text: "Go", Kind: domain.ButtonCallback, Data: []byte("go")}}}
 	bus.Publish(events.MessageReceived{
 		ChatID: 1, MessageID: 100, Text: "hello", FromID: 7,
-		Date: time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC), Entities: want,
+		Date: time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC), Entities: want, Buttons: keys,
 	})
 
 	deadline := time.After(time.Second)
@@ -695,6 +696,9 @@ func TestLiveService_PersistsEntities(t *testing.T) {
 		if got := store.snapshot(); len(got) == 1 {
 			if len(got[0].Entities) != 1 || got[0].Entities[0] != want[0] {
 				t.Fatalf("saved message carries %+v, want %+v", got[0].Entities, want)
+			}
+			if len(got[0].Buttons) != 1 || got[0].Buttons[0][0].Text != "Go" {
+				t.Fatalf("saved message lost its keyboard: %+v", got[0].Buttons)
 			}
 			break
 		}

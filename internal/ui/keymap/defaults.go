@@ -47,6 +47,7 @@ type Keymap struct {
 	CompleteEmoji key.Binding
 	CopyMessage   key.Binding
 	CopyLink      key.Binding
+	PressButton   key.Binding
 	EditMessage   key.Binding
 	DeleteMsg     key.Binding
 	Attach        key.Binding
@@ -209,6 +210,13 @@ func Default() Keymap {
 		CopyLink: key.NewBinding(
 			key.WithKeys("l"),
 			key.WithHelp("l", "copy link to message"),
+		),
+		// Enter presses the chosen key of a bot's keyboard under the
+		// message at the cursor. Enter also sends in the composer and
+		// opens a chat in the list; the three never share a focus.
+		PressButton: key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "press the chosen bot button"),
 		),
 		EditMessage: key.NewBinding(
 			key.WithKeys("e"),

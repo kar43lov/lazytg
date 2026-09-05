@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
+	coresync "github.com/kar43lov/lazytg/internal/core/sync"
 	"github.com/kar43lov/lazytg/internal/ui/input"
 	"github.com/kar43lov/lazytg/internal/ui/keymap"
 	"github.com/kar43lov/lazytg/internal/ui/panes/thread"
@@ -28,6 +29,9 @@ type fakeActions struct {
 	resolved    []string
 	resolveID   int64
 	resolveErr  error
+	presses     []pressRecord
+	pressAnswer coresync.CallbackAnswer
+	pressErr    error
 	reacts      []reactRecord
 	err         error
 }
@@ -422,6 +426,18 @@ func (f *fakeActions) Pin(_ context.Context, chatID int64, pinned bool) error {
 func (f *fakeActions) MarkUnread(_ context.Context, chatID int64) error {
 	f.chatRecord(chatActionRecord{kind: "unread", chatID: chatID})
 	return f.chatErr
+}
+
+type pressRecord struct {
+	chatID, messageID int64
+	data              []byte
+}
+
+func (f *fakeActions) PressButton(_ context.Context, chatID, messageID int64, data []byte) (coresync.CallbackAnswer, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.presses = append(f.presses, pressRecord{chatID: chatID, messageID: messageID, data: data})
+	return f.pressAnswer, f.pressErr
 }
 
 func (f *fakeActions) OpenByUsername(_ context.Context, name string) (int64, error) {

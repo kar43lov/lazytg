@@ -611,6 +611,31 @@ func (f *fakeResolver) ResolveUsername(_ context.Context, name string) (domain.C
 
 // A resolved handle is stored — peer first, then the chat — and announced,
 // and its id comes back for the thread to open.
+type fakeBots struct {
+	answer CallbackAnswer
+	err    error
+	got    []int64
+}
+
+func (f *fakeBots) PressButton(_ context.Context, chatID, messageID int64, _ []byte) (CallbackAnswer, error) {
+	f.got = append(f.got, chatID, messageID)
+	return f.answer, f.err
+}
+
+func TestActionService_PressButton(t *testing.T) {
+	t.Parallel()
+
+	bots := &fakeBots{answer: CallbackAnswer{Message: "ok"}}
+	svc := NewActionService(nil, nil, nil, nil, nil, nil, nil).WithBots(bots)
+	answer, err := svc.PressButton(context.Background(), 5, 41, []byte("x"))
+	if err != nil || answer.Message != "ok" || len(bots.got) != 2 || bots.got[1] != 41 {
+		t.Fatalf("PressButton = %+v, %v; got %v", answer, err, bots.got)
+	}
+	if _, err := NewActionService(nil, nil, nil, nil, nil, nil, nil).PressButton(context.Background(), 5, 41, nil); err == nil {
+		t.Fatal("an unconfigured service pressed a button")
+	}
+}
+
 func TestActionService_OpenByUsername(t *testing.T) {
 	t.Parallel()
 
