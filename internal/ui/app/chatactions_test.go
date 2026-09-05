@@ -1,11 +1,12 @@
 package app
 
 import (
-	"github.com/kar43lov/lazytg/internal/core/events"
-	"github.com/kar43lov/lazytg/internal/ui/palette"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kar43lov/lazytg/internal/core/events"
+	"github.com/kar43lov/lazytg/internal/ui/palette"
 
 	tea "charm.land/bubbletea/v2"
 
