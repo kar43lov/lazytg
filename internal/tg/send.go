@@ -40,12 +40,29 @@ type Sender struct {
 	api     MessagesSendMessageClient
 	peers   PeerResolver
 	randInt func() (int64, error)
+	// echo is where a sent message is announced to the rest of the
+	// program. Telegram does not push a message back to the session that
+	// sent it — the response to messages.sendMessage is the whole
+	// acknowledgement — so without this the mirror learns about the
+	// account's own messages only when the chat is next opened and its
+	// history re-fetched: they were missing from search, from the chat
+	// list preview, and from the thread after a restart.
+	echo *UpdatesDispatcher
 }
 
 // SenderOption tweaks an optional knob on Sender. Using functional options
 // keeps the constructor signature stable as we add knobs (e.g. silent
 // sends, scheduled messages) without breaking existing call sites.
 type SenderOption func(*Sender)
+
+// WithEcho routes every sent message through the dispatcher, as if the
+// server had pushed it. The dispatcher's duplicate filter sees it, so a
+// copy arriving by any other path is dropped rather than shown twice.
+func WithEcho(d *UpdatesDispatcher) SenderOption {
+	return func(s *Sender) {
+		s.echo = d
+	}
+}
 
 // WithRandomIDFunc overrides the RandomID generator. Tests use it to make
 // the generated ID deterministic; production keeps the crypto/rand default.
@@ -123,7 +140,55 @@ func (s *Sender) SendText(ctx context.Context, chatID int64, text string, replyT
 		}
 		return 0, fmt.Errorf("messages.sendMessage chat=%d: %w", chatID, err)
 	}
+	s.announce(ctx, updates, peer, plain, replyTo)
 	return extractMessageID(updates), nil
+}
+
+// announce hands the sent message to the dispatcher. A full Updates
+// payload carries the message itself and goes through as it is; the short
+// acknowledgement carries only the id, the date and the entities the
+// server settled on, so the message is rebuilt around them from what was
+// sent — which is exactly what the official clients do with it.
+func (s *Sender) announce(ctx context.Context, updates tg.UpdatesClass, peer domain.Peer, plain string, replyTo int) {
+	if s.echo == nil || updates == nil {
+		return
+	}
+	short, ok := updates.(*tg.UpdateShortSentMessage)
+	if !ok {
+		_ = s.echo.handle(ctx, updates)
+		return
+	}
+	m := &tg.Message{
+		ID:      short.ID,
+		Date:    short.Date,
+		Message: plain,
+		Out:     true,
+		PeerID:  peerToWire(peer),
+	}
+	if ents, ok := short.GetEntities(); ok && len(ents) > 0 {
+		m.SetEntities(ents)
+	}
+	if media, ok := short.GetMedia(); ok {
+		m.SetMedia(media)
+	}
+	if replyTo > 0 {
+		header := &tg.MessageReplyHeader{}
+		header.SetReplyToMsgID(replyTo)
+		m.SetReplyTo(header)
+	}
+	s.echo.publishMessage(m, false)
+}
+
+// peerToWire names a chat the way a message's peer_id does.
+func peerToWire(p domain.Peer) tg.PeerClass {
+	switch p.Type {
+	case domain.ChatTypeGroup:
+		return &tg.PeerChat{ChatID: p.ID}
+	case domain.ChatTypeChannel, domain.ChatTypeSupergroup:
+		return &tg.PeerChannel{ChannelID: p.ID}
+	default:
+		return &tg.PeerUser{UserID: p.ID}
+	}
 }
 
 // SendMedia delivers a previously-uploaded file as a document message
@@ -192,6 +257,7 @@ func (s *Sender) SendMedia(ctx context.Context, chatID int64, file tg.InputFileC
 		}
 		return 0, fmt.Errorf("messages.sendMedia chat=%d: %w", chatID, err)
 	}
+	s.announce(ctx, updates, peer, plainCaption, replyTo)
 	return extractMessageID(updates), nil
 }
 

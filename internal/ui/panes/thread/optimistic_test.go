@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/kar43lov/lazytg/internal/core/events"
 )
 
@@ -344,5 +346,43 @@ func TestOutgoingStateChange_KeepsSendTime(t *testing.T) {
 	}
 	if rows[0].Text != "234" {
 		t.Errorf("text lost on the Sent event: %q", rows[0].Text)
+	}
+}
+
+// The sender announces the message before the send state is written, so
+// the real row can be on screen before the optimistic one learns it was
+// sent. In that order the optimistic row is done the moment the state
+// arrives; keeping it would show the message twice.
+func TestApplyOutgoingState_SentAfterTheEchoDropsTheOptimisticRow(t *testing.T) {
+	t.Parallel()
+
+	m := sized(New())
+	m, _ = m.OpenChat(1)
+	m = m.ApplyDispatched("local-1", 1, "hello")
+	m, _ = m.Update(events.MessageReceived{ChatID: 1, MessageID: 500, Text: "hello", Date: time.Now(), Outgoing: true})
+	m, _ = m.Update(events.OutgoingMessageStateChanged{LocalID: "local-1", ChatID: 1, ServerID: 500, State: events.OutgoingStateSent})
+
+	if n := len(m.Messages()); n != 1 {
+		t.Fatalf("thread holds %d messages, want the one real row", n)
+	}
+	if out := strings.Count(ansi.Strip(m.View()), "hello"); out != 1 {
+		t.Fatalf("hello drawn %d times, want once:\n%s", out, ansi.Strip(m.View()))
+	}
+}
+
+// The same message can arrive by two paths — the sender's own echo and,
+// for some kinds of send, the server's — and the second copy replaces the
+// first rather than sitting under it.
+func TestApplyIncoming_SameIDReplacesRatherThanAppends(t *testing.T) {
+	t.Parallel()
+
+	m := New()
+	m, _ = m.OpenChat(1)
+	when := time.Now()
+	m, _ = m.Update(events.MessageReceived{ChatID: 1, MessageID: 5, Text: "first copy", Date: when})
+	m, _ = m.Update(events.MessageReceived{ChatID: 1, MessageID: 5, Text: "second copy", Date: when})
+	msgs := m.Messages()
+	if len(msgs) != 1 || msgs[0].Text != "second copy" {
+		t.Fatalf("thread holds %+v, want one row with the later text", msgs)
 	}
 }

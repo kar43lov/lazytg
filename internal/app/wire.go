@@ -475,11 +475,6 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 		// as text and media rather than around it.
 		WithRateLimiter(a.SendGuard)
 
-	sender := tgclient.NewSender(client.API(), peerResolverAdapter{peers: a.Peers})
-	a.Sender = coresync.NewSendService(senderAdapter{sender: sender}, outgoingStoreAdapter{repo: a.Repo}, a.Bus, a.Log, coresync.SendConfig{}).
-		WithBackgroundContext(bgCtx).
-		WithRateLimiter(a.SendGuard)
-
 	// Preserve a dispatcher installed before attach. The cmd layer has to
 	// build one ahead of the client (gotd takes the update handler at
 	// construction time only) and hands it in through App.Updates;
@@ -488,6 +483,15 @@ func (a *App) AttachClient(bgCtx context.Context, client *tgclient.Client, opts 
 	if a.Updates == nil {
 		a.Updates = tgclient.NewUpdatesDispatcher(a.Bus, a.Log)
 	}
+
+	// The sender announces what it sent through the dispatcher: Telegram
+	// does not push a message back to the session that sent it, so this
+	// is the only way the account's own messages reach the mirror before
+	// the chat is next reopened.
+	sender := tgclient.NewSender(client.API(), peerResolverAdapter{peers: a.Peers}, tgclient.WithEcho(a.Updates))
+	a.Sender = coresync.NewSendService(senderAdapter{sender: sender}, outgoingStoreAdapter{repo: a.Repo}, a.Bus, a.Log, coresync.SendConfig{}).
+		WithBackgroundContext(bgCtx).
+		WithRateLimiter(a.SendGuard)
 
 	// The polling fallback is opt-in and stays off by default: it is steady
 	// background traffic on an account Telegram already watches more closely

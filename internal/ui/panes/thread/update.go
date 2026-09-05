@@ -231,19 +231,18 @@ func (m Model) applyIncoming(ev events.MessageReceived) (Model, tea.Cmd) {
 		m.outgoing = removeOutgoing(m.outgoing, localID)
 		delete(m.pendingServerIDs, ev.MessageID)
 	}
-	m.messages = insertByDate(m.messages, domain.Message{
-		ID:        ev.MessageID,
-		ChatID:    ev.ChatID,
-		FromID:    ev.FromID,
-		Date:      ev.Date,
-		Text:      ev.Text,
-		Media:     ev.Media,
-		ReplyTo:   ev.ReplyTo,
-		Reactions: ev.Reactions,
-		Entities:  ev.Entities,
-		EditDate:  ev.EditDate,
-		Outgoing:  ev.Outgoing,
-	})
+	if i := m.indexOfMessage(ev.MessageID); i >= 0 {
+		// Already here — the same message by another path. Replace rather
+		// than append: two rows with one id is the one thing worse than
+		// a late arrival.
+		msgs := make([]domain.Message, len(m.messages))
+		copy(msgs, m.messages)
+		msgs[i] = messageFromEvent(ev)
+		m.messages = msgs
+		m.viewport.SetContent(m.renderAll())
+		return m, nil
+	}
+	m.messages = insertByDate(m.messages, messageFromEvent(ev))
 	m.recomputeOldestID()
 	m.viewport.SetContent(m.renderAll())
 	if wasAtBottom {
@@ -381,10 +380,18 @@ func (m Model) applyOutgoingState(ev events.OutgoingMessageStateChanged) (Model,
 	case events.OutgoingStatePending:
 		return m, nil
 	case events.OutgoingStateSent:
+		m.finalizedLocalIDs[ev.LocalID] = struct{}{}
+		if ev.ServerID > 0 && m.indexOfMessage(ev.ServerID) >= 0 {
+			// The echo got here first — it can, since the sender announces
+			// the message before the send state is written — so the real
+			// row is already on screen and the optimistic one is done.
+			m.outgoing = removeOutgoing(m.outgoing, ev.LocalID)
+			m.viewport.SetContent(m.renderAll())
+			return m, nil
+		}
 		if ev.ServerID > 0 {
 			m.pendingServerIDs[ev.ServerID] = ev.LocalID
 		}
-		m.finalizedLocalIDs[ev.LocalID] = struct{}{}
 		// If the optimistic row is already present (the common ordering
 		// — ApplyDispatched ran first), flip its state in place. If it
 		// is missing (the inverted race — Sent fired before
@@ -726,4 +733,33 @@ func countRenderedLines(msgs []domain.Message, width int) int {
 // so the line estimate is correct for Cyrillic / CJK content.
 func lengthRunes(s string) int {
 	return len([]rune(s))
+}
+
+// indexOfMessage is the position of the message with id in the loaded
+// window, or -1.
+func (m Model) indexOfMessage(id int64) int {
+	for i := range m.messages {
+		if m.messages[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// messageFromEvent is the stored shape of a live arrival. One place, so a
+// field added to the event is added here and nowhere else forgets it.
+func messageFromEvent(ev events.MessageReceived) domain.Message {
+	return domain.Message{
+		ID:        ev.MessageID,
+		ChatID:    ev.ChatID,
+		FromID:    ev.FromID,
+		Date:      ev.Date,
+		Text:      ev.Text,
+		Media:     ev.Media,
+		ReplyTo:   ev.ReplyTo,
+		Reactions: ev.Reactions,
+		Entities:  ev.Entities,
+		EditDate:  ev.EditDate,
+		Outgoing:  ev.Outgoing,
+	}
 }
