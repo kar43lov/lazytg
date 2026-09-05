@@ -56,6 +56,22 @@ type DialogActions interface {
 	MarkUnread(ctx context.Context, chatID int64, unread bool) error
 }
 
+// ErrNoSuchUsername is the answer to a handle nobody holds.
+var ErrNoSuchUsername = errors.New("no such username")
+
+// UsernameResolver turns a public handle into a chat and the peer that
+// addresses it. Satisfied by *internal/tg.UsernameResolver.
+type UsernameResolver interface {
+	ResolveUsername(ctx context.Context, name string) (domain.Chat, domain.Peer, error)
+}
+
+// ChatSaver stores a chat row when there is none: the resolved chat has
+// to exist locally before the thread can open it, and one that is already
+// listed keeps its dialog facts, which a resolved object does not carry.
+type ChatSaver interface {
+	SaveChatIfMissing(ctx context.Context, c domain.Chat) error
+}
+
 // ChatStateStore is where the list facts land once the server has agreed.
 // The same setters the live path uses, so the row looks the same whichever
 // side changed it.
@@ -96,6 +112,9 @@ var ErrNotEditable = errors.New("only your own messages can be edited")
 //     space; duplicating that here would be a second implementation of a
 //     deletion path, and the two would drift.
 type ActionService struct {
+	resolver  UsernameResolver
+	chatSaver ChatSaver
+	peerStore PeerStore
 	editor    MessageEditor
 	deleter   MessageDeleter
 	forwarder MessageForwarder
@@ -297,6 +316,38 @@ func (s *ActionService) WithDialogs(dialogs DialogActions, marker ReadMarker, ch
 	s.marker = marker
 	s.chats = chats
 	return s
+}
+
+// WithResolver enables opening a chat by its public handle: the resolved
+// chat and peer are stored, so the thread can load and address it.
+func (s *ActionService) WithResolver(resolver UsernameResolver, chats ChatSaver, peers PeerStore) *ActionService {
+	s.resolver = resolver
+	s.chatSaver = chats
+	s.peerStore = peers
+	return s
+}
+
+// OpenByUsername resolves a public handle, stores what came back and
+// returns the chat id to open. The peer goes in first: a chat row without
+// its peer is one the history loader cannot address.
+func (s *ActionService) OpenByUsername(ctx context.Context, name string) (int64, error) {
+	if s.resolver == nil || s.chatSaver == nil || s.peerStore == nil {
+		return 0, errors.New("open by username: not connected")
+	}
+	chat, peer, err := s.resolver.ResolveUsername(ctx, name)
+	if err != nil {
+		return 0, err
+	}
+	if err := s.peerStore.Save(ctx, peer); err != nil {
+		return 0, fmt.Errorf("open @%s: save peer: %w", name, err)
+	}
+	if err := s.chatSaver.SaveChatIfMissing(ctx, chat); err != nil {
+		return 0, fmt.Errorf("open @%s: save chat: %w", name, err)
+	}
+	if s.bus != nil {
+		s.bus.Publish(events.DialogUpdated{ChatID: chat.ID})
+	}
+	return chat.ID, nil
 }
 
 // Mute silences a chat until the given time; the zero time unmutes.

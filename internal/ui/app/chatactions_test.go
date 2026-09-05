@@ -1,11 +1,13 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kar43lov/lazytg/internal/core/events"
+	coresync "github.com/kar43lov/lazytg/internal/core/sync"
 	"github.com/kar43lov/lazytg/internal/ui/palette"
 
 	tea "charm.land/bubbletea/v2"
@@ -293,5 +295,39 @@ func TestDraftChanged_ReachesComposerAndList(t *testing.T) {
 	}
 	if it, _ := a.chats.ItemByID(7); it.Draft() != "from the phone" {
 		t.Fatalf("row draft = %q", it.Draft())
+	}
+}
+
+// "@name" from the palette goes to the server once, and the answer opens
+// like a palette pick; a refusal lands in the status bar.
+func TestPalette_OpensAChatByUsername(t *testing.T) {
+	t.Parallel()
+
+	actions := &fakeActions{resolveID: 4242}
+	threadModel := thread.New()
+	a := New(Deps{Keymap: keymap.Default(), Thread: &threadModel, Actions: actions})
+	model, _ := a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	model, cmd := model.(App).Update(palette.OpenUsernameMsg{Username: "durov"})
+	if cmd == nil {
+		t.Fatal("no lookup command")
+	}
+	model, _ = model.(App).Update(cmd())
+	a = model.(App)
+	if got := actions.resolved; len(got) != 1 || got[0] != "durov" {
+		t.Fatalf("resolved = %v", got)
+	}
+	if a.thread.ChatID() != 4242 {
+		t.Fatalf("thread opened chat %d, want 4242", a.thread.ChatID())
+	}
+
+	actions.resolveErr = fmt.Errorf("@nobody: %w", coresync.ErrNoSuchUsername)
+	model, cmd = a.Update(palette.OpenUsernameMsg{Username: "nobody"})
+	model, _ = model.(App).Update(cmd())
+	a = model.(App)
+	if s := a.statusText(); !strings.Contains(s, "@nobody: no such username") || strings.Contains(s, "@nobody: @nobody") {
+		t.Fatalf("status %q", s)
+	}
+	if a.thread.ChatID() != 4242 {
+		t.Fatal("a refused lookup moved the thread")
 	}
 }

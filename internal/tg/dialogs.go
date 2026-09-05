@@ -160,18 +160,38 @@ func resolveDialog(
 	chats map[int64]tg.ChatClass,
 	dates map[peerMessageKey]time.Time,
 ) (domain.Chat, domain.Peer, bool) {
-	chat := domain.Chat{
-		UnreadCount: dlg.UnreadCount,
-		Pinned:      dlg.Pinned,
-		UnreadMark:  dlg.UnreadMark,
-		MutedUntil:  muteUntilOf(dlg.NotifySettings),
-
-		ReadOutboxMaxID: int64(dlg.ReadOutboxMaxID),
-		Draft:           draftText(dlg.Draft),
+	chat, peer, ok := resolvePeer(dlg.Peer, users, chats)
+	if !ok {
+		return domain.Chat{}, domain.Peer{}, false
 	}
+	chat.UnreadCount = dlg.UnreadCount
+	chat.Pinned = dlg.Pinned
+	chat.UnreadMark = dlg.UnreadMark
+	chat.MutedUntil = muteUntilOf(dlg.NotifySettings)
+	chat.ReadOutboxMaxID = int64(dlg.ReadOutboxMaxID)
+	chat.Draft = draftText(dlg.Draft)
+
+	if ts, ok := dates[peerMessageKey{peerID: chat.ID, msgID: dlg.TopMessage}]; ok {
+		chat.LastMessageDate = ts
+	}
+	return chat, peer, true
+}
+
+// resolvePeer maps a peer reference onto the chat it names and the Peer
+// needed to address it, from the user and chat objects that came with it.
+// It carries what the object itself says — name, handle, kind, presence —
+// and nothing about a dialog, so it serves the dialog page and a resolved
+// username alike. False when the object is missing: inventing an access
+// hash produces a chat that errors on open.
+func resolvePeer(
+	ref tg.PeerClass,
+	users map[int64]*tg.User,
+	chats map[int64]tg.ChatClass,
+) (domain.Chat, domain.Peer, bool) {
+	var chat domain.Chat
 	var peer domain.Peer
 
-	switch p := dlg.Peer.(type) {
+	switch p := ref.(type) {
 	case *tg.PeerUser:
 		u, ok := users[p.UserID]
 		if !ok {
@@ -227,10 +247,6 @@ func resolveDialog(
 
 	default:
 		return domain.Chat{}, domain.Peer{}, false
-	}
-
-	if ts, ok := dates[peerMessageKey{peerID: chat.ID, msgID: dlg.TopMessage}]; ok {
-		chat.LastMessageDate = ts
 	}
 	return chat, peer, true
 }

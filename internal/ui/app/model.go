@@ -68,6 +68,10 @@ type MessageActions interface {
 	Pin(ctx context.Context, chatID int64, pinned bool) error
 	MarkUnread(ctx context.Context, chatID int64) error
 	MarkRead(ctx context.Context, chatID int64, marked bool) error
+	// OpenByUsername resolves a public handle, stores the chat and
+	// returns its id, so the thread can open a conversation that was
+	// not in the list.
+	OpenByUsername(ctx context.Context, name string) (int64, error)
 }
 
 // FileUploader is the gotd-free contract App.handleAttachSubmit uses

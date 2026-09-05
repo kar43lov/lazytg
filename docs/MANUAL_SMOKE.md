@@ -369,6 +369,13 @@ Telegram его как раз не присылает.
 - [ ] Перезапустить lazytg → черновик снова на месте (приходит со страницей диалогов, в БД не хранится)
 - [ ] В логе нет `messages.saveDraft` — черновики, набранные здесь, на сервер не уходят
 
+### 19n. Чат по @username
+
+- [ ] `Ctrl+Space`, набрать `@telegram` (или `t.me/telegram`) → подсказка «no matches — Enter opens @telegram» (если чата Telegram нет в списке), Enter → статус «looking up…», затем «opened @telegram», тред открыт, чат появился в списке; в логе один `contacts.resolveUsername`
+- [ ] Повторить для чата, который уже в списке и имеет непрочитанные/pin → счётчик и pin не сброшены (`SaveChatIfMissing`)
+- [ ] `@nobody_has_this_handle_123` → статус «@…: no such username», тред не сменился
+- [ ] Обычные слова без совпадений → Enter ничего не делает, подсказка объясняет про `@name`
+
 ### 20. Files: upload (Ctrl-U)
 
 - [ ] Откройте любой чат, поставьте фокус в Input

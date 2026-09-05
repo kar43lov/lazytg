@@ -2,6 +2,8 @@ package palette
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"regexp"
+	"strings"
 )
 
 // Update routes incoming messages. Order matters:
@@ -60,6 +62,10 @@ func (m Model) handleKey(k tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m.Close(), func() tea.Msg { return ClosedMsg{} }
 	case tea.KeyEnter:
 		if len(m.filtered) == 0 {
+			if name := UsernameFrom(m.input.Value()); name != "" {
+				closed := m.Close()
+				return closed, func() tea.Msg { return OpenUsernameMsg{Username: name} }
+			}
 			return m, nil
 		}
 		idx := m.filtered[m.cursor]
@@ -89,4 +95,32 @@ func (m Model) handleKey(k tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.cursor = 0
 	}
 	return m, cmd
+}
+
+// usernamePattern is what Telegram accepts as a public handle: letters,
+// digits and underscores, five to thirty-two of them (a few older
+// four-character handles exist and are let through).
+var usernamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{3,31}$`)
+
+// UsernameFrom reads a public handle out of what was typed: "@name",
+// "name" after a t.me address, with or without the scheme. Empty when the
+// text is not one — a t.me/c/… link, a joinchat invite, plain words.
+func UsernameFrom(query string) string {
+	q := strings.TrimSpace(query)
+	switch {
+	case strings.HasPrefix(q, "@"):
+		q = q[1:]
+	default:
+		q = strings.TrimPrefix(q, "https://")
+		q = strings.TrimPrefix(q, "http://")
+		if !strings.HasPrefix(q, "t.me/") {
+			return ""
+		}
+		q = strings.TrimPrefix(q, "t.me/")
+	}
+	q = strings.TrimSuffix(q, "/")
+	if !usernamePattern.MatchString(q) {
+		return ""
+	}
+	return q
 }

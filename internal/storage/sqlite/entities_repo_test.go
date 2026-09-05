@@ -113,3 +113,37 @@ func TestChatState_ReadOutboxOnlyMovesForward(t *testing.T) {
 		t.Fatalf("read pointer = %d, want 9", chats[0].ReadOutboxMaxID)
 	}
 }
+
+// A chat reached by its handle is inserted when new and left alone when it
+// is already listed: the resolved object carries no dialog facts, and
+// writing it over the row would zero the count, the pin and the mute.
+func TestSaveChatIfMissing_KeepsAListedRow(t *testing.T) {
+	t.Parallel()
+	repo, ctx := openTestRepo(t)
+
+	if err := repo.SaveChatIfMissing(ctx, domain.Chat{ID: 1, Type: domain.ChatTypePrivate, Title: "New"}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if err := repo.SaveChat(ctx, domain.Chat{ID: 2, Type: domain.ChatTypePrivate, Title: "Listed", UnreadCount: 4, Pinned: true}); err != nil {
+		t.Fatalf("SaveChat: %v", err)
+	}
+	if err := repo.SaveChatIfMissing(ctx, domain.Chat{ID: 2, Type: domain.ChatTypePrivate, Title: "Resolved"}); err != nil {
+		t.Fatalf("insert over listed: %v", err)
+	}
+	chats, err := repo.GetChats(ctx)
+	if err != nil || len(chats) != 2 {
+		t.Fatalf("GetChats: %v %v", chats, err)
+	}
+	for _, c := range chats {
+		switch c.ID {
+		case 1:
+			if c.Title != "New" {
+				t.Fatalf("new row = %+v", c)
+			}
+		case 2:
+			if c.Title != "Listed" || c.UnreadCount != 4 || !c.Pinned {
+				t.Fatalf("listed row was overwritten: %+v", c)
+			}
+		}
+	}
+}

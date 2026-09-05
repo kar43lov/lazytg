@@ -272,3 +272,52 @@ func TestMatch_EmptyQueryReturnsAllItems(t *testing.T) {
 		t.Fatalf("empty query: got %v, want [0 1]", got)
 	}
 }
+
+func TestUsernameFrom(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"@durov": "durov", " @Durov ": "Durov", "t.me/durov": "durov", "https://t.me/durov/": "durov",
+		"http://t.me/some_name": "some_name",
+		"durov":                 "", "@du": "", "@1abc": "", "t.me/c/12345/6": "", "t.me/+invite": "", "@has-dash": "", "https://example.com/x": "",
+	}
+	for in, want := range cases {
+		if got := UsernameFrom(in); got != want {
+			t.Errorf("%q: got %q, want %q", in, got, want)
+		}
+	}
+}
+
+// Enter on a handle that matches nothing asks for the chat that is not
+// here; on plain words that match nothing it does nothing, as before.
+func TestEnter_OnAHandleWithNoMatchOpensIt(t *testing.T) {
+	t.Parallel()
+
+	chats := &fakeChats{chats: []domain.Chat{{ID: 11, Title: "first"}}}
+	m := New(nil, chats, nil)
+	m, _ = m.Open()
+	m, _ = m.Update(runCmd(t, m.loadCandidates()).(LoadedMsg))
+	for _, r := range "@durov" {
+		m, _ = m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	if len(m.Filtered()) != 0 {
+		t.Fatalf("@durov matched %v", m.Filtered())
+	}
+	updated, cmd := m.Update(keyChord(tea.KeyEnter))
+	if updated.Visible || cmd == nil {
+		t.Fatal("Enter on a handle did not close the palette with a command")
+	}
+	if open, ok := runCmd(t, cmd).(OpenUsernameMsg); !ok || open.Username != "durov" {
+		t.Fatalf("got %#v", runCmd(t, cmd))
+	}
+
+	m = New(nil, chats, nil)
+	m, _ = m.Open()
+	m, _ = m.Update(runCmd(t, m.loadCandidates()).(LoadedMsg))
+	for _, r := range "zzz" {
+		m, _ = m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	if _, cmd := m.Update(keyChord(tea.KeyEnter)); cmd != nil {
+		t.Fatal("Enter on plain words with no match produced a command")
+	}
+}

@@ -1166,6 +1166,30 @@ func (r *Repo) SetPresence(ctx context.Context, userID int64, online bool, lastS
 	return r.setChatField(ctx, `UPDATE chats SET online = ?, last_seen = ? WHERE id = ?`, boolToInt(online), unixOrZero(lastSeen), userID)
 }
 
+// SaveChatIfMissing stores a chat row only when there is none: a chat
+// reached by its handle carries the name and the kind and nothing about
+// the dialog, and writing it over a listed chat would zero the unread
+// count, the pin and the mute the list already shows.
+func (r *Repo) SaveChatIfMissing(ctx context.Context, c domain.Chat) error {
+	if r.readOnly.Load() {
+		return ErrReadOnly
+	}
+	_, err := r.db.ExecContext(ctx, `
+        INSERT INTO chats (id, type, title, username, last_message_date, unread_count, pinned,
+                           muted_until, unread_mark, online, last_seen, read_outbox_max_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO NOTHING
+    `,
+		c.ID, string(c.Type), c.Title, c.Username, nullableUnix(c.LastMessageDate), c.UnreadCount,
+		boolToInt(c.Pinned), unixOrZero(c.MutedUntil), boolToInt(c.UnreadMark), boolToInt(c.Online),
+		unixOrZero(c.LastSeen), c.ReadOutboxMaxID,
+	)
+	if err != nil {
+		return fmt.Errorf("insert chat if missing: %w", err)
+	}
+	return nil
+}
+
 // SetReadOutbox records how far the other side has read, and only ever
 // forward: updates are not guaranteed to arrive in order, and a stale one
 // must not take a tick away.

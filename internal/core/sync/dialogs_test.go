@@ -61,6 +61,10 @@ func (f *fakeChatStore) prunedSnapshot() [][]int64 {
 	return append([][]int64(nil), f.pruned...)
 }
 
+func (f *fakeChatStore) SaveChatIfMissing(ctx context.Context, c domain.Chat) error {
+	return f.SaveChat(ctx, c)
+}
+
 func (f *fakeChatStore) SaveChat(_ context.Context, c domain.Chat) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -596,3 +596,60 @@ func TestActionService_ChatActions_NotConnected(t *testing.T) {
 		t.Fatal("mute without a connection reported success")
 	}
 }
+
+type fakeResolver struct {
+	chat domain.Chat
+	peer domain.Peer
+	err  error
+	got  []string
+}
+
+func (f *fakeResolver) ResolveUsername(_ context.Context, name string) (domain.Chat, domain.Peer, error) {
+	f.got = append(f.got, name)
+	return f.chat, f.peer, f.err
+}
+
+// A resolved handle is stored — peer first, then the chat — and announced,
+// and its id comes back for the thread to open.
+func TestActionService_OpenByUsername(t *testing.T) {
+	t.Parallel()
+
+	resolver := &fakeResolver{chat: domain.Chat{ID: 42, Type: domain.ChatTypePrivate, Title: "Pavel"}, peer: domain.Peer{ID: 42, Type: domain.ChatTypePrivate, AccessHash: 7}}
+	chats := &fakeChatStore{}
+	peers := &fakePeerStore{}
+	bus := &recordingBus{}
+	svc := NewActionService(nil, nil, nil, nil, nil, bus, nil).WithResolver(resolver, chats, peers)
+
+	id, err := svc.OpenByUsername(context.Background(), "durov")
+	if err != nil || id != 42 {
+		t.Fatalf("OpenByUsername = %d, %v", id, err)
+	}
+	if len(peers.saved) != 1 || peers.saved[0].AccessHash != 7 {
+		t.Fatalf("peer not stored: %+v", peers.saved)
+	}
+	if len(chats.saved) != 1 || chats.saved[0].Title != "Pavel" {
+		t.Fatalf("chat not stored: %+v", chats.saved)
+	}
+	if len(bus.events) != 1 {
+		t.Fatalf("events = %+v", bus.events)
+	}
+	if upd, ok := bus.events[0].(events.DialogUpdated); !ok || upd.ChatID != 42 {
+		t.Fatalf("event = %+v", bus.events[0])
+	}
+
+	resolver.err = ErrNoSuchUsername
+	if _, err := svc.OpenByUsername(context.Background(), "nobody"); !errors.Is(err, ErrNoSuchUsername) {
+		t.Fatalf("refusal lost: %v", err)
+	}
+	if len(peers.saved) != 1 {
+		t.Fatal("a refused handle stored a peer")
+	}
+	resolver.err = nil
+	peers.err = errors.New("disk full")
+	if _, err := svc.OpenByUsername(context.Background(), "durov"); err == nil || len(chats.saved) != 1 || len(bus.events) != 1 {
+		t.Fatalf("a peer that could not be stored still opened: err=%v chats=%d events=%d", err, len(chats.saved), len(bus.events))
+	}
+	if _, err := NewActionService(nil, nil, nil, nil, nil, nil, nil).OpenByUsername(context.Background(), "durov"); err == nil {
+		t.Fatal("an unconfigured service resolved a name")
+	}
+}

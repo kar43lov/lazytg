@@ -184,6 +184,10 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.cancelPendingForward().closePalette(), nil
 	case palette.SelectedMsg:
 		return a.handlePaletteSelected(m)
+	case palette.OpenUsernameMsg:
+		return a.handleOpenUsername(m)
+	case usernameResolvedMsg:
+		return a.applyUsernameResolved(m)
 	case palette.LoadedMsg, palette.QueryChangedMsg:
 		updated, cmd := a.palette.Update(msg)
 		a.palette = updated

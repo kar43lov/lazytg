@@ -25,6 +25,9 @@ type fakeActions struct {
 	forwards    []forwardRecord
 	chatActions []chatActionRecord
 	chatErr     error
+	resolved    []string
+	resolveID   int64
+	resolveErr  error
 	reacts      []reactRecord
 	err         error
 }
@@ -419,6 +422,13 @@ func (f *fakeActions) Pin(_ context.Context, chatID int64, pinned bool) error {
 func (f *fakeActions) MarkUnread(_ context.Context, chatID int64) error {
 	f.chatRecord(chatActionRecord{kind: "unread", chatID: chatID})
 	return f.chatErr
+}
+
+func (f *fakeActions) OpenByUsername(_ context.Context, name string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resolved = append(f.resolved, name)
+	return f.resolveID, f.resolveErr
 }
 
 func (f *fakeActions) MarkRead(_ context.Context, chatID int64, marked bool) error {
