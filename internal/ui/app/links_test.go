@@ -10,6 +10,7 @@ import (
 	"github.com/kar43lov/lazytg/internal/core/domain"
 	"github.com/kar43lov/lazytg/internal/ui/input"
 	"github.com/kar43lov/lazytg/internal/ui/keymap"
+	"github.com/kar43lov/lazytg/internal/ui/panes/chats"
 	"github.com/kar43lov/lazytg/internal/ui/panes/thread"
 )
 
@@ -120,5 +121,66 @@ func TestOpenAndDownload_SayWhyNothingHappened(t *testing.T) {
 	}
 	if got := opener.snapshot(); len(got) != 0 {
 		t.Fatalf("the opener was called: %v", got)
+	}
+}
+
+func TestMessageLink(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		chat domain.Chat
+		want string
+	}{
+		{domain.Chat{ID: 1, Type: domain.ChatTypeChannel, Username: "durov"}, "https://t.me/durov/5"},
+		{domain.Chat{ID: 12345, Type: domain.ChatTypeSupergroup}, "https://t.me/c/12345/5"},
+		{domain.Chat{ID: 99, Type: domain.ChatTypeChannel}, "https://t.me/c/99/5"},
+		{domain.Chat{ID: 7, Type: domain.ChatTypePrivate, Username: "friend"}, "https://t.me/friend/5"},
+		{domain.Chat{ID: 7, Type: domain.ChatTypePrivate}, ""},
+		{domain.Chat{ID: 8, Type: domain.ChatTypeGroup}, ""},
+	}
+	for _, tc := range cases {
+		if got := messageLink(chats.NewChatItem(tc.chat, ""), 5); got != tc.want {
+			t.Errorf("%s/%q: got %q, want %q", tc.chat.Type, tc.chat.Username, got, tc.want)
+		}
+	}
+}
+
+// "l" copies the address of the message under the cursor and says so; in a
+// chat without one it says that instead.
+func TestCopyLinkKey(t *testing.T) {
+	t.Parallel()
+
+	pane := chats.NewWithRepo(fakeChatsRepo{chats: []domain.Chat{
+		{ID: 500, Title: "News", Type: domain.ChatTypeChannel, Username: "news"},
+		{ID: 7, Title: "Friend", Type: domain.ChatTypePrivate},
+	}}, nil)
+	pane, _ = pane.Update(pane.Init()())
+	threadModel := thread.New()
+	inputModel := input.NewWithDeps(nil, keymap.Default(), nil)
+	a := New(Deps{Keymap: keymap.Default(), Chats: &pane, Thread: &threadModel, Input: &inputModel})
+	model, _ := a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	a = model.(App)
+
+	open := func(a App, chatID int64, msgs ...domain.Message) App {
+		model, _ := a.Update(chats.ChatSelectedMsg{ChatID: chatID})
+		a = model.(App)
+		a.thread = injectMessages(a.thread, msgs)
+		return tabTo(t, a, FocusThread)
+	}
+	a = open(a, 500, domain.Message{ID: 41, ChatID: 500, Date: time.Now(), Text: "post"})
+	a, cmd := press(t, a, "l")
+	if cmd == nil {
+		t.Fatal("l in a channel produced no clipboard command")
+	}
+	if !strings.Contains(a.statusText(), "copied https://t.me/news/41") {
+		t.Fatalf("status %q", a.statusText())
+	}
+	a = open(a, 7, domain.Message{ID: 3, ChatID: 7, Date: time.Now(), Text: "hi"})
+	a, cmd = press(t, a, "l")
+	if cmd != nil {
+		t.Fatal("a private chat produced a clipboard command")
+	}
+	if !strings.Contains(a.statusText(), "no link") {
+		t.Fatalf("status %q", a.statusText())
 	}
 }

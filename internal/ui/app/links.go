@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/ui/panes/chats"
 	"github.com/kar43lov/lazytg/internal/ui/safetext"
 )
 
@@ -158,4 +159,40 @@ func (a App) applyLinkOpened(msg linkOpenedMsg) App {
 	}
 	a.status = a.status.SetNotice("opened " + host + " in the browser")
 	return a
+}
+
+// messageLink is the address of a message, the one "Copy link" gives in
+// every official client: t.me/<username>/<id> when the chat has a public
+// handle, t.me/c/<id>/<id> for a private channel or supergroup, which
+// opens for members. A person or a basic group has no address at all —
+// Telegram never made one — and the empty string says so.
+func messageLink(chat chats.ChatItem, messageID int64) string {
+	if chat.Username() != "" {
+		return fmt.Sprintf("https://t.me/%s/%d", chat.Username(), messageID)
+	}
+	switch chat.Type() {
+	case domain.ChatTypeChannel, domain.ChatTypeSupergroup:
+		return fmt.Sprintf("https://t.me/c/%d/%d", chat.ID(), messageID)
+	}
+	return ""
+}
+
+// cmdCopyLink puts the address of the message under the cursor on the
+// clipboard, or says why there is none.
+func (a App) cmdCopyLink() (App, tea.Cmd, bool) {
+	msg, ok := a.thread.CursorMessage()
+	if !ok {
+		return a, nil, false
+	}
+	chat, ok := a.chats.ItemByID(msg.ChatID)
+	if !ok {
+		return a, nil, false
+	}
+	link := messageLink(chat, msg.ID)
+	if link == "" {
+		a.status = a.status.SetNotice("no link: messages in a private chat or a basic group have no address")
+		return a, nil, true
+	}
+	a.status = a.status.SetNotice("copied " + link)
+	return a, tea.SetClipboard(link), true
 }

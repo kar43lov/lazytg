@@ -36,6 +36,7 @@ type ChatItem struct {
 	online          bool
 	lastSeen        time.Time
 	readOutboxMaxID int64
+	username        string
 	// width is the room the row has, set when the list is laid out. Zero
 	// means "unknown", and the row then carries no right-hand column.
 	width int
@@ -76,8 +77,12 @@ func NewChatItem(c domain.Chat, preview string) ChatItem {
 		online:          c.Online,
 		lastSeen:        c.LastSeen,
 		readOutboxMaxID: c.ReadOutboxMaxID,
+		username:        c.Username,
 	}
 }
+
+// Username is the public handle of the chat, empty when it has none.
+func (i ChatItem) Username() string { return i.username }
 
 // ReadOutboxMaxID is the newest of your messages the other side has read.
 func (i ChatItem) ReadOutboxMaxID() int64 { return i.readOutboxMaxID }
@@ -268,5 +273,6 @@ func (i ChatItem) Chat() domain.Chat {
 		Online:          i.online,
 		LastSeen:        i.lastSeen,
 		ReadOutboxMaxID: i.readOutboxMaxID,
+		Username:        i.username,
 	}
 }

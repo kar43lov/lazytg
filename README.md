@@ -99,6 +99,7 @@ Current capabilities:
 | ↑ / ↓ (k / j)   | move the message cursor in the thread |
 | Space           | mark / unmark the message at the cursor |
 | `y`             | copy the marked messages, or the one at the cursor |
+| `l`             | copy the link to the message at the cursor (channels and supergroups; a private chat has none) |
 | `e`             | edit your own message at the cursor   |
 | `d`             | delete the marked messages, or the one at the cursor |
 | `f`             | forward them to another chat (picks the chat in the palette) |

@@ -46,6 +46,7 @@ type Keymap struct {
 	// as before. Rebinding either one leaves the other alone.
 	CompleteEmoji key.Binding
 	CopyMessage   key.Binding
+	CopyLink      key.Binding
 	EditMessage   key.Binding
 	DeleteMsg     key.Binding
 	Attach        key.Binding
@@ -200,6 +201,14 @@ func Default() Keymap {
 		CopyMessage: key.NewBinding(
 			key.WithKeys("y"),
 			key.WithHelp("y", "copy message(s)"),
+		),
+		// "l" for link: the address of the message under the cursor, the
+		// way every official client offers "Copy link" on a channel or
+		// supergroup post. A private chat has no address, and the key
+		// says so instead of copying something that opens nothing.
+		CopyLink: key.NewBinding(
+			key.WithKeys("l"),
+			key.WithHelp("l", "copy link to message"),
 		),
 		EditMessage: key.NewBinding(
 			key.WithKeys("e"),

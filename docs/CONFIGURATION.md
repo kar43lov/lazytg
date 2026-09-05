@@ -163,6 +163,7 @@ for the rationale.
 | `attach`          | `ctrl+u`                  | Attach (upload) a file                              |
 | `mark_message`    | `space`                   | Mark / unmark the message at the cursor             |
 | `copy_message`    | `y`                       | Copy the marked messages, or the one at the cursor  |
+| `copy_link`       | `l`                       | Copy the link to the message at the cursor (`t.me/<username>/<id>` or `t.me/c/<id>/<id>`; none for a private chat or a basic group) |
 | `edit_message`    | `e`                       | Edit your own message at the cursor                 |
 | `delete_msg`      | `d`                       | Delete the marked messages, or the one at the cursor |
 | `forward_message` | `f`                       | Forward them to a chat picked in the palette        |
