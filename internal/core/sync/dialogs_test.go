@@ -575,3 +575,40 @@ func TestDialogsService_Sync_SurvivesASelfLookupFailure(t *testing.T) {
 		t.Fatalf("chats saved = %v, want the one listed", got)
 	}
 }
+
+// A chat that arrives with a draft announces it: the draft is not stored,
+// so the event is the only way the composer learns of it.
+func TestDialogsService_Sync_PublishesDrafts(t *testing.T) {
+	t.Parallel()
+
+	bus := events.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sub := bus.Subscribe(ctx)
+
+	page := chatPage(false, DialogCursor{}, 7, 8)
+	page.Chats[0].Draft = "half a sentence"
+	provider := &fakeDialogsProvider{pages: []DialogPage{page}}
+	svc := newTestService(t, provider, &fakeChatStore{}, &fakePeerStore{}, bus, DialogsConfig{})
+	if _, err := svc.Sync(ctx); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	var drafts []events.DraftChanged
+	deadline := time.After(2 * time.Second)
+	for updates := 0; updates < 2; {
+		select {
+		case ev := <-sub:
+			switch typed := ev.(type) {
+			case events.DialogUpdated:
+				updates++
+			case events.DraftChanged:
+				drafts = append(drafts, typed)
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for the sync events")
+		}
+	}
+	if len(drafts) != 1 || drafts[0].ChatID != 7 || drafts[0].Text != "half a sentence" {
+		t.Fatalf("drafts = %+v", drafts)
+	}
+}

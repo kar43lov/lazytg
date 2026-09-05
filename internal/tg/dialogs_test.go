@@ -558,3 +558,28 @@ func TestDialogsFetcher_KeepsTheListFacts(t *testing.T) {
 		t.Fatalf("second chat: %+v", o)
 	}
 }
+
+// A draft left on another device rides on the dialog page, with its
+// formatting folded back into markup so it can be finished here.
+func TestDialogsFetcher_CarriesTheDraft(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	d, _ := dialogAt(&tg.PeerUser{UserID: 42}, 1, 0, false).(*tg.Dialog)
+	d.SetDraft(&tg.DraftMessage{Message: "call me later", Entities: []tg.MessageEntityClass{&tg.MessageEntityBold{Offset: 0, Length: 4}}})
+	stub := &stubGetDialogs{responses: []tg.MessagesDialogsClass{&tg.MessagesDialogs{
+		Dialogs:  []tg.DialogClass{d},
+		Messages: []tg.MessageClass{topMessage(1, &tg.PeerUser{UserID: 42}, at)},
+		Users:    []tg.UserClass{&tg.User{ID: 42, AccessHash: 1, FirstName: "Friend"}},
+	}}}
+	page, err := NewDialogsFetcher(stub).FetchDialogs(context.Background(), 10, coresync.DialogCursor{})
+	if err != nil {
+		t.Fatalf("FetchDialogs: %v", err)
+	}
+	if got := page.Chats[0].Draft; got != "**call** me later" {
+		t.Fatalf("draft = %q", got)
+	}
+	if got := draftText(&tg.DraftMessageEmpty{}); got != "" {
+		t.Fatalf("an empty draft reads %q", got)
+	}
+}

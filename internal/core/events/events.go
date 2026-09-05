@@ -439,6 +439,16 @@ type ChatReadInbox struct {
 
 func (ChatReadInbox) eventMarker() {}
 
+// DraftChanged carries a draft the server holds for a chat — typed on
+// another device, or read from the dialog page at start. Text is markup;
+// empty means the draft was cleared there.
+type DraftChanged struct {
+	ChatID int64
+	Text   string
+}
+
+func (DraftChanged) eventMarker() {}
+
 // ChatReadOutbox says the other side has read your messages up to MaxID.
 // It is the fact behind the second tick.
 type ChatReadOutbox struct {

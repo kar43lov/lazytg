@@ -1,6 +1,9 @@
 package input
 
-import "github.com/kar43lov/lazytg/internal/core/domain"
+import (
+	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/events"
+)
 
 // A half-written message belongs to the conversation it was written in.
 //
@@ -85,4 +88,32 @@ func (m *Model) restoreDraftFor(chatID int64) {
 // hook a "Draft: …" preview in the chat list would use.
 func (m Model) DraftFor(chatID int64) string {
 	return m.drafts[chatID].text
+}
+
+// applyServerDraft takes a draft the server holds for a chat — typed on
+// the phone, or left there before this session started. It fills the
+// composer when the chat is open and the box is empty, and otherwise
+// stashes it as that chat's draft when there is none here. It never
+// replaces words typed in this session, and never clears them: what was
+// written here is the user's, and a draft cleared on another device is
+// not a reason to lose it.
+func (m *Model) applyServerDraft(ev events.DraftChanged) {
+	if ev.Text == "" || ev.ChatID == 0 {
+		return
+	}
+	if ev.ChatID == m.chatID {
+		if m.textarea.Value() != "" || m.editing != nil {
+			return
+		}
+		m.textarea.SetValue(ev.Text)
+		m.textarea.MoveToEnd()
+		return
+	}
+	if m.drafts[ev.ChatID].text != "" {
+		return
+	}
+	if m.drafts == nil {
+		m.drafts = make(map[int64]draft)
+	}
+	m.drafts[ev.ChatID] = draft{text: ev.Text}
 }

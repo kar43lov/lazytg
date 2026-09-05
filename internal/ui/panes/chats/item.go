@@ -37,6 +37,7 @@ type ChatItem struct {
 	lastSeen        time.Time
 	readOutboxMaxID int64
 	username        string
+	draft           string
 	// width is the room the row has, set when the list is laid out. Zero
 	// means "unknown", and the row then carries no right-hand column.
 	width int
@@ -149,8 +150,27 @@ func (i ChatItem) Description() string {
 		}
 		badge.WriteString("🔕")
 	}
-	return padBetween(truncateRunes(i.preview, previewMaxRunes), badge.String(), i.width)
+	left := truncateRunes(i.preview, previewMaxRunes)
+	if i.draft != "" {
+		// A draft outranks the last message, the way it does in every
+		// official client: the row is about what the user was doing here.
+		left = draftStyle.Render("Draft:") + " " + truncateRunes(i.draft, previewMaxRunes)
+	}
+	return padBetween(left, badge.String(), i.width)
 }
+
+// draftStyle paints the word that says the preview is your own unsent
+// text, in the red every official client uses for it.
+var draftStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+
+// withDraft is the row told what is half-written in it.
+func (i ChatItem) withDraft(text string) ChatItem {
+	i.draft = safetext.CleanLine(text)
+	return i
+}
+
+// Draft is the half-written text the row shows, empty when there is none.
+func (i ChatItem) Draft() string { return i.draft }
 
 // withWidth is the row told how much room it has.
 func (i ChatItem) withWidth(w int) ChatItem {

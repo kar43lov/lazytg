@@ -62,6 +62,10 @@ type Model struct {
 	repo  Repository
 	log   *slog.Logger
 	chats []ChatItem
+	// drafts is what the server holds half-written per chat, kept apart
+	// from the rows because the rows are rebuilt from the repo on every
+	// reload and the repo does not store drafts.
+	drafts map[int64]string
 
 	// itemRows is how many terminal rows one list row occupies, captured
 	// from the delegate at construction (bubbles exposes no getter on

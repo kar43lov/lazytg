@@ -259,12 +259,20 @@ func TestUpdatesDispatcher_PublishesTheListFacts(t *testing.T) {
 		&tg.UpdateUserStatus{UserID: 8385, Status: &tg.UserStatusOnline{Expires: 1}},
 		&tg.UpdateReadHistoryOutbox{Peer: &tg.PeerUser{UserID: 42}, MaxID: 7},
 		&tg.UpdateReadChannelOutbox{ChannelID: 77, MaxID: 8},
+		&tg.UpdateDraftMessage{Peer: &tg.PeerUser{UserID: 42}, Draft: &tg.DraftMessage{Message: "later"}},
+		&tg.UpdateDraftMessage{Peer: &tg.PeerUser{UserID: 43}, Draft: &tg.DraftMessageEmpty{}},
 	}}
 	if err := d.HandlerFunc().Handle(context.Background(), upd); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	got := []events.Event{receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch)}
+	got := []events.Event{receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch), receiveOne(t, ch)}
 	expectNone(t, ch)
+	if d, ok := got[8].(events.DraftChanged); !ok || d.ChatID != 42 || d.Text != "later" {
+		t.Fatalf("draft = %+v", got[8])
+	}
+	if d, ok := got[9].(events.DraftChanged); !ok || d.ChatID != 43 || d.Text != "" {
+		t.Fatalf("cleared draft = %+v", got[9])
+	}
 	if r, ok := got[6].(events.ChatReadOutbox); !ok || r.ChatID != 42 || r.MaxID != 7 {
 		t.Fatalf("read outbox = %+v", got[6])
 	}

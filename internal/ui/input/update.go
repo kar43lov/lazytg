@@ -66,6 +66,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// the textarea without an extra trip through the thread.
 		m.inFlight[typed.LocalID] = inFlightDraft{text: typed.Text, replyTo: typed.ReplyToMsg}
 		return m, nil
+	case events.DraftChanged:
+		m.applyServerDraft(typed)
+		return m, nil
 	case events.OutgoingMessageStateChanged:
 		return m.applyOutgoingState(typed)
 	case OpenEditorMsg:

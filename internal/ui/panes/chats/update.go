@@ -35,6 +35,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.applyDebouncedReload(typed.generation)
 	case events.DialogUpdated, events.MessageReceived, events.MessagesDeleted:
 		return m.scheduleReload()
+	case events.DraftChanged:
+		return m.applyDraft(typed)
 	case tea.KeyPressMsg:
 		if isEnter(typed) && !m.IsFilterActive() {
 			return m.handleEnter()
@@ -72,8 +74,8 @@ func (m Model) applyLoaded(items []ChatItem) (Model, tea.Cmd) {
 		wantID = sel.ID()
 	}
 
-	m.chats = items
-	visible := m.visibleChats(items)
+	m.chats = m.withDrafts(items)
+	visible := m.visibleChats(m.chats)
 	cmd := m.list.SetItems(listItems(visible, m.rowWidth()))
 
 	if wantID != 0 {
@@ -146,4 +148,44 @@ func isEnter(k tea.KeyPressMsg) bool {
 // dispatch in addition to the in-pane Enter check.
 func (m Model) IsFilterActive() bool {
 	return m.list.SettingFilter()
+}
+
+// withDrafts puts the drafts the pane knows back on freshly loaded rows.
+func (m Model) withDrafts(items []ChatItem) []ChatItem {
+	if len(m.drafts) == 0 {
+		return items
+	}
+	for i := range items {
+		if d, ok := m.drafts[items[i].ID()]; ok {
+			items[i] = items[i].withDraft(d)
+		}
+	}
+	return items
+}
+
+// applyDraft records a server draft and redraws the row that shows it.
+func (m Model) applyDraft(ev events.DraftChanged) (Model, tea.Cmd) {
+	if ev.ChatID == 0 {
+		return m, nil
+	}
+	if m.drafts == nil {
+		m.drafts = make(map[int64]string)
+	}
+	if ev.Text == "" {
+		delete(m.drafts, ev.ChatID)
+	} else {
+		m.drafts[ev.ChatID] = ev.Text
+	}
+	// A copy, not an in-place write: the slice is shared with the model
+	// value this one was derived from, and a row changed under it would
+	// leak into a state that was never returned.
+	rows := make([]ChatItem, len(m.chats))
+	copy(rows, m.chats)
+	for i := range rows {
+		if rows[i].ID() == ev.ChatID {
+			rows[i] = rows[i].withDraft(ev.Text)
+		}
+	}
+	m.chats = rows
+	return m, m.list.SetItems(listItems(m.visibleChats(m.chats), m.rowWidth()))
 }

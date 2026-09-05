@@ -12,6 +12,7 @@ import (
 	"github.com/gotd/td/tgerr"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/core/markdown"
 	coresync "github.com/kar43lov/lazytg/internal/core/sync"
 )
 
@@ -166,6 +167,7 @@ func resolveDialog(
 		MutedUntil:  muteUntilOf(dlg.NotifySettings),
 
 		ReadOutboxMaxID: int64(dlg.ReadOutboxMaxID),
+		Draft:           draftText(dlg.Draft),
 	}
 	var peer domain.Peer
 
@@ -309,6 +311,17 @@ func dialogsHaveMore(mod tg.ModifiedMessagesDialogs, limit int) bool {
 		return false
 	}
 	return limit > 0 && len(mod.GetDialogs()) >= limit
+}
+
+// draftText is a server-side draft as the composer would take it: the
+// text with its formatting folded back into markup, so a bold word typed
+// on the phone stays bold when it is finished here. Empty for no draft.
+func draftText(d tg.DraftMessageClass) string {
+	m, ok := d.(*tg.DraftMessage)
+	if !ok || m == nil {
+		return ""
+	}
+	return markdown.Render(m.Message, entitiesFromWire(m.Message, m.Entities))
 }
 
 // SavedMessagesTitle is what the dialog with the account itself is called.

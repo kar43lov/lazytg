@@ -168,6 +168,8 @@ func (d *UpdatesDispatcher) dispatch(_ context.Context, u tg.UpdateClass) {
 		d.publish(events.ChatReadInbox{ChatID: chatIDFromPeer(upd.Peer), MaxID: int64(upd.MaxID), StillUnread: upd.StillUnreadCount})
 	case *tg.UpdateReadChannelInbox:
 		d.publish(events.ChatReadInbox{ChatID: upd.ChannelID, MaxID: int64(upd.MaxID), StillUnread: upd.StillUnreadCount})
+	case *tg.UpdateDraftMessage:
+		d.publish(events.DraftChanged{ChatID: chatIDFromPeer(upd.Peer), Text: draftText(upd.Draft)})
 	case *tg.UpdateReadHistoryOutbox:
 		d.publish(events.ChatReadOutbox{ChatID: chatIDFromPeer(upd.Peer), MaxID: int64(upd.MaxID)})
 	case *tg.UpdateReadChannelOutbox:

@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/kar43lov/lazytg/internal/core/domain"
+	"github.com/kar43lov/lazytg/internal/ui/input"
 	"github.com/kar43lov/lazytg/internal/ui/keymap"
 	"github.com/kar43lov/lazytg/internal/ui/panes/chats"
 	"github.com/kar43lov/lazytg/internal/ui/panes/thread"
@@ -272,5 +273,25 @@ func TestOpenChat_HidesTicksInSavedMessages(t *testing.T) {
 	a = model.(App)
 	if a.thread.SelfChat() {
 		t.Fatal("the mark survived into another chat")
+	}
+}
+
+// A server draft reaches both the composer and the list row.
+func TestDraftChanged_ReachesComposerAndList(t *testing.T) {
+	t.Parallel()
+
+	pane := chats.NewWithRepo(fakeChatsRepo{chats: []domain.Chat{{ID: 7, Title: "Friend", Type: domain.ChatTypePrivate}}}, nil)
+	pane, _ = pane.Update(pane.Init()())
+	inputModel := input.NewWithDeps(nil, keymap.Default(), nil)
+	a := New(Deps{Keymap: keymap.Default(), Chats: &pane, Input: &inputModel})
+	model, _ := a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	model, _ = model.(App).Update(chats.ChatSelectedMsg{ChatID: 7})
+	model, _ = model.(App).Update(events.DraftChanged{ChatID: 7, Text: "from the phone"})
+	a = model.(App)
+	if got := a.input.Value(); got != "from the phone" {
+		t.Fatalf("composer holds %q", got)
+	}
+	if it, _ := a.chats.ItemByID(7); it.Draft() != "from the phone" {
+		t.Fatalf("row draft = %q", it.Draft())
 	}
 }

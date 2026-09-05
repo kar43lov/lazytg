@@ -303,6 +303,11 @@ func (s *DialogsService) persist(ctx context.Context, p DialogPage) int {
 		stored++
 		if s.bus != nil {
 			s.bus.Publish(events.DialogUpdated{ChatID: c.ID})
+			if c.Draft != "" {
+				// The draft is not stored; whoever composes for this
+				// chat learns it from the event.
+				s.bus.Publish(events.DraftChanged{ChatID: c.ID, Text: c.Draft})
+			}
 		}
 	}
 	return stored

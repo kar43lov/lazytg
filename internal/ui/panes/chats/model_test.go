@@ -5,7 +5,10 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"charm.land/lipgloss/v2"
 
@@ -617,5 +620,31 @@ func TestSelectByID_MovesTheHighlight(t *testing.T) {
 	m = m.SelectByID(99)
 	if sel, _ := m.SelectedItem(); sel.ID() != 3 {
 		t.Fatalf("an unknown id moved the highlight to %d", sel.ID())
+	}
+}
+
+// A draft the server holds shows on the row as "Draft: …" in place of the
+// last message, and survives the reload that rebuilds the rows.
+func TestChatRow_ShowsTheDraft(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeRepo{chats: []domain.Chat{{ID: 7, Title: "Friend", Type: domain.ChatTypePrivate, LastMessagePreview: "last words"}}}
+	m := NewWithRepo(repo, nil)
+	m, _ = m.Update(m.Init()())
+	m, _ = m.Update(events.DraftChanged{ChatID: 7, Text: "half a\nsentence"})
+	it, ok := m.ItemByID(7)
+	if !ok || it.Draft() != "half a sentence" {
+		t.Fatalf("row draft = %q", it.Draft())
+	}
+	if desc := ansi.Strip(it.Description()); !strings.HasPrefix(desc, "Draft: half a sentence") {
+		t.Fatalf("description = %q", desc)
+	}
+	m, _ = m.Update(m.Init()())
+	if it, _ := m.ItemByID(7); it.Draft() != "half a sentence" {
+		t.Fatalf("the reload dropped the draft: %q", it.Draft())
+	}
+	m, _ = m.Update(events.DraftChanged{ChatID: 7, Text: ""})
+	if it, _ := m.ItemByID(7); it.Draft() != "" || !strings.HasPrefix(ansi.Strip(it.Description()), "last words") {
+		t.Fatalf("a cleared draft stayed: %q / %q", it.Draft(), it.Description())
 	}
 }

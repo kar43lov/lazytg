@@ -237,6 +237,14 @@ func (a App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, cmd := a.thread.Update(m)
 		a.thread = updated
 		return a, cmd
+	case events.DraftChanged:
+		// The composer takes the words; the list shows "Draft:" on the
+		// row. Both need it, neither needs the other to have seen it.
+		updatedInput, cmdI := a.input.Update(m)
+		a.input = updatedInput
+		updatedChats, cmdC := a.chats.Update(m)
+		a.chats = updatedChats
+		return a, tea.Batch(cmdI, cmdC)
 	case chats.SetFoldersMsg:
 		updated, cmd := a.chats.SetFolders(m.Folders)
 		a.chats = updated

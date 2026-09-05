@@ -3,6 +3,8 @@ package input
 import (
 	"testing"
 
+	"github.com/kar43lov/lazytg/internal/core/events"
+
 	"github.com/kar43lov/lazytg/internal/core/domain"
 )
 
@@ -136,5 +138,42 @@ func TestDraft_SwitchingCancelsAnArmedEdit(t *testing.T) {
 	m, _ = m.Update(SetChatMsg{ChatID: 1})
 	if got := m.textarea.Value(); got != "half a sentence" {
 		t.Fatalf("the composer holds %q, want the displaced draft", got)
+	}
+}
+
+// A draft the server holds — typed on the phone, or left there before this
+// session — lands in an empty composer, waits under its chat when that chat
+// is not open, and never replaces or clears what was typed here.
+func TestDraft_FromTheServer(t *testing.T) {
+	t.Parallel()
+
+	m := composerInChat(t, 1)
+	m, _ = m.Update(events.DraftChanged{ChatID: 1, Text: "finish this **here**"})
+	if got := m.textarea.Value(); got != "finish this **here**" {
+		t.Fatalf("empty composer holds %q", got)
+	}
+	m, _ = m.Update(events.DraftChanged{ChatID: 1, Text: "something else"})
+	if got := m.textarea.Value(); got != "finish this **here**" {
+		t.Fatalf("a later server draft replaced the words: %q", got)
+	}
+	m, _ = m.Update(events.DraftChanged{ChatID: 1, Text: ""})
+	if got := m.textarea.Value(); got != "finish this **here**" {
+		t.Fatalf("a cleared server draft emptied the composer: %q", got)
+	}
+
+	m, _ = m.Update(events.DraftChanged{ChatID: 2, Text: "for the other chat"})
+	if got := m.textarea.Value(); got != "finish this **here**" {
+		t.Fatalf("another chat's draft landed in this composer: %q", got)
+	}
+	m, _ = m.Update(SetChatMsg{ChatID: 2})
+	if got := m.textarea.Value(); got != "for the other chat" {
+		t.Fatalf("the stashed server draft did not come back: %q", got)
+	}
+	m.textarea.SetValue("typed here")
+	m, _ = m.Update(SetChatMsg{ChatID: 1})
+	m, _ = m.Update(events.DraftChanged{ChatID: 2, Text: "phone again"})
+	m, _ = m.Update(SetChatMsg{ChatID: 2})
+	if got := m.textarea.Value(); got != "typed here" {
+		t.Fatalf("a server draft replaced a local one: %q", got)
 	}
 }

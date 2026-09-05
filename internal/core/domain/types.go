@@ -94,6 +94,10 @@ type Chat struct {
 	// has read: everything you sent with an id at or below it gets the
 	// second tick. Zero when nothing was read, or nothing was sent.
 	ReadOutboxMaxID int64
+	// Draft is what was left half-written in this chat on another device,
+	// as markup. It rides on the dialog page and is not stored: the server
+	// keeps it, and the sync brings it back on every start.
+	Draft string
 
 	// LastMessagePreview is the text of the chat's newest cached message,
 	// filled by the read path only (GetChats) and ignored on write. It is a
